@@ -38,9 +38,18 @@ impl AppEvent {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum AppEffect {
+    Route(EventSource),
+}
+
+pub fn reduce(event: &AppEvent) -> AppEffect {
+    AppEffect::Route(event.source())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AppEvent, EventSource, TabId, WindowId};
+    use super::{AppEffect, AppEvent, EventSource, TabId, WindowId, reduce};
     use std::any::TypeId;
 
     #[test]
@@ -63,5 +72,20 @@ mod tests {
         assert_eq!(AppEvent::Pty.source(), EventSource::Pty);
         assert_eq!(AppEvent::Ime.source(), EventSource::Ime);
         assert_eq!(AppEvent::Clipboard.source(), EventSource::Clipboard);
+    }
+
+    #[test]
+    fn reducer_emits_expected_effect() {
+        let cases = [
+            (AppEvent::Wayland, EventSource::Wayland),
+            (AppEvent::Pty, EventSource::Pty),
+            (AppEvent::Ime, EventSource::Ime),
+            (AppEvent::Clipboard, EventSource::Clipboard),
+        ];
+
+        for (event, source) in cases {
+            assert_eq!(reduce(&event), AppEffect::Route(source));
+            assert_eq!(reduce(&event), AppEffect::Route(source));
+        }
     }
 }

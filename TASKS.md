@@ -29,7 +29,7 @@
   - **Dependencies:** `TASK-002`  |  **Unit Test:** `app_event_routes_by_source`
   - **Done:** 可區分 Wayland、PTY、IME、Clipboard events
 
-- [ ] **TASK-004 — 定義 pure event reducer 與 `AppEffect`**
+- [x] **TASK-004 — 定義 pure event reducer 與 `AppEffect`**
   - **Dependencies:** `TASK-003`  |  **Unit Test:** `reducer_emits_expected_effect`
   - **Done:** 輸入 event 只產生可核對效果；無隱藏 I/O
 
