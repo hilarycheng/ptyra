@@ -21,7 +21,7 @@
   - **Dependencies:** —  |  **Unit Test:** `workspace_smoke`
   - **Done:** `cargo test` 可執行一個簡單 unit test；無 GTK/Qt dependency
 
-- [ ] **TASK-002 — 建立 `TabId` / `WindowId` 強型別**
+- [x] **TASK-002 — 建立 `TabId` / `WindowId` 強型別**
   - **Dependencies:** `TASK-001`  |  **Unit Test:** `typed_ids_are_distinct`
   - **Done:** 不同 ID 類型不可混用；ID 比較結果正確
 
