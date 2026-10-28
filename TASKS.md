@@ -17,7 +17,7 @@
 
 ## A. Foundation / 測試基礎
 
-- [ ] **TASK-001 — 建立最小 Rust executable + library**
+- [x] **TASK-001 — 建立最小 Rust executable + library**
   - **Dependencies:** —  |  **Unit Test:** `workspace_smoke`
   - **Done:** `cargo test` 可執行一個簡單 unit test；無 GTK/Qt dependency
 
