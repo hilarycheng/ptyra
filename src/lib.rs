@@ -52,6 +52,28 @@ mod tests {
     use super::{AppEffect, AppEvent, EventSource, TabId, WindowId, reduce};
     use std::any::TypeId;
 
+    #[derive(Default)]
+    struct FakeWaylandAdapter {
+        calls: Vec<AppEffect>,
+    }
+
+    impl FakeWaylandAdapter {
+        fn record(&mut self, effect: AppEffect) {
+            self.calls.push(effect);
+        }
+    }
+
+    #[derive(Default)]
+    struct FakePtyAdapter {
+        calls: Vec<AppEffect>,
+    }
+
+    impl FakePtyAdapter {
+        fn record(&mut self, effect: AppEffect) {
+            self.calls.push(effect);
+        }
+    }
+
     #[test]
     fn workspace_smoke() {
         assert_eq!(crate::APP_NAME, "Ptyra");
@@ -87,5 +109,24 @@ mod tests {
             assert_eq!(reduce(&event), AppEffect::Route(source));
             assert_eq!(reduce(&event), AppEffect::Route(source));
         }
+    }
+
+    #[test]
+    fn fake_adapter_records_calls() {
+        let mut wayland = FakeWaylandAdapter::default();
+        let mut pty = FakePtyAdapter::default();
+
+        wayland.record(reduce(&AppEvent::Wayland));
+        pty.record(reduce(&AppEvent::Pty));
+        wayland.record(reduce(&AppEvent::Clipboard));
+
+        assert_eq!(
+            wayland.calls,
+            [
+                AppEffect::Route(EventSource::Wayland),
+                AppEffect::Route(EventSource::Clipboard),
+            ]
+        );
+        assert_eq!(pty.calls, [AppEffect::Route(EventSource::Pty)]);
     }
 }
