@@ -25,7 +25,7 @@
   - **Dependencies:** `TASK-001`  |  **Unit Test:** `typed_ids_are_distinct`
   - **Done:** 不同 ID 類型不可混用；ID 比較結果正確
 
-- [ ] **TASK-003 — 定義 `AppEvent` 與事件來源**
+- [x] **TASK-003 — 定義 `AppEvent` 與事件來源**
   - **Dependencies:** `TASK-002`  |  **Unit Test:** `app_event_routes_by_source`
   - **Done:** 可區分 Wayland、PTY、IME、Clipboard events
 
