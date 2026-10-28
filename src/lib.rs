@@ -1,3 +1,13 @@
+pub mod clock;
+pub mod damage;
+pub mod error;
+pub mod frame;
+pub mod geometry;
+pub mod input;
+pub mod shell;
+pub mod wayland;
+pub mod window;
+
 pub const APP_NAME: &str = "Ptyra";
 
 /// A window ID cannot be used where a tab ID is required.
@@ -22,6 +32,7 @@ pub enum EventSource {
 
 pub enum AppEvent {
     Wayland,
+    WaylandDisconnected(std::io::ErrorKind),
     Pty,
     Ime,
     Clipboard,
@@ -30,7 +41,7 @@ pub enum AppEvent {
 impl AppEvent {
     pub fn source(&self) -> EventSource {
         match self {
-            Self::Wayland => EventSource::Wayland,
+            Self::Wayland | Self::WaylandDisconnected(_) => EventSource::Wayland,
             Self::Pty => EventSource::Pty,
             Self::Ime => EventSource::Ime,
             Self::Clipboard => EventSource::Clipboard,
@@ -41,16 +52,60 @@ impl AppEvent {
 #[derive(Debug, PartialEq, Eq)]
 pub enum AppEffect {
     Route(EventSource),
+    StopRendering(error::AppError),
 }
 
 pub fn reduce(event: &AppEvent) -> AppEffect {
-    AppEffect::Route(event.source())
+    match event {
+        AppEvent::WaylandDisconnected(kind) => {
+            AppEffect::StopRendering(error::AppError::new(error::Component::Wayland, *kind))
+        }
+        _ => AppEffect::Route(event.source()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{AppEffect, AppEvent, EventSource, TabId, WindowId, reduce};
     use std::any::TypeId;
+
+    #[test]
+    fn disconnect_reports_typed_error() {
+        use crate::{
+            clock::FakeClock,
+            damage::Rect,
+            error::{AppError, Component},
+            frame::FrameScheduler,
+            window::WindowSize,
+        };
+        use std::io::ErrorKind;
+        let clock = FakeClock::default();
+        let mut frames = FrameScheduler::new(WindowId(1), WindowSize::new(100, 100).unwrap());
+        let dirty = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        };
+        frames.damage(dirty);
+        let pending = frames.schedule(&clock).unwrap().unwrap();
+        let event = AppEvent::WaylandDisconnected(ErrorKind::BrokenPipe);
+        assert_eq!(event.source(), EventSource::Wayland);
+        let effect = reduce(&event);
+        let error = AppError::new(Component::Wayland, ErrorKind::BrokenPipe);
+        assert_eq!(effect, AppEffect::StopRendering(error));
+        assert_eq!(frames.apply_effect(&effect), Some(error));
+        assert!(!frames.frame_done(pending.callback));
+        frames.damage(dirty);
+        frames.resize(WindowSize::new(200, 200).unwrap());
+        assert!(frames.schedule(&clock).unwrap().is_none());
+        assert_eq!(frames.apply_effect(&effect), None);
+        assert_eq!(
+            frames.apply_effect(&AppEffect::Route(EventSource::Wayland)),
+            None
+        );
+        assert!(frames.schedule(&clock).unwrap().is_none());
+    }
 
     #[derive(Default)]
     struct FakeWaylandAdapter {

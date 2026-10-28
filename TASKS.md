@@ -33,33 +33,33 @@
   - **Dependencies:** `TASK-003`  |  **Unit Test:** `reducer_emits_expected_effect`
   - **Done:** 輸入 event 只產生可核對效果；無隱藏 I/O
 
-- [ ] **TASK-005 — 建立測試用 Wayland/PTY fake adapters**
+- [x] **TASK-005 — 建立測試用 Wayland/PTY fake adapters**
   - **Dependencies:** `TASK-004`  |  **Unit Test:** `fake_adapter_records_calls`
   - **Done:** Unit test 不需要 Sway、Shell 或真 Clipboard
 
-- [ ] **TASK-006 — 建立可注入 clock / timer abstraction**
+- [x] **TASK-006 — 建立可注入 clock / timer abstraction**
   - **Dependencies:** `TASK-005`  |  **Unit Test:** `fake_clock_advances_deterministically`
   - **Done:** Key Repeat、frame scheduling 可重現
 
-- [ ] **TASK-007 — 統一 error 類型與 context**
+- [x] **TASK-007 — 統一 error 類型與 context**
   - **Dependencies:** `TASK-001`  |  **Unit Test:** `error_preserves_context_without_secret`
   - **Done:** 錯誤包含 component 名稱但不包含敏感文字
 
 ## B. Native Wayland / Window / Input
 
-- [ ] **TASK-008 — 將 registry globals 轉為 `Capabilities`**
+- [x] **TASK-008 — 將 registry globals 轉為 `Capabilities`**
   - **Dependencies:** `TASK-005`  |  **Unit Test:** `capabilities_detect_protocols`
   - **Done:** 缺少 protocol 時回報功能不可用，不 crash
 
-- [ ] **TASK-009 — 產生 xdg-toplevel 建立 requests**
+- [x] **TASK-009 — 產生 xdg-toplevel 建立 requests**
   - **Dependencies:** `TASK-008`  |  **Unit Test:** `toplevel_request_order`
   - **Done:** 可獨立建立 Window 命令序列
 
-- [ ] **TASK-010 — 處理 configure + ack state**
+- [x] **TASK-010 — 處理 configure + ack state**
   - **Dependencies:** `TASK-009`  |  **Unit Test:** `configure_ack_matches_serial`
   - **Done:** 正確保存 width/height/serial
 
-- [ ] **TASK-011 — 處理 wl_keyboard enter/leave 狀態**
+- [x] **TASK-011 — 處理 wl_keyboard enter/leave 狀態**
   - **Dependencies:** `TASK-002`, `TASK-005`  |  **Unit Test:** `keyboard_focus_transitions`
   - **Done:** 失焦後無 key event 送到 PTY
 
@@ -71,33 +71,33 @@
   - **Dependencies:** `TASK-006`, `TASK-012`  |  **Unit Test:** `key_repeat_stops_on_release`
   - **Done:** 按鍵放開或失焦後停止 repeat
 
-- [ ] **TASK-014 — 轉換 pointer 座標及 click event**
+- [x] **TASK-014 — 轉換 pointer 座標及 click event**
   - **Dependencies:** `TASK-010`  |  **Unit Test:** `pointer_coordinates_are_scaled`
   - **Done:** click 路由結果具備 surface/local coordinates
 
-- [ ] **TASK-015 — 轉換 logical / physical scale**
+- [x] **TASK-015 — 轉換 logical / physical scale**
   - **Dependencies:** `TASK-010`  |  **Unit Test:** `scale_roundtrip_pixel_bounds`
   - **Done:** scale 變更唔會造成負數尺寸或 overflow
 
-- [ ] **TASK-016 — 記錄 dirty rectangles**
+- [x] **TASK-016 — 記錄 dirty rectangles**
   - **Dependencies:** `TASK-010`  |  **Unit Test:** `damage_is_clipped_to_surface`
   - **Done:** 輸出 dirty rect 不超出 Window
 
-- [ ] **TASK-017 — frame callback 狀態機**
+- [x] **TASK-017 — frame callback 狀態機**
   - **Dependencies:** `TASK-016`, `TASK-006`  |  **Unit Test:** `frame_callback_does_not_busy_loop`
   - **Done:** 無 dirty state 唔要求新 frame
 
-- [ ] **TASK-018 — Wayland 連線中斷事件映射**
+- [x] **TASK-018 — Wayland 連線中斷事件映射**
   - **Dependencies:** `TASK-008`  |  **Unit Test:** `disconnect_reports_typed_error`
   - **Done:** 可清楚停止 render 同回報連線錯誤
 
 ## C. PTY / Terminal Core
 
-- [ ] **TASK-019 — 建立 Shell argv，不用字串拼 shell command**
+- [x] **TASK-019 — 建立 Shell argv，不用字串拼 shell command**
   - **Dependencies:** `TASK-007`  |  **Unit Test:** `shell_argv_is_not_reinterpreted`
   - **Done:** 特殊字元維持 argv 元素
 
-- [ ] **TASK-020 — 建立 terminal environment map**
+- [x] **TASK-020 — 建立 terminal environment map**
   - **Dependencies:** `TASK-019`  |  **Unit Test:** `term_env_matches_supported_features`
   - **Done:** `TERM` / `COLORTERM` 不宣稱未支援能力
 
