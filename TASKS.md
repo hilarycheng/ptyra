@@ -143,7 +143,7 @@
   - **Dependencies:** `TASK-010`, `TASK-026`  |  **Unit Test:** `renderer_accepts_terminal_snapshot`
   - **Done:** renderer 與 PTY/Wayland I/O 解耦
 
-- [ ] **TASK-031 — cell coordinates 轉 pixel rectangles**
+- [x] **TASK-031 — cell coordinates 轉 pixel rectangles**
   - **Dependencies:** `TASK-030`, `TASK-015`  |  **Unit Test:** `cell_rect_rounding_is_stable`
   - **Done:** window size 改變後仍不重疊、不 overflow
 

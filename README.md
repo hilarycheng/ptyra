@@ -626,3 +626,48 @@ soft-wrap flags、前景／背景、palette override、cursor 同 mode，並確�
 
 Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-031 Verification (2026-10-29)
+
+```text
+TASK: TASK-031
+Status: DONE
+Dependencies: satisfied (TASK-030、TASK-015 已 [x])
+Changed files: src/renderer.rs, src/renderer/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline cell_rect_rounding_is_stable
+Result: PASS；test-first compilation 因未有 CellLayout 而預期失敗
+Workspace tests: PASS — 66 unit tests + 9 Linux PTY integration tests + 2 compile-fail doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  renderer 真畫面、Sway/Fcitx5 acceptance 同 Benchmark NOT RUN
+Security / Privacy impact: 尺寸先驗證，edges 先裁切再轉整數；
+  無效輸入回傳 metadata-only renderer error；冇新增 allocation、dependency、
+  unsafe、I/O、threads、payload logs 或系統改動
+Known limitations: pure library geometry；integer scale、viewport 原點 (0,0)；
+  caller 提供 cell advances，並先轉換 scrollback offset；
+  font metrics、draw commands、Preedit overlay 同實際 backend 尚未實作／驗證
+Ready for [x]: YES
+Approval: 使用者授權下一個 TASK，並要求完成後標記 [x] 同 commit；
+  已識別為 TASK-031。未要求 push。
+```
+
+`CellLayout::new` 重用 `WindowSize` 同 `Scale`，接收 logical window size 同
+caller 提供嘅 logical cell width／height。縮放後每方向必須介乎 1 至 i32::MAX
+physical pixels；NaN、infinity、非正值、過小／過大尺寸同 window scale overflow
+都回傳 `Renderer: InvalidInput`。呢個 API 唔計算 font metrics。
+
+`cell_rect` 將 zero-based viewport row／column 轉成 physical-pixel `Rect`。
+每個 edge 獨立用同一公式 round-to-nearest，半像素向上取整，令相鄰 cells
+共用邊界。邊緣 cell 裁切至 window；完全在外嘅 cell 回傳 None。
+計算冇逐格累加或配置 buffer；極端 indices 亦先裁切，唔會造成整數 overflow。
+Resize／scale 改變後由 caller 重新建立 layout；window resize 唔會拉伸 cell advances。
+
+新增 3 個 deterministic tests，涵蓋明確半像素結果、scale 1–4、重複 resize、
+相鄰邊界／完整覆蓋、window clipping、無效 floats、i32::MAX／usize::MAX，
+以及真 terminal snapshot 嘅 CJK spacer 同 combining cell mapping。既有 snapshot、
+CJK、cursor、damage、frame 同 PTY regression 全部通過。現有 callers、config、
+exports 同 fixtures 毋須改動；T032 保持未完成。
+
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
