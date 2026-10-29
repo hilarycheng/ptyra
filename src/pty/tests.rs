@@ -2,6 +2,90 @@ use super::*;
 use std::{cell::Cell, os::unix::ffi::OsStrExt, rc::Rc};
 
 #[test]
+fn pty_exit_does_not_exit_app() {
+    use crate::{
+        AppEffect, EventSource, WindowId, clock::FakeClock, frame::FrameScheduler, reduce,
+        window::WindowSize,
+    };
+    use std::os::unix::process::ExitStatusExt;
+
+    let mut first = ExitState::default();
+    let mut second = ExitState::default();
+    let mut frames = FrameScheduler::new(WindowId(1), WindowSize::new(80, 24).unwrap());
+    assert!(first.take_event(TabId(7), || Ok(None)).unwrap().is_none());
+    let status = ExitStatus::from_raw(23 << 8);
+    let event = first
+        .take_event(TabId(7), || Ok(Some(status)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(event.source(), EventSource::Pty);
+    let effect = reduce(&event);
+    assert_eq!(
+        effect,
+        AppEffect::PtyExited {
+            tab: TabId(7),
+            status
+        }
+    );
+    assert_eq!(frames.apply_effect(&effect), None);
+    frames.resize(WindowSize::new(100, 30).unwrap());
+    assert!(frames.schedule(&FakeClock::default()).unwrap().is_some());
+    assert!(
+        first
+            .take_event(TabId(7), || panic!("exit already delivered"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(second.take_event(TabId(8), || Ok(None)).unwrap().is_none());
+    let status = ExitStatus::from_raw(libc::SIGTERM);
+    let event = second
+        .take_event(TabId(8), || Ok(Some(status)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reduce(&event),
+        AppEffect::PtyExited {
+            tab: TabId(8),
+            status
+        }
+    );
+}
+
+#[test]
+fn pty_exit_wait_error_can_retry_without_payload() {
+    use crate::{AppEffect, reduce};
+    use std::os::unix::process::ExitStatusExt;
+
+    let mut state = ExitState::default();
+    for kind in [io::ErrorKind::Interrupted, io::ErrorKind::PermissionDenied] {
+        let error = state
+            .take_event(TabId(9), || Err(io::Error::new(kind, "secret child text")))
+            .err()
+            .unwrap();
+        assert_eq!(
+            error,
+            PtyExitError {
+                tab: TabId(9),
+                error: AppError::new(Component::Pty, kind)
+            }
+        );
+        assert!(!format!("{error:?}").contains("secret"));
+    }
+    let status = ExitStatus::from_raw(0);
+    let event = state
+        .take_event(TabId(9), || Ok(Some(status)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reduce(&event),
+        AppEffect::PtyExited {
+            tab: TabId(9),
+            status
+        }
+    );
+}
+
+#[test]
 fn pty_resize_sends_correct_dimensions() {
     let initial = PtySize {
         rows: 31,

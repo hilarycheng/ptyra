@@ -117,7 +117,7 @@
   - **Dependencies:** `TASK-021`  |  **Unit Test:** `pty_resize_sends_correct_dimensions`
   - **Done:** 只在尺寸有效或改變時送 resize request
 
-- [ ] **TASK-025 — 將 child exit 映射到 Tab event**
+- [x] **TASK-025 — 將 child exit 映射到 Tab event**
   - **Dependencies:** `TASK-021`, `TASK-003`  |  **Unit Test:** `pty_exit_does_not_exit_app`
   - **Done:** 一個 child exit 唔影響其他 child
 

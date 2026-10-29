@@ -1,6 +1,6 @@
-//! Linux PTY ownership, bounded reads and queued writes. Exit routing is a separate task.
+//! Linux PTY ownership, bounded I/O and Tab-scoped child exit events.
 use crate::{
-    TabId,
+    AppEvent, TabId,
     error::{AppError, Component},
     shell::{apply_terminal_environment, shell_command},
 };
@@ -176,6 +176,37 @@ impl ResizeState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PtyExitError {
+    pub tab: TabId,
+    pub error: AppError,
+}
+
+#[derive(Default)]
+struct ExitState {
+    delivered: bool,
+}
+
+impl ExitState {
+    fn take_event(
+        &mut self,
+        tab: TabId,
+        wait: impl FnOnce() -> io::Result<Option<ExitStatus>>,
+    ) -> Result<Option<AppEvent>, PtyExitError> {
+        if self.delivered {
+            return Ok(None);
+        }
+        let status = wait().map_err(|e| PtyExitError {
+            tab,
+            error: AppError::from_io(Component::Pty, e),
+        })?;
+        Ok(status.map(|status| {
+            self.delivered = true;
+            AppEvent::PtyExited { tab, status }
+        }))
+    }
+}
+
 /// Absolute program and cwd are explicit; no shell lookup or cwd fallback.
 /// Deliberately has no Debug implementation: arguments may contain secrets.
 pub struct PtySpawnRequest<'a> {
@@ -264,6 +295,7 @@ pub struct PtySession {
     read_state: ReadState,
     write_queue: WriteQueue,
     resize_state: ResizeState,
+    exit_state: ExitState,
 }
 
 impl PtySession {
@@ -277,6 +309,7 @@ impl PtySession {
             read_state: ReadState::default(),
             write_queue: WriteQueue::default(),
             resize_state: ResizeState { size },
+            exit_state: ExitState::default(),
         })
     }
 
@@ -343,12 +376,22 @@ impl PtySession {
         self.write_queue.flush(self.tab, self.master.as_mut())
     }
 
-    /// Lifecycle primitive only: no Tab event is emitted (TASK-025).
+    /// Lifecycle primitive; does not consume the event from take_exit_event.
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, AppError> {
         self.child
             .0
             .try_wait()
             .map_err(|e| AppError::from_io(Component::Pty, e))
+    }
+
+    /// Checks the owned child once without blocking, returning its exit once.
+    /// None means still running or already delivered; errors allow later retry.
+    /// Call on child-lifecycle wakeups, not in a busy loop. Dispatch a returned
+    /// event before discarding it. Prior try_wait/terminate calls do not consume it.
+    /// The master and queued I/O remain owned so output can still be drained.
+    pub fn take_exit_event(&mut self) -> Result<Option<AppEvent>, PtyExitError> {
+        self.exit_state
+            .take_event(self.tab, || self.child.0.try_wait())
     }
 
     /// Closes the master and synchronously kills/reaps this direct child.

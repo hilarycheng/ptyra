@@ -38,6 +38,10 @@ pub enum AppEvent {
     Wayland,
     WaylandDisconnected(std::io::ErrorKind),
     Pty,
+    PtyExited {
+        tab: TabId,
+        status: std::process::ExitStatus,
+    },
     Ime,
     Clipboard,
 }
@@ -46,7 +50,7 @@ impl AppEvent {
     pub fn source(&self) -> EventSource {
         match self {
             Self::Wayland | Self::WaylandDisconnected(_) => EventSource::Wayland,
-            Self::Pty => EventSource::Pty,
+            Self::Pty | Self::PtyExited { .. } => EventSource::Pty,
             Self::Ime => EventSource::Ime,
             Self::Clipboard => EventSource::Clipboard,
         }
@@ -57,6 +61,11 @@ impl AppEvent {
 pub enum AppEffect {
     Route(EventSource),
     StopRendering(error::AppError),
+    /// Records this Tab's child exit; does not close its PTY or stop the app.
+    PtyExited {
+        tab: TabId,
+        status: std::process::ExitStatus,
+    },
 }
 
 pub fn reduce(event: &AppEvent) -> AppEffect {
@@ -64,6 +73,10 @@ pub fn reduce(event: &AppEvent) -> AppEffect {
         AppEvent::WaylandDisconnected(kind) => {
             AppEffect::StopRendering(error::AppError::new(error::Component::Wayland, *kind))
         }
+        AppEvent::PtyExited { tab, status } => AppEffect::PtyExited {
+            tab: *tab,
+            status: *status,
+        },
         _ => AppEffect::Route(event.source()),
     }
 }

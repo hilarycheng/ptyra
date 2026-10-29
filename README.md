@@ -15,7 +15,7 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前只有基礎 li
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
-- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue 同 PTY row/column resize。
+- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize 同單次 child exit → Tab event mapping。
 - `src/main.rs` 只印出應用程式名稱。PTY spawn/read/write/resize 仍係 library API；尚未有 Wayland 連線/dispatch、keyboard/paste/IME 輸入接線、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
@@ -369,3 +369,46 @@ Final main-repository checks: 07:56:42.877–07:56:46.266 UTC (all PASS, same so
 All build/test commands used Cargo jobs=2, test threads=2 and CPU affinity 0,1,
 inherited by test children. T25 remains analysis only; no exit-event mapping is
 implemented by this change.
+
+## TASK-025 Verification (2026-10-29)
+
+```text
+TASK: TASK-025
+Status: DONE — implementation verified; completion checkbox explicitly approved
+Dependencies: satisfied (TASK-021, TASK-003)
+Changed files: src/lib.rs, src/pty.rs, src/pty/tests.rs, tests/pty_spawn.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline pty_exit_does_not_exit_app
+Result: PASS; test-first compilation failed on missing exit API before implementation
+Workspace tests: PASS — 42 unit tests + 9 Linux PTY integration tests + 1 doc-test
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: new real PTY exit/isolation/output fixture PASS;
+  all prior PTY fixtures PASS; Sway/Fcitx5 and GUI acceptance NOT RUN
+Security / Privacy impact: owned-child wait only; metadata-only errors;
+  no new dependencies, unsafe code, threads, payload logs or system changes
+Known limitations: library event mapping only; lifecycle wakeups/event-loop dispatch
+  and Tab registry application remain unimplemented; no usable GUI Terminal
+Ready for [x]: YES
+Approval: user explicitly approved TASK-025 [x] and the scoped commit after test results
+```
+
+`PtySession::take_exit_event` checks its own child without blocking and returns
+`AppEvent::PtyExited` once, retaining the session's `TabId` and `ExitStatus`.
+The pure reducer preserves both in a Tab-scoped effect without stopping rendering.
+Wait errors preserve retryability and expose only Tab/component/error-kind metadata.
+Existing `try_wait` and `terminate` calls do not consume this event. Callers must
+dispatch returned events; repeated calls do not replay them. A lifecycle wakeup
+source must drive checks without busy-polling; this task adds no event loop.
+
+Exit detection does not close the master, discard pending input, or mark read EOF.
+Remaining output can still be drained. Deterministic tests cover running/exited
+states, normal/signal statuses, duplicate suppression, per-session isolation,
+rendering continuation and error retry/redaction. The real PTY fixture verifies
+exit status 23, buffered output after exit, a second live child, events after
+explicit termination and legacy waiting, and descriptor cleanup.
+
+Build/test/Clippy used Cargo jobs=2, test threads=2, CPU affinity 0,1 and
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`. At completion approval, only the
+checkbox and verification record changed; the passing source/tests remain unchanged.
+Cargo checks were not rerun for this documentation-only status update. The user
+authorized a scoped TASK-025 commit; no push was requested or performed.

@@ -109,6 +109,57 @@ fn pty_fd_count() -> usize {
 }
 
 #[test]
+fn linux_pty_exit_event_is_once_and_preserves_other_child_and_output() {
+    use ptyra::{AppEffect, AppEvent, reduce};
+
+    let _lock = FIXTURE_LOCK.lock().unwrap();
+    let baseline = pty_fd_count();
+    let mut first = spawn_script("printf tail; exit 23");
+    let args = [OsString::from("-c"), OsString::from("printf R; read line")];
+    let mut second_request = request(&args);
+    second_request.tab = TabId(43);
+    let mut second = PtySession::spawn(second_request).unwrap();
+    wait_for_ready(&mut second);
+    assert!(second.take_exit_event().unwrap().is_none());
+    let start = Instant::now();
+    let event = loop {
+        if let Some(event) = first.take_exit_event().unwrap() {
+            break event;
+        }
+        assert!(start.elapsed() < DEADLINE, "exit fixture exceeded deadline");
+        thread::sleep(Duration::from_millis(5));
+    };
+    let AppEvent::PtyExited { tab, status } = event else {
+        panic!("expected child exit");
+    };
+    assert_eq!(tab, TabId(42));
+    assert_eq!(status.code(), Some(23));
+    assert_eq!(reduce(&event), AppEffect::PtyExited { tab, status });
+    assert!(first.take_exit_event().unwrap().is_none());
+    assert_eq!(first.try_wait().unwrap(), Some(status));
+    assert!(first.master_fd().is_some());
+    assert_eq!(collect(&mut first), (b"tail".to_vec(), status));
+    assert!(first.take_exit_event().unwrap().is_none());
+    assert!(second.try_wait().unwrap().is_none());
+    assert!(second.take_exit_event().unwrap().is_none());
+    second.terminate().unwrap();
+    let status = second.try_wait().unwrap().unwrap();
+    assert!(!status.success());
+    let event = second.take_exit_event().unwrap().unwrap();
+    assert_eq!(
+        reduce(&event),
+        AppEffect::PtyExited {
+            tab: TabId(43),
+            status
+        }
+    );
+    assert!(second.take_exit_event().unwrap().is_none());
+    drop(first);
+    drop(second);
+    assert_eq!(pty_fd_count(), baseline);
+}
+
+#[test]
 fn linux_pty_preserves_spawn_contract() {
     let _lock = FIXTURE_LOCK.lock().unwrap();
     // Fixed trusted fixture; all test values are separate positional arguments.
