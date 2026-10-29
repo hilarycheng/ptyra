@@ -1,4 +1,4 @@
-//! Linux PTY process ownership and bounded byte reads. Writes/exit routing are separate tasks.
+//! Linux PTY ownership, bounded reads and queued writes. Exit routing is a separate task.
 use crate::{
     TabId,
     error::{AppError, Component},
@@ -24,6 +24,13 @@ use std::{
     },
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
+};
+
+mod write;
+use write::WriteQueue;
+pub use write::{
+    MAX_PTY_PENDING_BYTES, MAX_PTY_WRITE_ATTEMPTS, MAX_PTY_WRITE_BYTES, PtyEnqueueResult,
+    PtyWriteError, PtyWriteFailure, PtyWriteResult, PtyWriteStatus,
 };
 
 pub const MAX_CWD_BYTES: usize = 4096;
@@ -199,6 +206,7 @@ pub struct PtySession {
     master: Option<File>,
     child: OwnedChild,
     read_state: ReadState,
+    write_queue: WriteQueue,
 }
 
 impl PtySession {
@@ -209,6 +217,7 @@ impl PtySession {
             master: Some(spawned.master),
             child: spawned.child,
             read_state: ReadState::default(),
+            write_queue: WriteQueue::default(),
         })
     }
 
@@ -234,6 +243,28 @@ impl PtySession {
         self.read_state.read(self.tab, self.master.as_mut(), buffer)
     }
 
+    /// Copies literal bytes into this session's bounded queue, without I/O.
+    /// QueueFull rejects the entire input; the caller retains responsibility for
+    /// rejected bytes. No encoding, newline/paste processing, or logging occurs.
+    pub fn enqueue_write(&mut self, bytes: &[u8]) -> Result<PtyEnqueueResult, PtyWriteError> {
+        self.write_queue
+            .enqueue(self.tab, self.master.is_some(), bytes)
+    }
+
+    /// Unwritten bytes still owned by this session, including after an error.
+    pub fn pending_write_bytes(&self) -> usize {
+        self.write_queue.pending()
+    }
+
+    /// Attempts at most 16 KiB / four syscalls, stopping at the first successful
+    /// write. Only successfully written bytes leave the queue. Wait for writable
+    /// readiness after WouldBlock; do not busy-poll Empty/Interrupted/errors.
+    /// This does not call Write::flush or write_all, nor emit a Tab event.
+    /// Do not interleave direct writes through master_fd with this queue.
+    pub fn flush_write(&mut self) -> Result<PtyWriteResult, PtyWriteError> {
+        self.write_queue.flush(self.tab, self.master.as_mut())
+    }
+
     /// Lifecycle primitive only: no Tab event is emitted (TASK-025).
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, AppError> {
         self.child
@@ -244,6 +275,8 @@ impl PtySession {
 
     /// Closes the master and synchronously kills/reaps this direct child.
     /// Waiting can block on kernel process teardown; no polling thread is added.
+    /// Pending input stays owned until session drop; further enqueue/flush calls
+    /// return Closed rather than transferring it to another session.
     pub fn terminate(&mut self) -> Result<(), AppError> {
         self.master.take();
         self.child

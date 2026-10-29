@@ -15,8 +15,8 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前只有基礎 li
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
-- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter 同有界 output byte 讀取。
-- `src/main.rs` 只印出應用程式名稱。PTY spawn/read 仍係 library API；尚未有 Wayland 連線/dispatch、PTY write queue、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
+- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取同 per-session input byte queue。
+- `src/main.rs` 只印出應用程式名稱。PTY spawn/read/write 仍係 library API；尚未有 Wayland 連線/dispatch、keyboard/paste/IME 輸入接線、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
 
@@ -159,7 +159,7 @@ contract. No unrelated task implementation or system changes are included.
 
 ```text
 TASK: TASK-021
-Status: TODO — implementation verified; post-test checkbox approval pending
+Status: DONE — implementation verified; post-test completion status approved
 Dependencies: satisfied (TASK-005, TASK-019, TASK-020)
 Changed files: Cargo.toml, Cargo.lock, src/lib.rs, src/pty.rs, src/pty/tests.rs,
   tests/pty_spawn.rs, DEPENDENCIES.md, README.md
@@ -177,9 +177,9 @@ Known limitations: explicit absolute executable/cwd; no default-shell resolver,
   output stream, write queue, runtime resize or child-exit Tab routing;
   synchronous direct-child cleanup may wait on kernel teardown;
   no recursive descendant cleanup or shell sandbox; no usable GUI Terminal
-Ready for [x]: YES technically; separate completion-status approval still pending
-Approval: user approved TASK-021 implementation and local commit;
-  AGENTS.md section 4 step 8 requires requesting checkbox approval after checks
+Ready for [x]: YES
+Approval: user explicitly approved TASK-021 completion status after receiving
+  its test results; checkbox updated before starting TASK-023
 ```
 
 The PTY adapter returns a TabId-owned `PtySession` or a typed `PtySpawnError`.
@@ -196,15 +196,14 @@ Final staged checks: 07:04:26.722–07:04:28.564 UTC (all PASS).
 Final main-repository checks: 07:06:29.638–07:06:32.400 UTC (all PASS, same source).
 Every build/test used Cargo jobs=2, test threads=2 and CPU affinity 0,1, inherited
 by test children. No stress workload, system installation or app restart was used.
-TASK-021's checkbox is unchanged pending the required post-test status approval.
+TASK-021's checkbox is now checked following explicit post-test status approval.
 
 ## TASK-022 Verification (2026-10-29)
 
 ```text
 TASK: TASK-022
-Status: TODO — implementation verified; dependency/status checkbox approvals pending
-Dependencies: TASK-021 implementation and regression verified at a22adbc;
-  its checkbox remains [ ] pending explicit completion-status approval
+Status: DONE — implementation verified; post-test completion status approved
+Dependencies: satisfied (TASK-021, checked after explicit post-test approval)
 Changed files: src/pty.rs, src/pty/tests.rs, tests/pty_spawn.rs, README.md
 Unit test: cargo test --workspace --locked --offline pty_read_preserves_byte_order
 Result: PASS; test-first failure recorded before implementation
@@ -218,9 +217,9 @@ Security / Privacy impact: bounded nonblocking reads; no payload logs, decoding,
 Known limitations: library read API only; no runtime readiness/event-loop wiring,
   write queue, terminal parser, dynamic resize or child-exit Tab events;
   per-tick fairness/flood scheduling remains a later task
-Ready for [x]: NO — dependency checkbox and post-test status approval remain pending
-Approval: user explicitly approved TASK-022 implementation and local commit;
-  no TASK-021/TASK-022 completion status or later-task implementation inferred
+Ready for [x]: YES
+Approval: user explicitly approved TASK-021 and TASK-022 completion statuses
+  after receiving test results; both checked before starting approved TASK-023
 ```
 
 `PtySession::read_chunk` uses a caller-provided nonempty buffer without allocating
@@ -249,7 +248,71 @@ Test-first run: 2026-10-29 07:27:48.564–07:27:50.348 UTC (expected FAIL).
 Final staged checks: 07:28:55.005–07:28:56.974 UTC (all PASS).
 Final main-repository checks: 07:30:56.143–07:30:59.110 UTC (all PASS, same source).
 Every build/test used Cargo jobs=2, test threads=2 and CPU affinity 0,1, inherited
-by test children. TASKS.md is unchanged: T21's implementation is available and
-verified, but its formal completion-status gate is still pending. The user's
-explicit T22 implementation approval was followed without inferring checkbox
-approval or permission to implement T23. T23 is analysis only.
+by test children. At the T22 implementation checkpoint, both completion statuses
+were left pending. The user subsequently explicitly approved T21 and T22 after
+receiving their results, so both checkboxes are now checked. TASK-023 implementation
+was separately approved in that later request.
+
+## TASK-023 Verification (2026-10-29)
+
+```text
+TASK: TASK-023
+Status: TODO — implementation verified; post-test completion-status approval pending
+Dependencies: satisfied (TASK-021); T21/T22 checkboxes updated after explicit approval
+Changed files: src/pty.rs, src/pty/write.rs, src/pty/write/tests.rs,
+  tests/pty_spawn.rs, README.md; TASKS.md contains only approved T21/T22 status updates
+Unit test: cargo test --workspace --locked --offline pty_write_handles_partial_writes
+Result: PASS; test-first failure recorded before implementation
+Workspace tests: PASS — 37 unit tests + 7 Linux PTY integration tests + 1 doc-test
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 2 new real PTY write fixtures plus 5 prior fixtures PASS;
+  real Wayland/Sway/Fcitx5, GUI terminal acceptance and benchmarks NOT RUN
+Security / Privacy impact: per-session input cap and fallible allocation;
+  metadata-only results/errors; no payload Debug/logging, new dependencies,
+  unsafe code, threads or system configuration changes
+Known limitations: library queue API only; no readiness/event-loop wiring,
+  keyboard/paste/IME routing, terminal parser, dynamic resize or exit Tab events;
+  producers must retain/retry rejected enqueue data without busy-polling
+Ready for [x]: YES technically; separate post-test completion-status approval pending
+Approval: user approved T23 implementation/commit and T21/T22 completion statuses;
+  no post-test T23 status or T24 implementation approval inferred
+```
+
+`enqueue_write` atomically accepts literal bytes into that session's queue, with
+a 64 KiB logical pending-byte limit. Exceeding remaining capacity returns QueueFull
+without accepting a prefix or changing existing bytes. Allocation is attempted
+before copying; failure returns metadata without partially accepting input. Empty
+input is a no-op for an open session. No encoding or paste/newline transformation
+is added. Kernel terminal processing is unchanged.
+
+`flush_write` submits at most 16 KiB and makes at most four write attempts. A
+successful partial write removes exactly that many leading bytes and immediately
+returns Written with the remaining count. EINTR is retried within the attempt
+budget; WouldBlock returns for writable readiness. Exhausted retries return
+Interrupted. WriteZero and other errors return immediately with the queue intact.
+Empty queues make no I/O call. This API does not use write_all or Write::flush and
+does not contain an event loop. Callers must avoid busy-polling wait/error statuses.
+
+All results/errors identify TabId and pending count, without input payloads.
+The queue belongs to its PtySession and is not redirected to another Tab. After
+explicit termination, enqueue/flush return Closed; unwritten bytes remain owned
+until that session is dropped. No implicit replay, discard-on-error or descendant
+process management is added.
+
+Deterministic fake writers cover partial progress, appending after partial writes,
+EINTR/WouldBlock, queue capacity and atomic rejection, reuse of drained storage,
+byte/attempt bounds, WriteZero, error redaction and independent session state.
+The real Linux fixture uses fixed commands with child-local raw/no-echo mode and
+`/usr/bin/head -c 1024`; two sessions receive different 1,024-byte binary payloads
+and return them exactly through bounded reads. A second fixture verifies pending
+ownership and Closed errors after explicit termination. Partial-write/EINTR
+patterns are forced by fake writers, not assumed from kernel scheduling. Fixtures
+have output bounds/deadlines and only manage their own children.
+
+Test-first run: 2026-10-29 07:39:42.018–07:39:44.030 UTC (expected FAIL).
+Final staged checks: 07:41:17.249–07:41:19.599 UTC (all PASS).
+Final main-repository checks: 07:43:07.444–07:43:10.599 UTC (all PASS, same source).
+All build/test commands used Cargo jobs=2, test threads=2 and CPU affinity 0,1,
+inherited by test children. T23's checkbox remains pending post-test approval.
+T24 is analysis only; no resize implementation is included in this change.

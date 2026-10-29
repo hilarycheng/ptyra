@@ -101,11 +101,11 @@
   - **Dependencies:** `TASK-019`  |  **Unit Test:** `term_env_matches_supported_features`
   - **Done:** `TERM` / `COLORTERM` 不宣稱未支援能力
 
-- [ ] **TASK-021 — 透過 PTY adapter 啟動 Shell**
+- [x] **TASK-021 — 透過 PTY adapter 啟動 Shell**
   - **Dependencies:** `TASK-005`, `TASK-019`, `TASK-020`  |  **Unit Test:** `pty_spawn_failure_is_isolated`
   - **Done:** Spawn 成功/失敗都有 typed result
 
-- [ ] **TASK-022 — 讀取 PTY output chunk stream**
+- [x] **TASK-022 — 讀取 PTY output chunk stream**
   - **Dependencies:** `TASK-021`  |  **Unit Test:** `pty_read_preserves_byte_order`
   - **Done:** 分段讀取唔會遺失或重排 bytes
 

@@ -8,7 +8,10 @@ use nix::{
 };
 use ptyra::{
     TabId,
-    pty::{PtyReadResult, PtyReadStatus, PtySession, PtySize, PtySpawnRequest, SpawnStage},
+    pty::{
+        PtyReadResult, PtyReadStatus, PtySession, PtySize, PtySpawnRequest, PtyWriteFailure,
+        PtyWriteStatus, SpawnStage,
+    },
 };
 use std::{
     ffi::{OsStr, OsString},
@@ -331,5 +334,108 @@ fn linux_pty_read_waits_and_isolates_sessions() {
     assert_eq!(output, b"second");
     drop(first);
     drop(second);
+    assert_eq!(pty_fd_count(), baseline);
+}
+
+fn spawn_write_fixture(tab: TabId) -> PtySession {
+    let args = [
+        OsString::from("-c"),
+        OsString::from("set -eu; /usr/bin/stty raw -echo; printf R; exec /usr/bin/head -c 1024"),
+        OsString::from("ptyra-fixture"),
+    ];
+    let mut r = request(&args);
+    r.tab = tab;
+    PtySession::spawn(r).unwrap()
+}
+
+#[test]
+fn linux_pty_write_queue_delivers_exact_bytes_per_session() {
+    let _lock = FIXTURE_LOCK.lock().unwrap();
+    let baseline = pty_fd_count();
+    let mut sessions = [
+        spawn_write_fixture(TabId(51)),
+        spawn_write_fixture(TabId(52)),
+    ];
+    let payloads: [Vec<u8>; 2] = [
+        (0..1024).map(|i| (i % 256) as u8).collect(),
+        (0..1024).map(|i| ((i % 256) as u8) ^ 0x5a).collect(),
+    ];
+    for (session, payload) in sessions.iter_mut().zip(&payloads) {
+        wait_for_ready(session); // Child-local raw mode established before input.
+        assert_eq!(session.enqueue_write(&payload[..13]).unwrap().pending, 13);
+        let result = session.enqueue_write(&payload[13..]).unwrap();
+        assert_eq!(result.tab, session.tab());
+        assert_eq!(result.pending, 1024);
+    }
+    let start = Instant::now();
+    let mut output = [Vec::new(), Vec::new()];
+    let mut eof = [false; 2];
+    let mut exited = [false; 2];
+    loop {
+        for (i, session) in sessions.iter_mut().enumerate() {
+            if session.pending_write_bytes() > 0 {
+                let result = session.flush_write().unwrap();
+                assert_eq!(result.tab, session.tab());
+                assert!(matches!(
+                    result.status,
+                    PtyWriteStatus::Written(_)
+                        | PtyWriteStatus::WouldBlock
+                        | PtyWriteStatus::Interrupted
+                ));
+            }
+            if !eof[i] {
+                let mut buffer = [0; 31];
+                let result = session.read_chunk(&mut buffer).unwrap();
+                assert_eq!(result.tab, session.tab());
+                match result.status {
+                    PtyReadStatus::Data(n) => output[i].extend_from_slice(&buffer[..n]),
+                    PtyReadStatus::Eof => eof[i] = true,
+                    PtyReadStatus::WouldBlock | PtyReadStatus::Interrupted => {}
+                }
+                assert!(output[i].len() <= 1024, "fixture output bound");
+            }
+            if let Some(status) = session.try_wait().unwrap() {
+                assert!(status.success());
+                exited[i] = true;
+            }
+        }
+        if eof.iter().all(|v| *v) && exited.iter().all(|v| *v) {
+            break;
+        }
+        if start.elapsed() >= DEADLINE {
+            for session in &mut sessions {
+                session.terminate().unwrap();
+            }
+            panic!("PTY write fixtures exceeded five seconds");
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(output, payloads);
+    for session in &mut sessions {
+        assert_eq!(session.pending_write_bytes(), 0);
+        assert_eq!(session.flush_write().unwrap().status, PtyWriteStatus::Empty);
+    }
+    drop(sessions);
+    assert_eq!(pty_fd_count(), baseline);
+}
+
+#[test]
+fn linux_pty_closed_write_retains_owned_pending_bytes() {
+    let _lock = FIXTURE_LOCK.lock().unwrap();
+    let baseline = pty_fd_count();
+    let mut session = spawn_script("printf R; read line");
+    wait_for_ready(&mut session);
+    session.enqueue_write(b"unsent").unwrap();
+    session.terminate().unwrap();
+    let error = session.flush_write().unwrap_err();
+    assert_eq!(error.tab, TabId(42));
+    assert_eq!(error.reason, PtyWriteFailure::Closed);
+    assert_eq!(error.pending, 6);
+    assert_eq!(
+        session.enqueue_write(b"more").unwrap_err().reason,
+        PtyWriteFailure::Closed
+    );
+    assert_eq!(session.pending_write_bytes(), 6);
+    drop(session);
     assert_eq!(pty_fd_count(), baseline);
 }
