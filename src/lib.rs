@@ -7,6 +7,7 @@ pub mod input;
 pub mod keymap;
 #[cfg(target_os = "linux")]
 pub mod pty;
+pub mod renderer;
 pub mod repeat;
 pub mod shell;
 pub mod terminal;

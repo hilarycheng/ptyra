@@ -8,7 +8,7 @@ use alacritty_terminal::{
     event::VoidListener,
     grid::{Dimensions, Grid},
     term::{
-        Config, Osc52, TermMode,
+        Config, Osc52, RenderableContent, TermMode,
         cell::{Cell, Flags},
     },
     vte::ansi::{Processor, Timeout},
@@ -37,6 +37,14 @@ pub struct TerminalError {
 pub struct Terminal {
     tab: TabId,
     core: Option<Core>,
+}
+
+/// Borrowed view of one Tab's visible cells and render state; no payload Debug.
+pub struct TerminalSnapshot<'a> {
+    pub tab: TabId,
+    pub rows: usize,
+    pub columns: usize,
+    pub content: RenderableContent<'a>,
 }
 
 impl Terminal {
@@ -134,6 +142,26 @@ impl Terminal {
     /// None means a stream resource violation stopped this adapter.
     pub fn mode(&self) -> Option<&TermMode> {
         self.core.as_ref().map(|core| core.term.mode())
+    }
+
+    /// Borrows visible content without copying the grid or scrollback.
+    /// None means the adapter stopped. The borrow prevents concurrent mutation.
+    ///
+    /// ```compile_fail
+    /// use ptyra::{TabId, terminal::Terminal};
+    /// let mut terminal = Terminal::new(TabId(1), 2, 4).unwrap();
+    /// let snapshot = terminal.snapshot().unwrap();
+    /// terminal.feed(TabId(1), b"changed").unwrap();
+    /// assert_eq!(snapshot.content.display_iter.count(), 8);
+    /// ```
+    pub fn snapshot(&self) -> Option<TerminalSnapshot<'_>> {
+        let core = self.core.as_ref()?;
+        Some(TerminalSnapshot {
+            tab: self.tab,
+            rows: core.term.grid().screen_lines(),
+            columns: core.term.grid().columns(),
+            content: core.term.renderable_content(),
+        })
     }
 }
 

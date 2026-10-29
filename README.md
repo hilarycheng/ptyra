@@ -15,8 +15,8 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前只有基礎 li
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
-- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize、單次 child exit → Tab event mapping，以及保留跨 chunk parser state 嘅 terminal core adapter。
-- `src/main.rs` 只印出應用程式名稱。PTY spawn/read/write/resize 同 terminal core 仍係 library API；尚未有 Wayland 連線/dispatch、keyboard/paste/IME 輸入接線、renderer、Clipboard、IME 或 GUI Tabs 接線。
+- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize、單次 child exit → Tab event mapping，以及保留跨 chunk parser state 嘅 terminal core adapter 同 renderer 資料接口。
+- `src/main.rs` 只印出應用程式名稱。PTY spawn/read/write/resize、terminal core 同 renderer 接口仍係 library API；尚未有 Wayland 連線/dispatch、keyboard/paste/IME 輸入接線、實際 renderer backend、Clipboard、IME 或 GUI Tabs 接線。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
 
@@ -580,6 +580,49 @@ Unicode cells、combining marks 同 wrap flags 保持原樣。Alternate screen �
 新增 5 個 deterministic tests：零／一／三行上限持續輸出 1,105 行並逐次核對次序；
 預設 5,000 行上限；Unicode／soft-wrap 保存；Tab 隔離、alternate screen 同 reset；
 容量邊界、極端值同 cache 預算檢查。現有 callers 使用原本 constructor，毋須改 signature。
+
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-030 Verification (2026-10-29)
+
+```text
+TASK: TASK-030
+Status: DONE
+Dependencies: satisfied (TASK-010、TASK-026 已 [x])
+Changed files: src/lib.rs, src/terminal.rs, src/renderer.rs,
+  src/renderer/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline renderer_accepts_terminal_snapshot
+Result: PASS；test-first compilation 因未有 renderer 接口型別而預期失敗
+Workspace tests: PASS — 63 unit tests + 9 Linux PTY integration tests + 2 compile-fail doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  renderer 真畫面、Sway/Fcitx5 acceptance 同 Benchmark NOT RUN
+Security / Privacy impact: snapshot 借用有界 core state，唔複製 grid/history；
+  payload 型別冇 Debug；errors 使用 metadata-only AppError；
+  冇新增 dependency、unsafe、I/O、threads、logs 或系統改動
+Known limitations: 同步借用式 library 接口；未有 font、draw commands、
+  backend buffer、presentation 或 runtime 接線；Preedit overlay 尚未實作／驗證
+Ready for [x]: YES
+Approval: 使用者明確指定 T030，並授權完成後標記 [x] 同 commit；未要求 push。
+```
+
+`Terminal::snapshot` 連同 TabId、rows、columns 提供 core 原有 `RenderableContent`。
+Snapshot 保留 visible-cell iterator、顏色、cursor、mode 同 display offset；
+正常迭代只包含目前 viewport，唔遍歷整份 scrollback。借用期間唔可以修改 terminal；
+adapter 停止後回傳 None。冇額外 grid/history allocation，亦冇開放 mutable core。
+
+`RenderInput` 保存 WindowId、已確認嘅 logical window size 同 terminal snapshot。
+`Renderer` 接收呢份資料，回傳 `RenderOutput<Frame>` 或 `AppError`。
+Output 包含 WindowId、TabId、logical size 同 backend 自定嘅 frame data。
+接口唔選定 SHM／GPU backend；實作者只準備 frame，PTY／Wayland I/O 同提交畫面
+由外部 adapter 負責。現有 production callers、config 同 PTY fixtures 毋須改動。
+
+Fake renderer 驗證 configure size、可見 cells 次序、CJK／combining marks、
+soft-wrap flags、前景／背景、palette override、cursor 同 mode，並確認 grid 冇被改寫。
+另外驗證 cell 借用 identity、main／alternate screen、Tab 隔離、stopped state，
+以及 compile-fail borrow contract。既有 CJK、cursor、damage 同 frame regression 全部通過。
 
 Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。

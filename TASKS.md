@@ -139,7 +139,7 @@
 
 ## D. Rendering / Font
 
-- [ ] **TASK-030 — 定義 renderer 輸入/輸出資料結構**
+- [x] **TASK-030 — 定義 renderer 輸入/輸出資料結構**
   - **Dependencies:** `TASK-010`, `TASK-026`  |  **Unit Test:** `renderer_accepts_terminal_snapshot`
   - **Done:** renderer 與 PTY/Wayland I/O 解耦
 
