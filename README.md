@@ -462,7 +462,7 @@ Stream OSC／combining 超額會回傳 InvalidData，釋放該 core；後續 fee
 改送另一個 Tab。Adapter 本身唔殺 Shell。暫存配置同 source 邊界詳見
 [DEPENDENCIES.md](DEPENDENCIES.md#dependency-review--task-026-2026-10-29)。
 
-未實作 T027 mode API、T029 scrollback policy、T030 renderer snapshot、
+T026 完成時未實作 T027 mode API、T029 scrollback policy、T030 renderer snapshot、
 Clipboard routing、IME、GUI Tabs 或 runtime event loop。T099 保持未完成；
 本次最小 OSC 防護唔代表其完整 rejection/recovery policy 已驗收。
 `TERM=dumb` 同現有環境策略保持不變。
@@ -473,3 +473,39 @@ Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1，
 
 完成批准時只更新 checkbox 同驗證紀錄，source/tests 同上次通過檢查嘅版本一致，
 因此冇為呢次文件更新重跑 Cargo checks。
+
+## TASK-027 Verification (2026-10-29)
+
+```text
+TASK: TASK-027
+Status: DONE
+Dependencies: satisfied (TASK-026 已 [x])
+Changed files: src/terminal.rs, src/terminal/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline terminal_modes_track_sequences
+Result: PASS；test-first compilation 因未有 Terminal::mode 而預期失敗
+Workspace tests: PASS — 52 unit tests + 9 Linux PTY integration tests + 1 doc-test
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  Sway/Fcitx5、GUI acceptance 同 Benchmark NOT RUN
+Security / Privacy impact: 唯讀查詢；冇新增 dependency、unsafe、I/O 或 payload logs
+Known limitations: mode flags 反映 core state；未有 Clipboard/render runtime 接線，
+  亦唔代表 Bracketed Paste 安全策略或整體 Terminal 功能已完成
+Ready for [x]: YES
+Approval: 使用者批准下一個 TASK，並授權通過檢查後自行標記 [x] 同 commit。
+  TASK-027 已 [x]；未要求 push。
+```
+
+`Terminal::mode` 借用 core 現有 `TermMode`，供 caller 查詢 `ALT_SCREEN` 同
+`BRACKETED_PASTE`。冇額外 mode cache；ANSI 解讀繼續由 core 負責。
+Adapter 因資源上限停止後回傳 None，唔會將「無 core」誤報為兩個 mode 都關閉。
+呢個 API 只反映 terminal state，唔宣稱 app 已實作所有相關功能。
+
+主測試以分段 bytes 驗證 DEC private mode 1049／2004 嘅開關、重複 set/reset、
+合併 parameters、RIS reset、main/alternate grid 對應，同兩個 instances 互不污染。
+另一測試驗證錯 TabId／過大 call 保留原有 modes，stream 超額停止後唔暴露舊 flags。
+既有 Kitty 停用測試改用同一個公開唯讀 API。
+
+本次冇改變 parser、PTY 或 Clipboard policy。Build/test/Clippy 使用 Cargo jobs=2、
+test threads=2、CPU affinity 0,1 同 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；
+所有 Cargo build checks 均使用 locked/offline。

@@ -8,7 +8,7 @@ use alacritty_terminal::{
     event::VoidListener,
     grid::{Dimensions, Grid},
     term::{
-        Config, Osc52,
+        Config, Osc52, TermMode,
         cell::{Cell, Flags},
     },
     vte::ansi::{Processor, Timeout},
@@ -94,6 +94,13 @@ impl Terminal {
     /// None means a stream resource violation stopped this adapter.
     pub fn grid(&self) -> Option<&Grid<Cell>> {
         self.core.as_ref().map(|core| core.term.grid())
+    }
+
+    /// Current core flags, including ALT_SCREEN and BRACKETED_PASTE.
+    /// These describe terminal state, not implemented application capabilities.
+    /// None means a stream resource violation stopped this adapter.
+    pub fn mode(&self) -> Option<&TermMode> {
+        self.core.as_ref().map(|core| core.term.mode())
     }
 }
 

@@ -1,6 +1,7 @@
 use super::*;
 use alacritty_terminal::{
     index::{Column, Line, Point},
+    term::TermMode,
     vte::ansi::{Color, NamedColor},
 };
 
@@ -157,7 +158,6 @@ fn terminal_osc_bound_tracks_escape_controls_and_terminators() {
 
 #[test]
 fn terminal_external_events_are_inert_and_kitty_stays_disabled() {
-    use alacritty_terminal::term::TermMode;
     let mut term = terminal(1);
     // Clipboard requests, title, device query, and hyperlink have no I/O listener.
     feed(&mut term, b"\x1b]52;c;cHJpdmF0ZQ==\x07\x1b]52;c;?\x07\x1b]2;private\x07\x1b[5n\x1b]8;;https://example.invalid\x1b\\");
@@ -166,15 +166,73 @@ fn terminal_external_events_are_inert_and_kitty_stays_disabled() {
     }
     assert!(
         !term
-            .core
-            .as_ref()
-            .unwrap()
-            .term
             .mode()
+            .unwrap()
             .intersects(TermMode::KITTY_KEYBOARD_PROTOCOL)
     );
     feed(&mut term, b"Q");
     assert_eq!(term.grid().unwrap()[Line(0)][Column(0)].c, 'Q');
+}
+
+#[test]
+fn terminal_modes_track_sequences() {
+    let tracked = TermMode::ALT_SCREEN | TermMode::BRACKETED_PASTE;
+    let mut term = terminal(1);
+    let mut other = terminal(2);
+    assert_eq!(*term.mode().unwrap() & tracked, TermMode::empty());
+    let steps: &[(&[u8], TermMode)] = &[
+        (b"\x1b[?2004h", TermMode::BRACKETED_PASTE),
+        (b"\x1b[?1049h", tracked),
+        (b"\x1b[?1049h", tracked),
+        (b"\x1b[?2004l", TermMode::ALT_SCREEN),
+        (b"\x1b[?1049l", TermMode::empty()),
+        (b"\x1b[?1049l", TermMode::empty()),
+        (b"\x1b[?1049;2004h", tracked),
+        (b"\x1b[?1049l", TermMode::BRACKETED_PASTE),
+        (b"\x1b[?1049h", tracked),
+        (b"\x1b[?1049;2004l", TermMode::empty()),
+        (b"\x1b[?2004;1049h", tracked),
+        (b"\x1bc", TermMode::empty()),
+    ];
+    for &(sequence, expected) in steps {
+        let before = *term.mode().unwrap() & tracked;
+        // An incomplete control sequence must not expose its future mode.
+        for byte in &sequence[..sequence.len() - 1] {
+            feed(&mut term, std::slice::from_ref(byte));
+            assert_eq!(*term.mode().unwrap() & tracked, before);
+        }
+        feed(&mut term, &sequence[sequence.len() - 1..]);
+        assert_eq!(*term.mode().unwrap() & tracked, expected);
+        assert_eq!(*other.mode().unwrap() & tracked, TermMode::empty());
+    }
+
+    feed(&mut term, b"M\x1b[?2004;1049h\x1b[HA");
+    assert!(term.mode().unwrap().contains(tracked));
+    assert_eq!(term.grid().unwrap()[Line(0)][Column(0)].c, 'A');
+    feed(&mut term, b"\x1b[?1049l");
+    assert_eq!(*term.mode().unwrap() & tracked, TermMode::BRACKETED_PASTE);
+    assert_eq!(term.grid().unwrap()[Line(0)][Column(0)].c, 'M');
+    feed(&mut other, b"\x1b[?1049h");
+    assert_eq!(*other.mode().unwrap() & tracked, TermMode::ALT_SCREEN);
+    assert_eq!(*term.mode().unwrap() & tracked, TermMode::BRACKETED_PASTE);
+}
+
+#[test]
+fn terminal_modes_preserve_state_on_rejection_and_disappear_on_stop() {
+    let mut term = terminal(1);
+    feed(&mut term, b"\x1b[?1049;2004h");
+    let before = *term.mode().unwrap();
+    assert!(term.feed(TabId(2), b"\x1b[?1049;2004l").is_err());
+    assert!(
+        term.feed(TabId(1), &vec![b'x'; MAX_FEED_BYTES + 1])
+            .is_err()
+    );
+    assert_eq!(*term.mode().unwrap(), before);
+    feed(&mut term, b"\x1b]2;");
+    assert!(term.feed(TabId(1), &vec![b'x'; MAX_OSC_BYTES]).is_err());
+    assert_eq!(term.mode(), None);
+    assert!(term.feed(TabId(1), b"\x1b[?2004h").is_err());
+    assert_eq!(term.mode(), None);
 }
 
 #[test]

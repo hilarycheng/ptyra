@@ -125,7 +125,7 @@
   - **Dependencies:** `TASK-022`  |  **Unit Test:** `term_feed_handles_split_utf8`
   - **Done:** 分段 ANSI/UTF-8 input 產生一致 terminal state
 
-- [ ] **TASK-027 — 讀取 alt-screen / bracketed-paste mode**
+- [x] **TASK-027 — 讀取 alt-screen / bracketed-paste mode**
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `terminal_modes_track_sequences`
   - **Done:** 可查詢 core 當前 mode，供 clipboard/render 使用
 
