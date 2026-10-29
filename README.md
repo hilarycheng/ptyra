@@ -809,3 +809,48 @@ regression 全部通過；Preedit overlay 尚未實作／驗證。
 
 Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-035 Verification (2026-10-29)
+
+```text
+TASK: TASK-035
+Status: DONE
+Dependencies: satisfied (TASK-030、TASK-034 已 [x])
+Changed files: src/renderer.rs, src/renderer/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline draw_commands
+  包括指定 draw_commands_preserve_colors 及兩個 Unicode／scrollback 測試
+Result: PASS — 3 tests；test-first 指定測試因未有 draw_commands 而預期 compilation FAIL
+Workspace tests: PASS — 83 unit tests + 9 Linux PTY integration tests + 2 compile-fail doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  真 renderer／font rasterization、Sway／Fcitx5 同 GPU／PSS／RSS Benchmark NOT RUN
+Security / Privacy impact: lazy borrowed conversion 無額外 heap allocation；
+  沿用有界 snapshot，checked scroll offset 同 clipped geometry；
+  無 payload Debug／logs、新 dependency、unsafe 或平台 I/O
+Known limitations: backend-neutral cell instructions；backend 須解讀 raw colors/styles、
+  忽略 hidden/spacer glyph，先畫所有背景再畫 glyph；未有真 rasterization／cache 接線
+Ready for [x]: YES
+Approval: 使用者明確授權完成 T035 後標記 [x] 同 commit；未要求 push。
+```
+
+`renderer::draw_commands` 將 terminal snapshot 逐格轉成 `CellDrawCommand`。
+Command 分別保留文字、原始前景／背景 `Color`、style flags 同 underline color。
+Named、Indexed、RGB 同 reset 色唔互換；OSC palette overrides 同 combining marks
+直接借用原資料。空格同 spacer 仍有背景 rectangle，避免丟失背景填色。
+
+座標先加 display offset，再經現有 `CellLayout` 轉成 clipped physical pixels。
+`rect` 係一格背景範圍；`glyph_rect` 對 WIDE_CHAR 合併相鄰兩格，保留 fractional
+rounding 同 window clipping。Backend 負責 INVERSE、HIDDEN 同其他 style，亦須跳過
+兩種 wide spacer 嘅 glyph；繪製時先完成全部背景，避免 spacer 背景遮蓋 CJK glyph。
+Caller 保留 window／TabId routing；font 選擇、rasterization 同共享 GlyphCache 使用
+仍由 backend 負責。今次無新增 cursor、overlay 或 dirty-frame scheduling。
+
+新增 3 個 deterministic tests，涵蓋三種顏色、reset、空格背景、palette identity、
+繁體中文、combining slice identity、跨行 wide spacer、style／underline color、
+scrollback viewport offset 同右邊／底部 clipping。獨立 read-only review 未發現實質問題。
+既有 CJK／combining、cursor snapshot、damage、frame 同 PTY regression 全部通過；
+Preedit overlay 尚未實作／驗證。
+
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。

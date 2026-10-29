@@ -7,6 +7,10 @@ use crate::{
     terminal::TerminalSnapshot,
     window::WindowSize,
 };
+use alacritty_terminal::{
+    term::{cell::Flags, color::Colors},
+    vte::ansi::Color,
+};
 use std::io::ErrorKind;
 
 /// Fixed cell advances anchored at the viewport's top-left, in physical pixels.
@@ -64,6 +68,60 @@ impl CellLayout {
             height: bottom - y,
         })
     }
+}
+
+/// Backend-neutral cell instruction with raw terminal colors and style flags.
+/// Paint all cell backgrounds before glyphs so wide glyphs are not covered by spacers.
+/// The backend applies INVERSE, skips HIDDEN/spacer glyphs, and interprets other styles.
+/// Payload-bearing commands deliberately have no Debug.
+pub struct CellDrawCommand<'a> {
+    /// Background coverage in clipped physical pixels, including blank/spacer cells.
+    pub rect: Rect,
+    /// Glyph coverage spans two cells for WIDE_CHAR, clipped to the window.
+    pub glyph_rect: Rect,
+    pub character: char,
+    pub zerowidth: &'a [char],
+    pub foreground: Color,
+    pub background: Color,
+    pub flags: Flags,
+    pub underline_color: Option<Color>,
+    /// OSC overrides; unresolved named/indexed colors use the backend's configured palette.
+    pub colors: &'a Colors,
+}
+
+/// Converts a snapshot lazily, without allocating or copying grid/combining/palette data.
+/// The caller retains window/tab routing and consumes commands before mutating the terminal.
+/// Glyph lookup/rasterization belongs to the backend and can use the shared GlyphCache.
+pub fn draw_commands<'a>(
+    snapshot: TerminalSnapshot<'a>,
+    layout: &'a CellLayout,
+) -> impl Iterator<Item = CellDrawCommand<'a>> + 'a {
+    let content = snapshot.content;
+    content.display_iter.filter_map(move |indexed| {
+        let row = content
+            .display_offset
+            .checked_add_signed(indexed.point.line.0 as isize)?;
+        let column = indexed.point.column.0;
+        let rect = layout.cell_rect(row, column)?;
+        let cell = indexed.cell;
+        let mut glyph_rect = rect;
+        if cell.flags.contains(Flags::WIDE_CHAR)
+            && let Some(next) = column.checked_add(1).and_then(|c| layout.cell_rect(row, c))
+        {
+            glyph_rect.width += next.width;
+        }
+        Some(CellDrawCommand {
+            rect,
+            glyph_rect,
+            character: cell.c,
+            zerowidth: cell.zerowidth().unwrap_or_default(),
+            foreground: cell.fg,
+            background: cell.bg,
+            flags: cell.flags,
+            underline_color: cell.underline_color(),
+            colors: content.colors,
+        })
+    })
 }
 
 /// One synchronous render input. Payload-bearing types deliberately have no Debug.

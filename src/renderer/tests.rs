@@ -1,4 +1,4 @@
-use super::{CellLayout, RenderInput, RenderOutput, Renderer};
+use super::{CellLayout, RenderInput, RenderOutput, Renderer, draw_commands};
 use crate::{
     TabId, WindowId,
     damage::Rect,
@@ -9,7 +9,7 @@ use crate::{
     window::{ConfigureState, WindowSize},
 };
 use alacritty_terminal::{
-    grid::Dimensions,
+    grid::{Dimensions, Scroll},
     index::{Column, Line, Point},
     term::{
         TermMode,
@@ -19,6 +19,215 @@ use alacritty_terminal::{
 };
 
 struct FakeRenderer;
+
+#[test]
+fn draw_commands_preserve_colors() {
+    let mut terminal = Terminal::new(TabId(1), 1, 5).unwrap();
+    terminal
+        .feed(
+            TabId(1),
+            b"\x1b]4;1;rgb:12/34/56\x07\x1b[31;44mA\x1b[38;5;123;48;5;234mB\x1b[38;2;1;2;3;48;2;4;5;6mC\x1b[0mD\x1b[41m ",
+        )
+        .unwrap();
+    let layout = CellLayout::new(
+        WindowSize::new(50, 10).unwrap(),
+        Scale::new(1).unwrap(),
+        10.0,
+        10.0,
+    )
+    .unwrap();
+    let commands: Vec<_> = draw_commands(terminal.snapshot().unwrap(), &layout).collect();
+    let expected = [
+        (
+            'A',
+            Color::Named(NamedColor::Red),
+            Color::Named(NamedColor::Blue),
+        ),
+        ('B', Color::Indexed(123), Color::Indexed(234)),
+        (
+            'C',
+            Color::Spec(Rgb { r: 1, g: 2, b: 3 }),
+            Color::Spec(Rgb { r: 4, g: 5, b: 6 }),
+        ),
+        (
+            'D',
+            Color::Named(NamedColor::Foreground),
+            Color::Named(NamedColor::Background),
+        ),
+        (
+            ' ',
+            Color::Named(NamedColor::Foreground),
+            Color::Named(NamedColor::Red),
+        ),
+    ];
+    assert_eq!(commands.len(), expected.len());
+    for (index, (command, expected)) in commands.iter().zip(expected).enumerate() {
+        assert_eq!(
+            (command.character, command.foreground, command.background),
+            expected
+        );
+        assert_eq!(
+            command.rect,
+            Rect {
+                x: index as i32 * 10,
+                y: 0,
+                width: 10,
+                height: 10
+            }
+        );
+        assert_eq!(command.glyph_rect, command.rect);
+        assert!(command.zerowidth.is_empty());
+        assert_eq!(command.flags, Flags::empty());
+        assert_eq!(command.underline_color, None);
+        assert_eq!(
+            command.colors[NamedColor::Red],
+            Some(Rgb {
+                r: 0x12,
+                g: 0x34,
+                b: 0x56
+            })
+        );
+    }
+    assert!(std::ptr::eq(
+        commands[0].colors,
+        terminal.snapshot().unwrap().content.colors
+    ));
+}
+
+#[test]
+fn draw_commands_keep_unicode_and_style_data() {
+    let mut terminal = Terminal::new(TabId(1), 2, 6).unwrap();
+    terminal
+        .feed(
+            TabId(1),
+            "繁e\u{301}\x1b[7;8;4;58;5;42mX\x1b[0mQ繁".as_bytes(),
+        )
+        .unwrap();
+    let layout = CellLayout::new(
+        WindowSize::new(90, 40).unwrap(),
+        Scale::new(1).unwrap(),
+        7.25,
+        10.0,
+    )
+    .unwrap();
+    let commands: Vec<_> = draw_commands(terminal.snapshot().unwrap(), &layout).collect();
+    assert_eq!(commands.len(), 12);
+    assert_eq!(commands[0].character, '繁');
+    assert_eq!(commands[0].rect.width, 7);
+    assert_eq!(commands[0].glyph_rect.width, 15);
+    assert!(commands[1].flags.contains(Flags::WIDE_CHAR_SPACER));
+    assert_eq!(commands[2].character, 'e');
+    assert_eq!(commands[2].zerowidth, &['\u{301}']);
+    assert_eq!(commands[3].character, 'X');
+    assert!(
+        commands[3]
+            .flags
+            .contains(Flags::INVERSE | Flags::HIDDEN | Flags::UNDERLINE)
+    );
+    assert_eq!(commands[3].underline_color, Some(Color::Indexed(42)));
+    assert!(commands[5].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER));
+    assert_eq!(commands[6].character, '繁');
+    assert_eq!(
+        commands[6].glyph_rect,
+        Rect {
+            x: 0,
+            y: 10,
+            width: 15,
+            height: 10
+        }
+    );
+
+    // Conversion preserves styles and borrows combining marks without changing the grid.
+    for (command, indexed) in commands
+        .iter()
+        .zip(terminal.snapshot().unwrap().content.display_iter)
+    {
+        assert_eq!(command.character, indexed.c);
+        assert_eq!(command.flags, indexed.flags);
+        assert_eq!(command.foreground, indexed.fg);
+        assert_eq!(command.background, indexed.bg);
+        assert_eq!(command.underline_color, indexed.underline_color());
+        assert_eq!(command.zerowidth, indexed.zerowidth().unwrap_or_default());
+    }
+    assert!(std::ptr::eq(
+        commands[2].zerowidth,
+        terminal.grid().unwrap()[Line(0)][Column(2)]
+            .zerowidth()
+            .unwrap()
+    ));
+}
+
+#[test]
+fn draw_commands_translate_scrollback_and_clip_to_window() {
+    let mut terminal = Terminal::new(TabId(1), 2, 4).unwrap();
+    terminal
+        .feed(TabId(1), "繁a\r\nold\r\nnew".as_bytes())
+        .unwrap();
+    // Fake a scrolled viewport without adding a terminal scrolling API to this task.
+    let mut grid = terminal.grid().unwrap().clone();
+    grid.scroll_display(Scroll::Top);
+    let mut snapshot = terminal.snapshot().unwrap();
+    snapshot.content.display_iter = grid.display_iter();
+    snapshot.content.display_offset = grid.display_offset();
+    assert_eq!(snapshot.content.display_offset, 1);
+    let layout = CellLayout::new(
+        WindowSize::new(17, 15).unwrap(),
+        Scale::new(1).unwrap(),
+        10.0,
+        10.0,
+    )
+    .unwrap();
+    let commands: Vec<_> = draw_commands(snapshot, &layout).collect();
+    assert_eq!(commands.len(), 4);
+    assert_eq!(commands[0].character, '繁');
+    assert_eq!(
+        commands[0].rect,
+        Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10
+        }
+    );
+    assert_eq!(
+        commands[0].glyph_rect,
+        Rect {
+            x: 0,
+            y: 0,
+            width: 17,
+            height: 10
+        }
+    );
+    assert_eq!(
+        commands[1].rect,
+        Rect {
+            x: 10,
+            y: 0,
+            width: 7,
+            height: 10
+        }
+    );
+    assert_eq!(commands[2].character, 'o');
+    assert_eq!(
+        commands[2].rect,
+        Rect {
+            x: 0,
+            y: 10,
+            width: 10,
+            height: 5
+        }
+    );
+    assert_eq!(commands[3].character, 'l');
+    assert_eq!(
+        commands[3].rect,
+        Rect {
+            x: 10,
+            y: 10,
+            width: 7,
+            height: 5
+        }
+    );
+}
 
 impl Renderer for FakeRenderer {
     type Frame = Vec<(Point, Cell)>;

@@ -159,7 +159,7 @@
   - **Dependencies:** `TASK-032`  |  **Unit Test:** `glyph_cache_evicts_by_limit`
   - **Done:** cache 超過 budget 會淘汰舊項
 
-- [ ] **TASK-035 — Grid cell → draw command**
+- [x] **TASK-035 — Grid cell → draw command**
   - **Dependencies:** `TASK-030`, `TASK-034`  |  **Unit Test:** `draw_commands_preserve_colors`
   - **Done:** 文字、前景、背景不交換
 
