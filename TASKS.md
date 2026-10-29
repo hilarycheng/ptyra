@@ -155,7 +155,7 @@
   - **Dependencies:** `TASK-032`  |  **Unit Test:** `font_fallback_uses_cjk_candidate`
   - **Done:** 繁體中文字可選擇支援嘅 fallback font
 
-- [ ] **TASK-034 — 實作可限定大小嘅 glyph cache**
+- [x] **TASK-034 — 實作可限定大小嘅 glyph cache**
   - **Dependencies:** `TASK-032`  |  **Unit Test:** `glyph_cache_evicts_by_limit`
   - **Done:** cache 超過 budget 會淘汰舊項
 

@@ -760,3 +760,52 @@ Preedit overlay 尚未實作／驗證。獨立 read-only review 未發現實質�
 
 Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-034 Verification (2026-10-29)
+
+```text
+TASK: TASK-034
+Status: DONE
+Dependencies: satisfied (TASK-032 已 [x])
+Changed files: src/font.rs, src/font/cache.rs, src/font/cache/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline glyph_cache_evicts_by_limit
+Result: PASS；test-first compilation 因未有 cache 型別而預期失敗
+Workspace tests: PASS — 80 unit tests + 9 Linux PTY integration tests + 2 compile-fail doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  真 glyph/backend、GPU、PSS/RSS、cache hit-rate Benchmark 同 allocator failure injection NOT RUN
+Security / Privacy impact: payload bytes + entry count 雙上限；空 glyph 亦計 entry；
+  oversized insert 原子拒絕；無 glyph/key Debug、payload logs、dependency、unsafe 或平台 I/O
+Known limitations: 純 CPU payload cache；FIFO 可以淘汰頻繁讀取嘅 glyph；
+  caller 負責 glyph format、allocation budget 同 font-instance identity；未有 renderer 接線；
+  payload budget 唔包括 metadata／allocator overhead，亦唔係 process RSS 上限
+Ready for [x]: YES
+Approval: 使用者明確批准 T034，並授權完成後標記 [x] 同 commit；未要求 push。
+```
+
+`font::cache::GlyphCache::new` 接收固定 payload byte budget 同 entry limit，
+分別不可超過 16 MiB 同 4,096 entries；任何一個為零就停用 cache。
+Cache 擁有 `Box<[u8]>`，按 slice 長度計算 payload bytes，避免 Vec spare capacity
+漏計；glyph bytes 嘅格式由 caller 定義。Key 由 font-instance identity 同 glyph ID
+組成，唔包含 TabId，因此一個 cache 可以供多個 Tabs 使用。Face、size、scale、style、
+hinting 或 format 改變時，caller 必須更換 instance identity；唔可以只用 fallback index。
+
+`get` 借用 payload，唔改動 FIFO。`insert` 超過 bytes／entry budget 時淘汰最舊項目；
+replacement 先扣除舊 cost，並且只保留一個最新 queue entry。過大 payload、停用狀態，
+或 metadata reservation 失敗時，回傳原本 Box，保留舊 cache，供 caller 直接使用 uncached
+payload。Metadata 先 reserve，再進行 replacement／eviction；byte 比較用減法避免 overflow。
+`clear` 釋放 glyph payload，同時保留 metadata storage 供重用。
+
+預算限制係操作完成後 cache 持有嘅 payload bytes 同 entry count。Caller 已配置嘅
+incoming payload 可以同舊 cache 同時存在；HashMap backing capacity 亦可能因 reserve
+改變。實際 metadata／allocator footprint 同 rasterizer／GPU memory 要另行量度及限制。
+
+新增 7 個 deterministic tests，涵蓋 byte／entry eviction、空 glyph、停用、exact limit、
+多項淘汰、replacement cost／order、oversized 拒絕後嘅原 Box identity、font-instance
+隔離、clear、無效／極端 budgets，以及 10,000 次插入後嘅 payload／entry／queue count。
+獨立 review 未發現實質問題。既有 CJK／combining、cursor、damage、frame 同 PTY
+regression 全部通過；Preedit overlay 尚未實作／驗證。
+
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。

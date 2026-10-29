@@ -2,6 +2,8 @@
 use crate::error::{AppError, Component};
 use std::io::ErrorKind;
 
+pub mod cache;
+
 /// Returns the first supporting candidate's index; put the primary font first.
 /// `has_glyph` queries loaded Unicode coverage without I/O and must return false
 /// for missing-glyph placeholders. Empty lists or entirely missing coverage yield None.
