@@ -216,7 +216,7 @@ T026 加入最小防護，並維持 T099 未完成。
 
 - 每次 feed 最多 16 KiB。錯 TabId／超大 call 會在修改 parser 前拒絕。
 - 每個 screen 最多 32,768 cells，至少一 row、兩 columns。
-  History 暫設 0，bounded scrollback policy 留待 TASK-029。
+  T026 完成時 history 設為 0；T029 嘅 bounded policy 見下文。
 - OSC 最多 4,096 bytes，跨 calls 累積。計入 separators 同被 core 忽略嘅 controls，
   以保守方式限制長度。Guard 只追蹤 ESC／OSC 邊界；真正 ANSI 解讀由 VTE 負責。
   BEL、CAN、SUB 或 ESC 結束當前 OSC，匹配 pinned VTE source。
@@ -241,3 +241,30 @@ T026 加入最小防護，並維持 T099 未完成。
 Limits 係本次固定 guardrails，唔係已完成 config、performance budget 或 fuzz task。
 Feed byte cap 唔係 CPU deadline：ANSI REP 等 sequence 會放大 parser 工作量。
 未做 performance benchmark、完整 source audit 或 fuzz campaign。
+
+## Scrollback allocation review — TASK-029 (2026-10-29)
+
+重用現有 `alacritty_terminal 0.26.0`，冇新增 dependency 或 app unsafe。
+`Config::scrolling_history` 設定 main grid 嘅 history 上限；alternate grid 維持零 history。
+每個 `Terminal` 擁有獨立 core，唔另存文字或建立第二份 history buffer。
+
+核對 pinned source 嘅 `grid::Storage::initialize`：history 按需配置，增長批次至少
+1,000 rows，故 allocation 可以多過可讀嘅 history 行數。固定設定下（包括 reset），
+spare rows 最多 1,000；本次將呢個上限計入預算。升級 core 時需要重新核對此常數。
+無 history 時唔會進入呢條增長路徑。
+
+Constructor 先驗證非零 rows、至少兩 columns、每 screen 最多 32,768 cells，
+同 0–10,000 history lines，再檢查以下 cell slots 合計唔超過 2,000,000：
+
+`2 × rows × columns + (history_lines + spare_rows) × columns`
+
+兩個 screens 都計入；history 非零時 `spare_rows = 1,000`，否則為零。
+行數限制在加法／乘法前檢查，`usize::MAX` 等設定直接回傳 InvalidInput。
+已驗證嘅 rows／columns／history 範圍令計算在 32-bit 同 64-bit usize 都唔會 overflow。
+超額設定唔會靜默縮減，亦唔會先配置 core 再報錯。
+
+Core ring buffer 負責淘汰最舊可讀行，並重用已配置空間。Cached rows 可以暫時保留
+已淘汰行嘅 metadata，仍然包含喺上述 spare-row 預算內；唔承諾每淘汰一行就即時
+釋放 allocator memory。Cell slots cap 唔係 RSS／byte limit；row metadata、Vec capacity、
+combining marks、hyperlinks、title stack 同 parser storage 仍有各自開銷及既有上限。
+本次冇量度 PSS／RSS，亦未驗收整體 RAM budget。

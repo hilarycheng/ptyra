@@ -133,7 +133,7 @@
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `cjk_combining_cells_align`
   - **Done:** 全形中文字/組合字不錯位
 
-- [ ] **TASK-029 — 限制每 Tab scrollback lines**
+- [x] **TASK-029 — 限制每 Tab scrollback lines**
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `scrollback_discards_oldest_lines`
   - **Done:** 超額只淘汰最舊行，Memory 有界
 

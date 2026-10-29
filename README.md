@@ -544,3 +544,42 @@ combining marks 保留喺當前 base cell，直到下一個有寬度字元先換
 T028 係現有 core 行為嘅驗證 TASK，新增 3 個 deterministic tests，冇新增 runtime code。
 Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-029 Verification (2026-10-29)
+
+```text
+TASK: TASK-029
+Status: DONE
+Dependencies: satisfied (TASK-026 已 [x])
+Changed files: src/terminal.rs, src/terminal/tests.rs, DEPENDENCIES.md, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline scrollback_discards_oldest_lines
+Result: PASS；test-first compilation 因未有 with_scrollback API 而預期失敗
+Workspace tests: PASS — 60 unit tests + 9 Linux PTY integration tests + 1 doc-test
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  GUI scrollback、Sway/Fcitx5 acceptance 同 PSS/RSS Benchmark NOT RUN
+Security / Privacy impact: 每 Tab history 行數及總 cell slots 有上限；
+  超額設定先拒絕；冇新增 dependency、unsafe、I/O、payload logs 或系統改動
+Known limitations: library 層設定固定於建立時；未有 TOML config、scroll UI 或 runtime resize；
+  cell slots 上限唔係實測 RAM budget
+Ready for [x]: YES
+Approval: 使用者明確批准 T029，並授權完成後標記 [x] 同 commit；未要求 push。
+```
+
+`Terminal::new` 保留原有 signature，預設保存 5,000 行 scrollback。
+`Terminal::with_scrollback` 可以為個別 instance 指定 0–10,000 行；0 代表停用。
+行數係 grid rows，包含 soft-wrapped rows。Core 保留最新行，超額只淘汰最舊行；
+Unicode cells、combining marks 同 wrap flags 保持原樣。Alternate screen 唔保存 history。
+
+兩個 screens、history 同最多 1,000 spare cache rows 合計限制為 2,000,000 cell slots。
+較寬視窗可能需要較低 history 設定；超額回傳帶 TabId 嘅 InvalidInput，唔會自動縮減。
+所有容量檢查都在配置 core 前完成。預算與 core cache 嘅 source review 見
+[DEPENDENCIES.md](DEPENDENCIES.md#scrollback-allocation-review--task-029-2026-10-29)。
+
+新增 5 個 deterministic tests：零／一／三行上限持續輸出 1,105 行並逐次核對次序；
+預設 5,000 行上限；Unicode／soft-wrap 保存；Tab 隔離、alternate screen 同 reset；
+容量邊界、極端值同 cache 預算檢查。現有 callers 使用原本 constructor，毋須改 signature。
+
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。

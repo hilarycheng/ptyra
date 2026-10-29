@@ -21,6 +21,138 @@ fn cells(term: &Terminal) -> Vec<Cell> {
         .collect()
 }
 
+fn row_text(term: &Terminal, line: i32) -> String {
+    let grid = term.grid().unwrap();
+    (0..grid.columns())
+        .map(|column| grid[Line(line)][Column(column)].c)
+        .collect()
+}
+
+#[test]
+fn scrollback_discards_oldest_lines() {
+    for limit in [0, 1, 3] {
+        let mut term = Terminal::with_scrollback(TabId(1), 2, 4, limit).unwrap();
+        assert_eq!(term.grid().unwrap().history_size(), 0);
+        // Cross the core's 1,000-row allocation cache as well as the logical cap.
+        for number in 0..1105 {
+            feed(&mut term, format!("{number:04}\r\n").as_bytes());
+            let history = number.min(limit);
+            let grid = term.grid().unwrap();
+            assert_eq!(grid.history_size(), history);
+            assert_eq!(grid.total_lines(), history + 2);
+            assert_eq!(row_text(&term, 0), format!("{number:04}"));
+            assert_eq!(row_text(&term, 1), "    ");
+            for offset in 1..=history {
+                assert_eq!(
+                    row_text(&term, -(offset as i32)),
+                    format!("{:04}", number - offset)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn scrollback_defaults_to_five_thousand_lines() {
+    assert_eq!(DEFAULT_SCROLLBACK_LINES, 5000);
+    let mut term = Terminal::new(TabId(1), 2, 4).unwrap();
+    for number in 0..5005 {
+        feed(&mut term, format!("{number:04}\r\n").as_bytes());
+        assert!(term.grid().unwrap().history_size() <= 5000);
+    }
+    assert_eq!(term.grid().unwrap().history_size(), 5000);
+    assert_eq!(row_text(&term, -5000), "0004");
+    assert_eq!(row_text(&term, -1), "5003");
+    assert_eq!(row_text(&term, 0), "5004");
+}
+
+#[test]
+fn scrollback_preserves_unicode_cells_and_soft_wrap() {
+    let mut term = Terminal::with_scrollback(TabId(1), 2, 4, 2).unwrap();
+    feed(&mut term, "繁e\u{301}ZQ".as_bytes());
+    let original: Vec<_> = (0..4)
+        .map(|column| term.grid().unwrap()[Line(0)][Column(column)].clone())
+        .collect();
+    assert_eq!(original[0].flags, Flags::WIDE_CHAR);
+    assert_eq!(original[1].flags, Flags::WIDE_CHAR_SPACER);
+    assert_eq!(original[2].zerowidth(), Some(&['\u{301}'][..]));
+    assert!(original[3].flags.contains(Flags::WRAPLINE));
+    for (suffix, history_line) in [(b"\r\nR", -1), (b"\r\nS", -2)] {
+        feed(&mut term, suffix);
+        for (column, expected) in original.iter().enumerate() {
+            assert_eq!(
+                &term.grid().unwrap()[Line(history_line)][Column(column)],
+                expected
+            );
+        }
+    }
+    feed(&mut term, b"\r\nT");
+    assert_eq!(term.grid().unwrap().history_size(), 2);
+    assert_eq!(row_text(&term, -2), "Q   ");
+    assert_eq!(row_text(&term, -1), "R   ");
+    assert_eq!(row_text(&term, 0), "S   ");
+    assert_eq!(row_text(&term, 1), "T   ");
+}
+
+#[test]
+fn scrollback_is_per_tab_and_excludes_alternate_screen() {
+    let mut first = Terminal::with_scrollback(TabId(1), 2, 4, 2).unwrap();
+    let mut second = Terminal::with_scrollback(TabId(2), 2, 4, 1).unwrap();
+    feed(&mut first, b"A\r\nB\r\nC");
+    feed(&mut second, b"x\r\ny\r\nz\r\nw");
+    assert_eq!(first.grid().unwrap().history_size(), 1);
+    assert_eq!(row_text(&first, -1), "A   ");
+    feed(&mut first, b"\x1b[?1049h\x1b[H1\r\n2\r\n3\r\n4");
+    assert!(first.mode().unwrap().contains(TermMode::ALT_SCREEN));
+    assert_eq!(first.grid().unwrap().history_size(), 0);
+    assert_eq!(first.grid().unwrap().total_lines(), 2);
+    assert_eq!(row_text(&first, 0), "3   ");
+    feed(&mut first, b"\x1b[?1049l");
+    assert_eq!(first.grid().unwrap().history_size(), 1);
+    assert_eq!(row_text(&first, -1), "A   ");
+    assert_eq!(row_text(&first, 0), "B   ");
+    feed(&mut first, b"\r\nD\r\nE");
+    assert_eq!(first.grid().unwrap().history_size(), 2);
+    assert_eq!(row_text(&first, -2), "B   ");
+    assert_eq!(row_text(&first, -1), "C   ");
+    feed(&mut first, b"\x1bc");
+    assert_eq!(first.grid().unwrap().history_size(), 0);
+    feed(&mut first, b"L\r\nM\r\nN\r\nO\r\nP");
+    assert_eq!(first.grid().unwrap().history_size(), 2);
+    assert_eq!(row_text(&first, -2), "M   ");
+    assert_eq!(row_text(&first, -1), "N   ");
+    assert_eq!(second.grid().unwrap().history_size(), 1);
+    assert_eq!(row_text(&second, -1), "y   ");
+    assert_eq!(row_text(&second, 0), "z   ");
+    assert_eq!(row_text(&second, 1), "w   ");
+}
+
+#[test]
+fn scrollback_capacity_rejects_excess_before_allocation() {
+    for (rows, columns, limit) in [
+        (0, 80, 1),
+        (24, 1, 1),
+        (2, 4, MAX_SCROLLBACK_LINES + 1),
+        (2, 4, usize::MAX),
+        (24, 200, 8953),
+        (1, 32768, 1),
+    ] {
+        let error = Terminal::with_scrollback(TabId(7), rows, columns, limit)
+            .err()
+            .unwrap();
+        assert_eq!(error.tab, TabId(7));
+        assert_eq!(
+            error.error,
+            AppError::new(Component::Terminal, std::io::ErrorKind::InvalidInput)
+        );
+    }
+    // 200 columns * (two 24-row screens + 8,952 history + 1,000 cache) = 2,000,000.
+    assert!(Terminal::with_scrollback(TabId(1), 24, 200, 8952).is_ok());
+    assert!(Terminal::with_scrollback(TabId(1), 2, 4, MAX_SCROLLBACK_LINES).is_ok());
+    assert!(Terminal::with_scrollback(TabId(1), 1, 32768, 0).is_ok());
+    assert!(Terminal::new(TabId(1), 1, 32768).is_err());
+}
+
 #[test]
 fn term_feed_handles_split_utf8() {
     let input = "A繁體\x1b[31mZ\x1b[0m\r\nline\x1b[2D!\x1b[K".as_bytes();

@@ -17,6 +17,12 @@ use std::{io::ErrorKind, time::Duration};
 
 pub const MAX_FEED_BYTES: usize = 16 * 1024;
 pub const MAX_GRID_CELLS: usize = 32 * 1024;
+pub const DEFAULT_SCROLLBACK_LINES: usize = 5_000;
+pub const MAX_SCROLLBACK_LINES: usize = 10_000;
+/// Cell slots across both screens, scrollback, and the core's spare row cache.
+pub const MAX_TERMINAL_CELLS: usize = 2_000_000;
+// alacritty_terminal 0.26.0 Storage grows in batches with up to 1,000 spare rows.
+const CORE_HISTORY_CACHE_LINES: usize = 1_000;
 /// Counts all bytes between ESC ] and BEL/CAN/SUB/ESC, including separators.
 pub const MAX_OSC_BYTES: usize = 4096;
 pub const MAX_COMBINING_MARKS: usize = 64;
@@ -34,21 +40,48 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    /// Requires at least one row, two columns, and at most MAX_GRID_CELLS cells.
+    /// Uses DEFAULT_SCROLLBACK_LINES, subject to the same bounds as with_scrollback.
     pub fn new(tab: TabId, rows: u16, columns: u16) -> Result<Self, TerminalError> {
+        Self::with_scrollback(tab, rows, columns, DEFAULT_SCROLLBACK_LINES)
+    }
+
+    /// Bounds main-screen history per Tab; zero disables it. Alternate history is zero.
+    /// Requires nonzero rows, at least two columns, and at most MAX_GRID_CELLS per
+    /// screen. Rejects excessive history lines or total cell slots before allocation.
+    /// Limits remain fixed for this instance; oversized settings are not clamped.
+    pub fn with_scrollback(
+        tab: TabId,
+        rows: u16,
+        columns: u16,
+        scrollback_lines: usize,
+    ) -> Result<Self, TerminalError> {
         let size = Size {
             rows: usize::from(rows),
             columns: usize::from(columns),
         };
-        if rows == 0 || columns < 2 || size.rows * size.columns > MAX_GRID_CELLS {
-            return Err(TerminalError {
-                tab,
-                error: AppError::new(Component::Terminal, ErrorKind::InvalidInput),
-            });
+        let invalid = || TerminalError {
+            tab,
+            error: AppError::new(Component::Terminal, ErrorKind::InvalidInput),
+        };
+        let screen_cells = size.rows * size.columns;
+        if rows == 0
+            || columns < 2
+            || screen_cells > MAX_GRID_CELLS
+            || scrollback_lines > MAX_SCROLLBACK_LINES
+        {
+            return Err(invalid());
+        }
+        let spare_rows = if scrollback_lines == 0 {
+            0
+        } else {
+            CORE_HISTORY_CACHE_LINES
+        };
+        let total_cells = 2 * screen_cells + (scrollback_lines + spare_rows) * size.columns;
+        if total_cells > MAX_TERMINAL_CELLS {
+            return Err(invalid());
         }
         let config = Config {
-            // shortcut: history is disabled until TASK-029 supplies its bounded policy.
-            scrolling_history: 0,
+            scrolling_history: scrollback_lines,
             kitty_keyboard: false,
             osc52: Osc52::Disabled,
             ..Config::default()
