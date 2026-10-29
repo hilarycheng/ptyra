@@ -15,8 +15,8 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前只有基礎 li
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
-- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter。
-- `src/main.rs` 只印出應用程式名稱。PTY spawn 仍係 library API；尚未有 Wayland 連線/dispatch、PTY output/write queues、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
+- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter 同有界 output byte 讀取。
+- `src/main.rs` 只印出應用程式名稱。PTY spawn/read 仍係 library API；尚未有 Wayland 連線/dispatch、PTY write queue、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
 
@@ -188,7 +188,8 @@ handles close before return. Validation/open/spawn failures are isolated from
 other sessions. The real fixtures verify controlling terminal and foreground
 session setup, stdin/stdout/stderr TTYs, initial 31x97 dimensions, literal Unicode
 and non-UTF-8 argv, cwd, TERM/COLORTERM policy, FD cleanup and child reaping.
-The test helper reads fixture output only; TASK-022 remains unimplemented.
+At that TASK-021 checkpoint, the test helper read fixture output only; TASK-022
+was not implemented. Its subsequent implementation is recorded below.
 
 Test-first run: 2026-10-29 07:01:26.396–07:01:34.479 UTC (expected FAIL).
 Final staged checks: 07:04:26.722–07:04:28.564 UTC (all PASS).
@@ -196,3 +197,59 @@ Final main-repository checks: 07:06:29.638–07:06:32.400 UTC (all PASS, same so
 Every build/test used Cargo jobs=2, test threads=2 and CPU affinity 0,1, inherited
 by test children. No stress workload, system installation or app restart was used.
 TASK-021's checkbox is unchanged pending the required post-test status approval.
+
+## TASK-022 Verification (2026-10-29)
+
+```text
+TASK: TASK-022
+Status: TODO — implementation verified; dependency/status checkbox approvals pending
+Dependencies: TASK-021 implementation and regression verified at a22adbc;
+  its checkbox remains [ ] pending explicit completion-status approval
+Changed files: src/pty.rs, src/pty/tests.rs, tests/pty_spawn.rs, README.md
+Unit test: cargo test --workspace --locked --offline pty_read_preserves_byte_order
+Result: PASS; test-first failure recorded before implementation
+Workspace tests: PASS — 33 unit tests + 5 Linux PTY integration tests + 1 doc-test
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 2 new real PTY read fixtures plus all 3 spawn fixtures PASS;
+  real Wayland/Sway/Fcitx5, GUI terminal acceptance and benchmarks NOT RUN
+Security / Privacy impact: bounded nonblocking reads; no payload logs, decoding,
+  new dependencies, unsafe code, threads or system configuration changes
+Known limitations: library read API only; no runtime readiness/event-loop wiring,
+  write queue, terminal parser, dynamic resize or child-exit Tab events;
+  per-tick fairness/flood scheduling remains a later task
+Ready for [x]: NO — dependency checkbox and post-test status approval remain pending
+Approval: user explicitly approved TASK-022 implementation and local commit;
+  no TASK-021/TASK-022 completion status or later-task implementation inferred
+```
+
+`PtySession::read_chunk` uses a caller-provided nonempty buffer without allocating
+payload storage. Each call returns at most 16 KiB, preserving the exact byte order
+received from the PTY master. It does not interpret UTF-8, ANSI, NUL, invalid UTF-8,
+spaces or newlines. Existing kernel termios processing is unchanged; the fixed
+read fixture disables output processing on its own PTY for predictable bytes.
+
+Each result/error includes its TabId. `Data(length)` identifies only the valid
+prefix of the caller buffer. A short read returns immediately. `WouldBlock`
+requires waiting for readiness; after four interrupted attempts, `Interrupted`
+returns control for later rescheduling. Neither status is EOF. Empty buffers are
+rejected before I/O. Read-zero, Linux PTY EIO after slave closure, and explicitly
+closed sessions yield sticky EOF. Other errors remain payload-free AppError
+metadata and do not affect another session. EOF neither kills nor reaps the child;
+bytes still in the master can be drained even after `try_wait` reports child exit.
+
+The fake-reader tests split UTF-8/escape sequences, interleave EINTR/WouldBlock,
+check bounded work and remaining bytes beyond the read cap, EOF latching, error
+redaction and independent session state. New real PTY fixtures drain binary,
+Unicode and escape bytes through a two-byte buffer after child exit, and verify
+WouldBlock plus session isolation when another session is terminated. Fixtures
+use bounded output/deadlines and only manage their own children.
+
+Test-first run: 2026-10-29 07:27:48.564–07:27:50.348 UTC (expected FAIL).
+Final staged checks: 07:28:55.005–07:28:56.974 UTC (all PASS).
+Final main-repository checks: 07:30:56.143–07:30:59.110 UTC (all PASS, same source).
+Every build/test used Cargo jobs=2, test threads=2 and CPU affinity 0,1, inherited
+by test children. TASKS.md is unchanged: T21's implementation is available and
+verified, but its formal completion-status gate is still pending. The user's
+explicit T22 implementation approval was followed without inferring checkbox
+approval or permission to implement T23. T23 is analysis only.

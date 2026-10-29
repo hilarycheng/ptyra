@@ -1,4 +1,4 @@
-//! Linux PTY process ownership. Stream queues and exit routing are separate tasks.
+//! Linux PTY process ownership and bounded byte reads. Writes/exit routing are separate tasks.
 use crate::{
     TabId,
     error::{AppError, Component},
@@ -27,6 +27,85 @@ use std::{
 };
 
 pub const MAX_CWD_BYTES: usize = 4096;
+/// Maximum bytes returned by one read, even with a larger caller buffer.
+pub const MAX_PTY_READ_BYTES: usize = 16 * 1024;
+/// Interrupted syscalls yield back to the caller after this many attempts.
+pub const MAX_PTY_READ_ATTEMPTS: usize = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PtyReadStatus {
+    /// Only buffer[..length] contains valid new bytes; no decoding is performed.
+    Data(usize),
+    /// Wait for readability; do not busy-poll.
+    WouldBlock,
+    /// Retry budget exhausted; reschedule without a tight retry loop.
+    Interrupted,
+    /// Permanent end of this read stream, independent of child exit status.
+    Eof,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PtyReadResult {
+    pub tab: TabId,
+    pub status: PtyReadStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PtyReadError {
+    pub tab: TabId,
+    pub error: AppError,
+}
+
+#[derive(Default)]
+struct ReadState {
+    eof: bool,
+}
+
+impl ReadState {
+    fn read<R: io::Read>(
+        &mut self,
+        tab: TabId,
+        reader: Option<&mut R>,
+        buffer: &mut [u8],
+    ) -> Result<PtyReadResult, PtyReadError> {
+        let result = |status| Ok(PtyReadResult { tab, status });
+        let error = |error| PtyReadError {
+            tab,
+            error: AppError::from_io(Component::Pty, error),
+        };
+        if buffer.is_empty() {
+            return Err(error(io::ErrorKind::InvalidInput.into()));
+        }
+        if self.eof || reader.is_none() {
+            self.eof = true;
+            return result(PtyReadStatus::Eof);
+        }
+        let reader = reader.expect("checked reader presence");
+        let limit = buffer.len().min(MAX_PTY_READ_BYTES);
+        for _ in 0..MAX_PTY_READ_ATTEMPTS {
+            match reader.read(&mut buffer[..limit]) {
+                Ok(0) => {
+                    self.eof = true;
+                    return result(PtyReadStatus::Eof);
+                }
+                Ok(n) if n <= limit => return result(PtyReadStatus::Data(n)),
+                Ok(_) => return Err(error(io::ErrorKind::InvalidData.into())),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    return result(PtyReadStatus::WouldBlock);
+                }
+                // This helper is private to the Linux PTY adapter: EIO on its
+                // master after slave closure is EOF, not a general I/O policy.
+                Err(e) if e.raw_os_error() == Some(libc::EIO) => {
+                    self.eof = true;
+                    return result(PtyReadStatus::Eof);
+                }
+                Err(e) => return Err(error(e)),
+            }
+        }
+        result(PtyReadStatus::Interrupted)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PtySize {
@@ -119,6 +198,7 @@ pub struct PtySession {
     tab: TabId,
     master: Option<File>,
     child: OwnedChild,
+    read_state: ReadState,
 }
 
 impl PtySession {
@@ -128,6 +208,7 @@ impl PtySession {
             tab: spawned.tab,
             master: Some(spawned.master),
             child: spawned.child,
+            read_state: ReadState::default(),
         })
     }
 
@@ -141,6 +222,16 @@ impl PtySession {
     /// Borrowed, nonblocking master; no ownership transfer or stream buffering.
     pub fn master_fd(&self) -> Option<BorrowedFd<'_>> {
         self.master.as_ref().map(AsFd::as_fd)
+    }
+
+    /// Reads at most 16 KiB into the caller's nonempty buffer without allocation.
+    /// Returns after the first successful partial read, or at most four EINTRs.
+    /// EOF is latched only on read closure, never merely because a child exited:
+    /// callers can drain remaining bytes after try_wait reports exit. EOF does
+    /// not close the master, kill the child, or emit a Tab event.
+    /// Do not consume this session's stream concurrently through master_fd.
+    pub fn read_chunk(&mut self, buffer: &mut [u8]) -> Result<PtyReadResult, PtyReadError> {
+        self.read_state.read(self.tab, self.master.as_mut(), buffer)
     }
 
     /// Lifecycle primitive only: no Tab event is emitted (TASK-025).
