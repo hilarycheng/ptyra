@@ -718,3 +718,45 @@ damage 同 frame regression 全部保留；Preedit overlay 尚未實作／驗證
 
 Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-033 Verification (2026-10-29)
+
+```text
+TASK: TASK-033
+Status: DONE
+Dependencies: satisfied (TASK-032 已 [x])
+Changed files: src/font.rs, src/renderer/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline font_fallback_uses_cjk_candidate
+Result: PASS；test-first compilation 因未有 select_font 而預期失敗
+Workspace tests: PASS — 73 unit tests + 9 Linux PTY integration tests + 2 compile-fail doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  真字型 coverage／fallback 畫面、Sway/Fcitx5 acceptance 同 Benchmark NOT RUN
+Security / Privacy impact: selector 無 allocation、無 cache；
+  每次最多查詢 supplied slice 內每個 candidate 一次，命中即停止；
+  冇新增 dependency、unsafe、I/O、payload logs 或系統改動
+Known limitations: pure scalar 選擇 API；coverage callback 由 caller 提供；
+  未有 font discovery/loading、真 glyph coverage 接線、sequence shaping 或 rasterization
+Ready for [x]: YES
+Approval: 使用者明確批准 T033，並授權完成後標記 [x] 同 commit；未要求 push。
+```
+
+`font::select_font` 接收一個 Unicode `char`、按優先順序排列嘅 candidate slice，
+以及 `has_glyph` callback。Primary font 放在第一位；回傳第一個支援該 scalar
+嘅 candidate index。空 list 或全部缺字回傳 None，唔會盲目揀第一個 font。
+判斷依賴 coverage，唔依賴 font 名或 Unicode block；candidate 次序由 caller 決定。
+
+Callback 必須查詢已載入嘅 coverage、排除 missing-glyph placeholder，並且唔做 I/O。
+Selector 本身唔載入字型、唔改動輸入文字或 metrics，亦唔儲存含 PTY 字元嘅 cache。
+組合序列嘅 font 選擇同 shaping 仍須 backend 處理；單個 scalar 嘅 coverage
+唔代表整個 sequence 已可正確呈現。
+
+新增 3 個 deterministic tests：fake coverage 驗證繁體字、非 BMP CJK、primary 優先、
+candidate 次序、首個命中即停止、空 list／全缺字及重複呼叫；terminal snapshot
+接線測試確認繁體字選 fallback，ASCII 選 primary，原本 wide spacer、cell geometry
+同 baseline 保持原樣。既有 CJK／combining、cursor、damage、frame regression 全部通過；
+Preedit overlay 尚未實作／驗證。獨立 read-only review 未發現實質問題。
+
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。

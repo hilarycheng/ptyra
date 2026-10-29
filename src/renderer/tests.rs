@@ -3,7 +3,7 @@ use crate::{
     TabId, WindowId,
     damage::Rect,
     error::{AppError, Component},
-    font::{CellMetrics, FontMetrics},
+    font::{CellMetrics, FontMetrics, select_font},
     geometry::Scale,
     terminal::{MAX_OSC_BYTES, Terminal},
     window::{ConfigureState, WindowSize},
@@ -440,4 +440,62 @@ fn font_metrics_feed_layout_without_double_scaling() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn font_fallback_keeps_terminal_cell_geometry() {
+    let metrics = CellMetrics::new(
+        13.0,
+        FontMetrics {
+            advance: 0.5,
+            ascent: 0.75,
+            descent: -0.25,
+            line_gap: 0.125,
+        },
+    )
+    .unwrap();
+    let layout = CellLayout::new(
+        WindowSize::new(80, 40).unwrap(),
+        Scale::new(2).unwrap(),
+        metrics.width(),
+        metrics.height(),
+    )
+    .unwrap();
+    let mut terminal = Terminal::new(TabId(1), 2, 4).unwrap();
+    terminal.feed(TabId(1), "繁A".as_bytes()).unwrap();
+    let snapshot = terminal.snapshot().unwrap();
+    let fonts = [" A", "繁體中文"];
+    let choices: Vec<_> = snapshot
+        .content
+        .display_iter
+        .filter(|indexed| !indexed.cell.flags.contains(Flags::WIDE_CHAR_SPACER))
+        .map(|indexed| {
+            (
+                indexed.point,
+                select_font(indexed.cell.c, &fonts, |font, scalar| font.contains(scalar)),
+            )
+        })
+        .collect();
+    assert_eq!(choices[0], (Point::new(Line(0), Column(0)), Some(1)));
+    assert_eq!(choices[1], (Point::new(Line(0), Column(2)), Some(0)));
+    assert_eq!(
+        layout.cell_rect(0, 2),
+        Some(Rect {
+            x: 26,
+            y: 0,
+            width: 13,
+            height: 29
+        })
+    );
+    let grid = terminal.grid().unwrap();
+    assert_eq!(grid[Line(0)][Column(0)].c, '繁');
+    assert!(grid[Line(0)][Column(0)].flags.contains(Flags::WIDE_CHAR));
+    assert!(
+        grid[Line(0)][Column(1)]
+            .flags
+            .contains(Flags::WIDE_CHAR_SPACER)
+    );
+    assert_eq!(grid[Line(0)][Column(2)].c, 'A');
+    assert_eq!(metrics.width(), 6.5);
+    assert_eq!(metrics.baseline(), 9.75);
 }

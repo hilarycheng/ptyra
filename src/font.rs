@@ -1,6 +1,20 @@
-//! Pure monospace metrics calculation; no font loading, hinting or platform I/O.
+//! Pure font metrics and fallback selection; no font loading, hinting or platform I/O.
 use crate::error::{AppError, Component};
 use std::io::ErrorKind;
+
+/// Returns the first supporting candidate's index; put the primary font first.
+/// `has_glyph` queries loaded Unicode coverage without I/O and must return false
+/// for missing-glyph placeholders. Empty lists or entirely missing coverage yield None.
+/// This selects one scalar only; sequences and shaping belong to the font backend.
+pub fn select_font<F>(
+    character: char,
+    candidates: &[F],
+    mut has_glyph: impl FnMut(&F, char) -> bool,
+) -> Option<usize> {
+    candidates
+        .iter()
+        .position(|candidate| has_glyph(candidate, character))
+}
 
 /// Caller-supplied metrics for a monospace face, normalized to em units.
 /// Advance is the fixed horizontal pen advance, not the glyph bounding-box width.
@@ -71,7 +85,7 @@ impl CellMetrics {
 
 #[cfg(test)]
 mod tests {
-    use super::{CellMetrics, FontMetrics};
+    use super::{CellMetrics, FontMetrics, select_font};
     use crate::error::{AppError, Component};
     use std::io::ErrorKind;
 
@@ -81,6 +95,72 @@ mod tests {
         descent: -0.25,
         line_gap: 0.125,
     };
+
+    #[test]
+    fn font_fallback_uses_cjk_candidate() {
+        let fonts = [
+            ("primary", " A"),
+            ("CJK label alone is insufficient", "漢"),
+            ("traditional coverage", "A繁體中文𠮷"),
+            ("later duplicate coverage", "A繁體中文𠮷"),
+        ];
+        for character in "繁體中文𠮷".chars() {
+            let mut probes = Vec::new();
+            let selected = select_font(character, &fonts, |font, scalar| {
+                assert_eq!(scalar, character);
+                probes.push(font.0);
+                font.1.contains(scalar)
+            });
+            assert_eq!(selected, Some(2));
+            assert_eq!(probes, [fonts[0].0, fonts[1].0, fonts[2].0]);
+        }
+        let mut probes = Vec::new();
+        assert_eq!(
+            select_font('A', &fonts, |font, scalar| {
+                probes.push(font.0);
+                font.1.contains(scalar)
+            }),
+            Some(0)
+        );
+        assert_eq!(probes, [fonts[0].0]);
+        let reordered = [fonts[3], fonts[2], fonts[0]];
+        assert_eq!(
+            select_font('繁', &reordered, |font, scalar| font.1.contains(scalar)),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn font_fallback_reports_missing_and_checks_each_candidate_once() {
+        let mut probes = 0;
+        assert_eq!(
+            select_font('繁', &[] as &[&str], |_, _| {
+                probes += 1;
+                false
+            }),
+            None
+        );
+        assert_eq!(probes, 0);
+
+        let fonts = [" A", "繁體中文", "Ω"];
+        assert_eq!(
+            select_font('𠮷', &fonts, |font, scalar| {
+                probes += 1;
+                font.contains(scalar)
+            }),
+            None
+        );
+        assert_eq!(probes, fonts.len());
+        // A missing result must not become a cached choice for the next character.
+        assert_eq!(
+            select_font('繁', &fonts, |font, scalar| font.contains(scalar)),
+            Some(1)
+        );
+        assert_eq!(
+            select_font('A', &fonts, |font, scalar| font.contains(scalar)),
+            Some(0)
+        );
+    }
 
     #[test]
     fn font_metrics_validate_dimensions() {

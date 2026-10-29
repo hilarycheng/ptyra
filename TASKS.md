@@ -151,7 +151,7 @@
   - **Dependencies:** `TASK-031`  |  **Unit Test:** `font_metrics_validate_dimensions`
   - **Done:** 無效 font size 會回報錯誤
 
-- [ ] **TASK-033 — 建立缺字 fallback 選擇邏輯**
+- [x] **TASK-033 — 建立缺字 fallback 選擇邏輯**
   - **Dependencies:** `TASK-032`  |  **Unit Test:** `font_fallback_uses_cjk_candidate`
   - **Done:** 繁體中文字可選擇支援嘅 fallback font
 
