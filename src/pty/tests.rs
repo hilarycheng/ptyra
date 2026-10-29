@@ -1,6 +1,193 @@
 use super::*;
 use std::{cell::Cell, os::unix::ffi::OsStrExt, rc::Rc};
 
+#[test]
+fn pty_resize_sends_correct_dimensions() {
+    let initial = PtySize {
+        rows: 31,
+        columns: 97,
+    };
+    let mut state = ResizeState { size: initial };
+    let mut calls = Vec::new();
+    let result = state
+        .resize(
+            TabId(5),
+            initial,
+            Some(|size| {
+                calls.push(size);
+                Ok(())
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        PtyResizeResult {
+            tab: TabId(5),
+            size: initial,
+            status: PtyResizeStatus::Unchanged
+        }
+    );
+    assert!(calls.is_empty());
+    for size in [
+        PtySize {
+            rows: 42,
+            columns: 109,
+        },
+        PtySize {
+            rows: 1,
+            columns: 1,
+        },
+        PtySize {
+            rows: u16::MAX,
+            columns: u16::MAX,
+        },
+    ] {
+        let result = state
+            .resize(
+                TabId(5),
+                size,
+                Some(|s| {
+                    calls.push(s);
+                    Ok(())
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            PtyResizeResult {
+                tab: TabId(5),
+                size,
+                status: PtyResizeStatus::Resized
+            }
+        );
+        assert_eq!(state.size, size);
+        assert_eq!(calls.last(), Some(&size));
+        assert_eq!(
+            state
+                .resize(TabId(5), size, Some(|_| panic!("duplicate resize I/O")))
+                .unwrap()
+                .status,
+            PtyResizeStatus::Unchanged
+        );
+    }
+    assert_eq!(calls.len(), 3);
+}
+
+#[test]
+fn pty_resize_invalid_and_closed_do_not_call_adapter() {
+    let initial = PtySize {
+        rows: 31,
+        columns: 97,
+    };
+    let mut state = ResizeState { size: initial };
+    for size in [
+        PtySize {
+            rows: 0,
+            columns: 97,
+        },
+        PtySize {
+            rows: 31,
+            columns: 0,
+        },
+        PtySize {
+            rows: 0,
+            columns: 0,
+        },
+    ] {
+        let error = state
+            .resize(TabId(1), size, Some(|_| panic!("invalid resize I/O")))
+            .unwrap_err();
+        assert_eq!(
+            error,
+            PtyResizeError {
+                tab: TabId(1),
+                error: AppError::new(Component::Pty, io::ErrorKind::InvalidInput)
+            }
+        );
+        assert_eq!(state.size, initial);
+    }
+    for size in [
+        initial,
+        PtySize {
+            rows: 42,
+            columns: 109,
+        },
+    ] {
+        let error = state
+            .resize::<fn(PtySize) -> io::Result<()>>(TabId(1), size, None)
+            .unwrap_err();
+        assert_eq!(error.error.kind(), io::ErrorKind::NotConnected);
+        assert_eq!(state.size, initial);
+    }
+}
+
+#[test]
+fn pty_resize_failure_retry_is_isolated() {
+    let initial = PtySize {
+        rows: 31,
+        columns: 97,
+    };
+    let next = PtySize {
+        rows: 42,
+        columns: 109,
+    };
+    let mut first = ResizeState { size: initial };
+    let mut second = ResizeState { size: initial };
+    for kind in [io::ErrorKind::PermissionDenied, io::ErrorKind::Interrupted] {
+        let mut calls = 0;
+        let error = first
+            .resize(
+                TabId(1),
+                next,
+                Some(|size| {
+                    calls += 1;
+                    assert_eq!(size, next);
+                    Err(io::Error::new(kind, "secret metadata"))
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error,
+            PtyResizeError {
+                tab: TabId(1),
+                error: AppError::new(Component::Pty, kind)
+            }
+        );
+        assert!(!format!("{error:?}").contains("secret"));
+        assert_eq!(calls, 1, "no unbounded retry loop");
+        assert_eq!(first.size, initial);
+        assert_eq!(second.size, initial);
+    }
+    assert_eq!(
+        first
+            .resize(TabId(1), next, Some(|_| Ok(())))
+            .unwrap()
+            .status,
+        PtyResizeStatus::Resized
+    );
+    assert_eq!(first.size, next);
+    assert_eq!(
+        second
+            .resize(TabId(2), initial, Some(|_| panic!("unrelated session I/O")))
+            .unwrap()
+            .status,
+        PtyResizeStatus::Unchanged
+    );
+    let other = PtySize {
+        rows: 17,
+        columns: 53,
+    };
+    assert_eq!(
+        second
+            .resize(TabId(2), other, Some(|_| Ok(())))
+            .unwrap()
+            .tab,
+        TabId(2)
+    );
+    assert_eq!(second.size, other);
+    assert_eq!(first.size, next);
+}
+
 enum ReadStep {
     Bytes(Vec<u8>),
     Error(io::Error),

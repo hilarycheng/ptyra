@@ -93,3 +93,29 @@ Spawn requires an absolute executable path and absolute cwd. No PATH search, HOM
 Typed spawn errors retain only TabId, the validation/open/spawn stage, and AppError metadata. Requests and sessions deliberately have no payload-bearing Debug implementation. Unit tests inject open/spawn failures and track independent resource ownership. Linux integration fixtures use fixed `/bin/sh -c` scripts with separate literal arguments, `/usr/bin/stty`, a five-second parent deadline, a 16 KiB output cap, and owned-child cleanup. They check stdio/control-terminal setup, size, argv bytes, environment, cwd failure, CLOEXEC, nonblocking master, repeated failure FD accounting, child reaping and session isolation. The test-only read loop does not implement TASK-022's production output stream.
 
 Real Sway, Wayland, Fcitx5, application event-loop integration and interactive terminal acceptance remain NOT RUN. There is still no usable GUI terminal.
+
+# Runtime PTY resize safety review — TASK-024 (2026-10-29)
+
+No dependencies or lockfile entries change. The existing TIOCSWINSZ operation is
+shared by initial slave sizing and runtime master sizing in `set_pty_size`.
+Its unsafe call receives a BorrowedFd from the adapter's live OwnedFd/File and
+a fully initialized stack `libc::winsize`. Row/column values are nonzero u16;
+pixel fields remain zero. The ioctl reads the structure during the call and does
+not retain its pointer or acquire FD ownership. No arbitrary integer FD, global
+terminal, or user-selected external process is targeted.
+
+Runtime resize makes at most one syscall per changed valid request. Invalid and
+unchanged sizes do not call the adapter; an explicitly terminated session reports
+NotConnected before duplicate-size handling. The cache starts from the successful
+spawn size and updates only after successful ioctl. Errors, including EINTR,
+return metadata and preserve the prior cache so the caller may retry later.
+The cache is the last size applied by Ptyra, not a live query of changes made by
+a child or direct FD user.
+
+Linux sends SIGWINCH to the affected PTY's foreground process group when its size
+changes ([Linux man-pages](https://man7.org/linux/man-pages/man2/TIOCSWINSZ.2const.html)).
+The adapter does not separately signal a PID/process group. The fixed integration
+fixture installs a WINCH trap before sending its readiness byte; the trap invokes
+`stty size` and exits. Two owned sessions verify changed dimensions and signal
+isolation with deadlines, bounded output, FD accounting and normal child reaping.
+This is Linux PTY verification, not GUI resize, Wayland or Fcitx5 acceptance.

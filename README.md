@@ -15,8 +15,8 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前只有基礎 li
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
-- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取同 per-session input byte queue。
-- `src/main.rs` 只印出應用程式名稱。PTY spawn/read/write 仍係 library API；尚未有 Wayland 連線/dispatch、keyboard/paste/IME 輸入接線、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
+- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue 同 PTY row/column resize。
+- `src/main.rs` 只印出應用程式名稱。PTY spawn/read/write/resize 仍係 library API；尚未有 Wayland 連線/dispatch、keyboard/paste/IME 輸入接線、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
 
@@ -257,7 +257,7 @@ was separately approved in that later request.
 
 ```text
 TASK: TASK-023
-Status: TODO — implementation verified; post-test completion-status approval pending
+Status: DONE — implementation verified; post-test completion status approved
 Dependencies: satisfied (TASK-021); T21/T22 checkboxes updated after explicit approval
 Changed files: src/pty.rs, src/pty/write.rs, src/pty/write/tests.rs,
   tests/pty_spawn.rs, README.md; TASKS.md contains only approved T21/T22 status updates
@@ -274,9 +274,9 @@ Security / Privacy impact: per-session input cap and fallible allocation;
 Known limitations: library queue API only; no readiness/event-loop wiring,
   keyboard/paste/IME routing, terminal parser, dynamic resize or exit Tab events;
   producers must retain/retry rejected enqueue data without busy-polling
-Ready for [x]: YES technically; separate post-test completion-status approval pending
-Approval: user approved T23 implementation/commit and T21/T22 completion statuses;
-  no post-test T23 status or T24 implementation approval inferred
+Ready for [x]: YES
+Approval: user explicitly approved T23 completion status after its test results;
+  checkbox updated before starting separately approved T24 implementation
 ```
 
 `enqueue_write` atomically accepts literal bytes into that session's queue, with
@@ -314,5 +314,58 @@ Test-first run: 2026-10-29 07:39:42.018–07:39:44.030 UTC (expected FAIL).
 Final staged checks: 07:41:17.249–07:41:19.599 UTC (all PASS).
 Final main-repository checks: 07:43:07.444–07:43:10.599 UTC (all PASS, same source).
 All build/test commands used Cargo jobs=2, test threads=2 and CPU affinity 0,1,
-inherited by test children. T23's checkbox remains pending post-test approval.
-T24 is analysis only; no resize implementation is included in this change.
+inherited by test children. T23's checkbox is now checked after explicit post-test
+approval. At that implementation checkpoint T24 was analysis only; its subsequent
+implementation is recorded below.
+
+## TASK-024 Verification (2026-10-29)
+
+```text
+TASK: TASK-024
+Status: DONE — final acceptance PASS; explicitly approved completion status applied
+Dependencies: satisfied (TASK-021); verified T23 status approved and checked
+Changed files: src/pty.rs, src/pty/tests.rs, tests/pty_spawn.rs,
+  DEPENDENCIES.md, README.md, TASKS.md (approved T23/T24 statuses)
+Unit test: cargo test --workspace --locked --offline pty_resize_sends_correct_dimensions
+Result: PASS in final main-repository run; test-first failure recorded before implementation
+Workspace tests: PASS in final main-repository run — 40 unit + 8 Linux PTY integration + 1 doc-test
+Format / Clippy: PASS in final main-repository run — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: new real PTY dimensions/SIGWINCH fixture PASS;
+  all 7 previous PTY fixtures PASS; Wayland/Sway/Fcitx5, GUI acceptance,
+  and benchmarks NOT RUN
+Security / Privacy impact: only owned PTY descriptors; metadata-only errors;
+  shared ioctl safety boundary documented; no new dependencies, threads,
+  global settings or unrelated process signals
+Known limitations: explicit row/column library API; no GUI pixel-to-cell or
+  event-loop routing; cache tracks last adapter-applied size, not child changes
+Ready for [x]: YES
+Approval: user explicitly approved T23 and T24 checkboxes and the scoped commit;
+  T24 completion was applied only after all final main-repository checks passed
+```
+
+`PtySession::resize` rejects zero rows/columns and returns a typed Unchanged result
+without I/O for an identical size. A changed valid size uses TIOCSWINSZ on the
+session's owned master; success updates the cache and returns Resized with TabId
+and dimensions. A failed ioctl leaves the cache unchanged and can be retried
+explicitly. There is no internal retry loop. Terminated sessions return
+NotConnected even if the requested dimensions match their cached size.
+
+The cache begins with the initial spawn size. Initial and runtime sizing share
+the same initialized winsize/FD helper, with the safety boundary recorded in
+DEPENDENCIES.md. No manual SIGWINCH, pixel calculation or GUI resize is added.
+
+Deterministic tests cover exact row/column requests, no-op suppression, zero and
+u16 boundary values, failure/retry, closed sessions, payload-free errors and
+session isolation. The new real Linux fixture installs a SIGWINCH trap before
+signalling readiness, then reports the size observed by the child. The two
+sessions independently observe 42x109 and 17x53, with the second remaining alive
+and unaffected while the first resizes. Existing spawn/read/write tests regress
+ownership, byte streams, pending queues and child cleanup.
+
+Test-first run: 2026-10-29 07:53:14.554–07:53:16.604 UTC (expected FAIL).
+Final staged checks: 07:54:08.301–07:54:10.612 UTC (all PASS).
+Final main-repository checks: 07:56:42.877–07:56:46.266 UTC (all PASS, same source).
+All build/test commands used Cargo jobs=2, test threads=2 and CPU affinity 0,1,
+inherited by test children. T25 remains analysis only; no exit-event mapping is
+implemented by this change.

@@ -120,6 +120,62 @@ pub struct PtySize {
     pub columns: u16,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PtyResizeStatus {
+    Unchanged,
+    Resized,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PtyResizeResult {
+    pub tab: TabId,
+    pub size: PtySize,
+    pub status: PtyResizeStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PtyResizeError {
+    pub tab: TabId,
+    pub error: AppError,
+}
+
+struct ResizeState {
+    size: PtySize,
+}
+impl ResizeState {
+    fn resize<F: FnOnce(PtySize) -> io::Result<()>>(
+        &mut self,
+        tab: TabId,
+        size: PtySize,
+        apply: Option<F>,
+    ) -> Result<PtyResizeResult, PtyResizeError> {
+        let error = |e| PtyResizeError {
+            tab,
+            error: AppError::from_io(Component::Pty, e),
+        };
+        if size.rows == 0 || size.columns == 0 {
+            return Err(error(io::ErrorKind::InvalidInput.into()));
+        }
+        let Some(apply) = apply else {
+            return Err(error(io::ErrorKind::NotConnected.into()));
+        };
+        if self.size == size {
+            return Ok(PtyResizeResult {
+                tab,
+                size,
+                status: PtyResizeStatus::Unchanged,
+            });
+        }
+        apply(size).map_err(error)?;
+        self.size = size;
+        Ok(PtyResizeResult {
+            tab,
+            size,
+            status: PtyResizeStatus::Resized,
+        })
+    }
+}
+
 /// Absolute program and cwd are explicit; no shell lookup or cwd fallback.
 /// Deliberately has no Debug implementation: arguments may contain secrets.
 pub struct PtySpawnRequest<'a> {
@@ -207,10 +263,12 @@ pub struct PtySession {
     child: OwnedChild,
     read_state: ReadState,
     write_queue: WriteQueue,
+    resize_state: ResizeState,
 }
 
 impl PtySession {
     pub fn spawn(request: PtySpawnRequest<'_>) -> Result<Self, PtySpawnError> {
+        let size = request.size;
         let spawned = spawn_with_backend(request, &mut LinuxBackend)?;
         Ok(Self {
             tab: spawned.tab,
@@ -218,6 +276,7 @@ impl PtySession {
             child: spawned.child,
             read_state: ReadState::default(),
             write_queue: WriteQueue::default(),
+            resize_state: ResizeState { size },
         })
     }
 
@@ -226,6 +285,25 @@ impl PtySession {
     }
     pub fn child_id(&self) -> u32 {
         self.child.0.id()
+    }
+
+    /// Last successfully applied row/column size, including initial spawn size.
+    pub fn current_size(&self) -> PtySize {
+        self.resize_state.size
+    }
+
+    /// Applies a valid changed size to this session's owned master, at most once.
+    /// Errors leave the cached size unchanged; callers may retry explicitly.
+    /// A terminated session returns NotConnected, even for an unchanged size.
+    /// Pixel-to-cell calculation and GUI resize routing belong to later tasks.
+    pub fn resize(&mut self, size: PtySize) -> Result<PtyResizeResult, PtyResizeError> {
+        self.resize_state.resize(
+            self.tab,
+            size,
+            self.master
+                .as_ref()
+                .map(|master| move |size| set_pty_size(master.as_fd(), size)),
+        )
     }
 
     /// Borrowed, nonblocking master; no ownership transfer or stream buffering.
@@ -312,6 +390,23 @@ impl Drop for OwnedChild {
     }
 }
 
+fn set_pty_size(fd: BorrowedFd<'_>, size: PtySize) -> io::Result<()> {
+    let size = libc::winsize {
+        ws_row: size.rows,
+        ws_col: size.columns,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // SAFETY: fd is borrowed from the adapter's live owned PTY slave (spawn)
+    // or master (resize). TIOCSWINSZ reads the fully initialized stack winsize
+    // only during this call; it retains no pointer. No FD ownership is changed.
+    // Kernel SIGWINCH delivery targets this PTY's foreground process group.
+    if unsafe { libc::ioctl(fd.as_raw_fd(), libc::TIOCSWINSZ, &size) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 struct LinuxBackend;
 impl SpawnBackend for LinuxBackend {
     type Master = File;
@@ -331,17 +426,7 @@ impl SpawnBackend for LinuxBackend {
             OFlag::O_RDWR | OFlag::O_NOCTTY | OFlag::O_CLOEXEC,
             Mode::empty(),
         )?;
-        let size = libc::winsize {
-            ws_row: size.rows,
-            ws_col: size.columns,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
-        // SAFETY: slave is owned/live and TIOCSWINSZ reads this initialized winsize
-        // during the call. This only sets the new PTY's initial dimensions.
-        if unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSWINSZ, &size) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
+        set_pty_size(slave.as_fd(), size)?;
         Ok((File::from(OwnedFd::from(master)), slave))
     }
 

@@ -9,8 +9,8 @@ use nix::{
 use ptyra::{
     TabId,
     pty::{
-        PtyReadResult, PtyReadStatus, PtySession, PtySize, PtySpawnRequest, PtyWriteFailure,
-        PtyWriteStatus, SpawnStage,
+        PtyReadResult, PtyReadStatus, PtyResizeStatus, PtySession, PtySize, PtySpawnRequest,
+        PtyWriteFailure, PtyWriteStatus, SpawnStage,
     },
 };
 use std::{
@@ -437,5 +437,91 @@ fn linux_pty_closed_write_retains_owned_pending_bytes() {
     );
     assert_eq!(session.pending_write_bytes(), 6);
     drop(session);
+    assert_eq!(pty_fd_count(), baseline);
+}
+
+fn spawn_resize_fixture(tab: TabId) -> PtySession {
+    let args = [
+        OsString::from("-c"),
+        OsString::from(
+            "set -eu; /usr/bin/stty -echo -onlcr; trap '/usr/bin/stty size; exit 0' WINCH; printf R; while :; do read line || :; done",
+        ),
+        OsString::from("ptyra-fixture"),
+    ];
+    let mut r = request(&args);
+    r.tab = tab;
+    PtySession::spawn(r).unwrap()
+}
+
+#[test]
+fn linux_pty_resize_updates_size_and_signals_owned_session() {
+    let _lock = FIXTURE_LOCK.lock().unwrap();
+    let baseline = pty_fd_count();
+    let mut first = spawn_resize_fixture(TabId(61));
+    let mut second = spawn_resize_fixture(TabId(62));
+    wait_for_ready(&mut first);
+    wait_for_ready(&mut second); // Traps installed before readiness.
+    let initial = PtySize {
+        rows: 31,
+        columns: 97,
+    };
+    assert_eq!(first.current_size(), initial);
+    assert_eq!(second.current_size(), initial);
+    assert_eq!(
+        first.resize(initial).unwrap().status,
+        PtyResizeStatus::Unchanged
+    );
+    assert_eq!(
+        first
+            .resize(PtySize {
+                rows: 0,
+                columns: 97
+            })
+            .unwrap_err()
+            .error
+            .kind(),
+        io::ErrorKind::InvalidInput
+    );
+    assert!(first.try_wait().unwrap().is_none());
+    let next = PtySize {
+        rows: 42,
+        columns: 109,
+    };
+    let result = first.resize(next).unwrap();
+    assert_eq!(result.tab, TabId(61));
+    assert_eq!(result.status, PtyResizeStatus::Resized);
+    assert_eq!(result.size, next);
+    assert_eq!(first.current_size(), next);
+    let (output, status) = collect(&mut first);
+    assert!(status.success());
+    assert_eq!(
+        output, b"42 109\n",
+        "SIGWINCH handler must observe new dimensions"
+    );
+    assert_eq!(second.current_size(), initial);
+    assert!(
+        second.try_wait().unwrap().is_none(),
+        "other session must not receive SIGWINCH"
+    );
+    assert_eq!(
+        second.read_chunk(&mut [0; 16]).unwrap().status,
+        PtyReadStatus::WouldBlock
+    );
+    let other = PtySize {
+        rows: 17,
+        columns: 53,
+    };
+    assert_eq!(second.resize(other).unwrap().tab, TabId(62));
+    let (output, status) = collect(&mut second);
+    assert!(status.success());
+    assert_eq!(output, b"17 53\n");
+    first.terminate().unwrap();
+    assert_eq!(
+        first.resize(next).unwrap_err().error.kind(),
+        io::ErrorKind::NotConnected
+    );
+    assert_eq!(first.current_size(), next);
+    drop(first);
+    drop(second);
     assert_eq!(pty_fd_count(), baseline);
 }

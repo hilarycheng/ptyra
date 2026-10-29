@@ -109,11 +109,11 @@
   - **Dependencies:** `TASK-021`  |  **Unit Test:** `pty_read_preserves_byte_order`
   - **Done:** 分段讀取唔會遺失或重排 bytes
 
-- [ ] **TASK-023 — 向 PTY 送出 byte queue**
+- [x] **TASK-023 — 向 PTY 送出 byte queue**
   - **Dependencies:** `TASK-021`  |  **Unit Test:** `pty_write_handles_partial_writes`
   - **Done:** partial write 後保留未寫 bytes
 
-- [ ] **TASK-024 — 處理 row/column resize**
+- [x] **TASK-024 — 處理 row/column resize**
   - **Dependencies:** `TASK-021`  |  **Unit Test:** `pty_resize_sends_correct_dimensions`
   - **Done:** 只在尺寸有效或改變時送 resize request
 
