@@ -671,3 +671,50 @@ exports 同 fixtures 毋須改動；T032 保持未完成。
 
 Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-032 Verification (2026-10-29)
+
+```text
+TASK: TASK-032
+Status: DONE
+Dependencies: satisfied (TASK-031 已 [x])
+Changed files: src/font.rs, src/lib.rs, src/renderer/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline font_metrics_validate_dimensions
+Result: PASS；test-first compilation 因未有 CellMetrics／FontMetrics 而預期失敗
+Workspace tests: PASS — 70 unit tests + 9 Linux PTY integration tests + 2 compile-fail doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  真字型／hinting、renderer 真畫面、Sway/Fcitx5 acceptance 同 Benchmark NOT RUN
+Security / Privacy impact: finite／正負值／結果範圍驗證；固定計算量、無 allocation；
+  errors 只含 Renderer／InvalidInput；冇新增 dependency、unsafe、I/O、logs 或系統改動
+Known limitations: pure library metrics；caller 提供所選 monospace face 嘅 em metrics；
+  未有 font loading、字型是否等寬嘅偵測、hinting、rasterization 或 runtime 接線；
+  i32::MAX 係座標上限，唔係未來 glyph buffer 嘅 allocation budget
+Ready for [x]: YES
+Approval: 使用者授權下一個 TASK，並要求完成後標記 [x] 同 commit；
+  T032 中斷後繼續完成，冇跳到 T033。未要求 push。
+```
+
+`FontMetrics` 保存以 em 正規化嘅 fixed advance、ascent、descent 同 line gap。
+Advance 必須正數；ascent 非負；descent 非正；line gap 非負；ascent／descent
+不可同時為零。所有分量必須有限。`CellMetrics::new` 接收 logical pixels per em
+嘅 font size，計出 `width = size × advance`、
+`height = size × (ascent − descent + line_gap)` 同 `baseline = size × ascent`。
+本接口將 line gap 全部放喺 descent 之後；baseline 從 cell 頂部量起。
+高度公式及 advance 定義參考 [FreeType Glyph Metrics](https://freetype.org/freetype2/docs/glyphs/glyphs-3.html)。
+
+Font size 同輸出 width／height 必須大於零、有限，且唔超過 i32::MAX。
+保留 logical-pixel 小數；physical scale 同至少一個 physical pixel 嘅檢查仍由
+`CellLayout` 負責。計算先縮放各個高度分量，再相加，避免有效細 pixel 結果被
+未縮放 em 總和嘅 overflow 誤拒絕。零尺寸 underflow 同無界結果會回報錯誤。
+
+新增 3 個 metrics tests，使用合成 face metrics 驗證整數／小數 font size、
+baseline／line gap、非法 floats／符號、underflow、範圍邊界及大 em／細 size。
+另有 1 個 `CellLayout` 接線測試，確認 scale 只套用一次、subpixel logical advance
+由 physical scale 驗證，以及 scale 後超額仍拒絕。獨立 review 發現嘅 intermediate
+overflow 已先重現測試失敗，再修正並通過全部 regression。原有 CJK、cursor、
+damage 同 frame regression 全部保留；Preedit overlay 尚未實作／驗證。
+
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。

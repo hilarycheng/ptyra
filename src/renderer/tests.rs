@@ -3,6 +3,7 @@ use crate::{
     TabId, WindowId,
     damage::Rect,
     error::{AppError, Component},
+    font::{CellMetrics, FontMetrics},
     geometry::Scale,
     terminal::{MAX_OSC_BYTES, Terminal},
     window::{ConfigureState, WindowSize},
@@ -376,4 +377,67 @@ fn cell_rect_maps_terminal_snapshot_without_changing_cells() {
             .contains(Flags::WIDE_CHAR_SPACER)
     );
     assert_eq!(grid[Line(0)][Column(2)].zerowidth(), Some(&['\u{301}'][..]));
+}
+
+#[test]
+fn font_metrics_feed_layout_without_double_scaling() {
+    let face = FontMetrics {
+        advance: 0.5,
+        ascent: 0.75,
+        descent: -0.25,
+        line_gap: 0.125,
+    };
+    let metrics = CellMetrics::new(13.0, face).unwrap();
+    let size = WindowSize::new(80, 40).unwrap();
+    let layout = CellLayout::new(
+        size,
+        Scale::new(2).unwrap(),
+        metrics.width(),
+        metrics.height(),
+    )
+    .unwrap();
+    assert_eq!(
+        layout.cell_rect(1, 1),
+        Some(Rect {
+            x: 13,
+            y: 29,
+            width: 13,
+            height: 30
+        })
+    );
+    assert_eq!(metrics.baseline(), 9.75);
+
+    let tiny = CellMetrics::new(0.5, face).unwrap();
+    assert!(CellLayout::new(size, Scale::new(1).unwrap(), tiny.width(), tiny.height()).is_err());
+    let scaled =
+        CellLayout::new(size, Scale::new(4).unwrap(), tiny.width(), tiny.height()).unwrap();
+    assert_eq!(
+        scaled.cell_rect(0, 0),
+        Some(Rect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 2
+        })
+    );
+
+    let maximum = CellMetrics::new(
+        f64::from(i32::MAX),
+        FontMetrics {
+            advance: 1.0,
+            ascent: 1.0,
+            descent: 0.0,
+            line_gap: 0.0,
+        },
+    )
+    .unwrap();
+    assert!(
+        CellLayout::new(
+            size,
+            Scale::new(2).unwrap(),
+            maximum.width(),
+            maximum.height()
+        )
+        .is_err()
+    );
 }

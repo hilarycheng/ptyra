@@ -147,7 +147,7 @@
   - **Dependencies:** `TASK-030`, `TASK-015`  |  **Unit Test:** `cell_rect_rounding_is_stable`
   - **Done:** window size 改變後仍不重疊、不 overflow
 
-- [ ] **TASK-032 — 計算 monospace cell metrics**
+- [x] **TASK-032 — 計算 monospace cell metrics**
   - **Dependencies:** `TASK-031`  |  **Unit Test:** `font_metrics_validate_dimensions`
   - **Done:** 無效 font size 會回報錯誤
 

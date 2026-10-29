@@ -1,6 +1,7 @@
 pub mod clock;
 pub mod damage;
 pub mod error;
+pub mod font;
 pub mod frame;
 pub mod geometry;
 pub mod input;
