@@ -163,7 +163,7 @@
   - **Dependencies:** `TASK-030`, `TASK-034`  |  **Unit Test:** `draw_commands_preserve_colors`
   - **Done:** 文字、前景、背景不交換
 
-- [ ] **TASK-036 — Cursor draw command**
+- [x] **TASK-036 — Cursor draw command**
   - **Dependencies:** `TASK-035`  |  **Unit Test:** `cursor_shape_matches_mode`
   - **Done:** Block / Beam / Underline 位置正確
 

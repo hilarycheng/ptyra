@@ -9,7 +9,7 @@ use crate::{
 };
 use alacritty_terminal::{
     term::{cell::Flags, color::Colors},
-    vte::ansi::Color,
+    vte::ansi::{Color, CursorShape},
 };
 use std::io::ErrorKind;
 
@@ -121,6 +121,61 @@ pub fn draw_commands<'a>(
             underline_color: cell.underline_color(),
             colors: content.colors,
         })
+    })
+}
+
+/// Cursor geometry in physical pixels; the backend owns color and glyph recoloring.
+/// shortcut: HollowBlock keeps a clipped envelope, add original edges with an outline backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CursorDrawCommand {
+    pub shape: CursorShape,
+    pub rect: Rect,
+}
+
+/// Uses the core's cursor shape and wide-cell-normalized position without changing it.
+/// Hidden or off-viewport cursors produce no command. No blink/focus scheduling occurs here.
+/// shortcut: Beam/Underline use one physical pixel, revisit thickness with backend calibration.
+pub fn cursor_draw_command(
+    snapshot: TerminalSnapshot<'_>,
+    layout: &CellLayout,
+) -> Option<CursorDrawCommand> {
+    let mut content = snapshot.content;
+    let cursor = content.cursor;
+    if cursor.shape == CursorShape::Hidden {
+        return None;
+    }
+    let row = content
+        .display_offset
+        .checked_add_signed(cursor.point.line.0 as isize)?;
+    let column = cursor.point.column.0;
+    if row >= snapshot.rows || column >= snapshot.columns {
+        return None;
+    }
+    let mut rect = layout.cell_rect(row, column)?;
+    let cell = content
+        .display_iter
+        .find(|cell| cell.point == cursor.point)?;
+    if cell.flags.contains(Flags::WIDE_CHAR)
+        && let Some(next) = column.checked_add(1).and_then(|c| layout.cell_rect(row, c))
+    {
+        rect.width += next.width;
+    }
+    match cursor.shape {
+        CursorShape::Beam => rect.width = 1,
+        CursorShape::Underline => {
+            // Position against the full cell bottom before clipping, so it cannot move upward.
+            let y = (row.checked_add(1)? as f64 * layout.height).round() - 1.0;
+            if y >= f64::from(layout.bounds.height()) {
+                return None;
+            }
+            rect.y = y as i32;
+            rect.height = 1;
+        }
+        _ => (),
+    }
+    Some(CursorDrawCommand {
+        shape: cursor.shape,
+        rect,
     })
 }
 

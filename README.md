@@ -854,3 +854,45 @@ Preedit overlay 尚未實作／驗證。
 
 Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-036 Verification (2026-10-29)
+
+```text
+TASK: TASK-036
+Status: DONE
+Dependencies: satisfied (TASK-035 已 [x])
+Changed files: src/renderer.rs, src/renderer/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline cursor_shape_matches_mode
+Result: PASS；test-first 因未有 cursor_draw_command 而預期 compilation FAIL
+Workspace tests: PASS — 87 unit tests + 9 Linux PTY integration tests + 2 compile-fail doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  真 renderer／Sway cursor 呈現、HiDPI thickness calibration 同 Benchmark NOT RUN
+Security / Privacy impact: 純 geometry conversion；無 heap allocation、payload logs、
+  dependency、unsafe 或平台 I/O；沿用有界 snapshot、checked offset 同 clipped geometry
+Known limitations: 只產生 cursor shape／rect；backend 負責顏色、block 下文字重繪及 outline；
+  Beam／Underline 暫用 1 physical pixel；blink／focus scheduling 未實作；
+  HollowBlock outline 尚需原始 cell 邊界再 clip，現有 command 只保留 clipped envelope
+Ready for [x]: YES
+Approval: 使用者明確授權完成 T036 後標記 [x] 同 commit；未要求 push。
+```
+
+`renderer::cursor_draw_command` 沿用 core 嘅 cursor shape 同已正規化嘅位置，
+回傳 `CursorDrawCommand`。Block 覆蓋 cell；Beam 放左邊；Underline 放完整 cell
+嘅最底一行 pixel。CJK spacer 嘅 cursor 由 core 移返 lead cell，Block／Underline
+覆蓋兩格；combining sequence 維持一格。HollowBlock 保留 shape 供 backend 畫 outline。
+
+Hidden cursor 回傳 None。座標先加 display offset，再檢查 grid viewport 同 window
+bounds；即使 window 有額外空位，已移出 viewport 嘅 cursor 都唔會畫出。
+Underline 先按未 clipped 嘅 cell bottom 定位，底線喺 window 外就省略，唔會移上
+可見區域。Cursor cell lookup 最多掃描 snapshot 嘅 visible cells，唔複製 grid。
+
+新增 4 個 deterministic tests，涵蓋 DECSCUSR 0–6、hide/show、非原點及 scale、
+CJK／combining、fake scrollback、右邊／底部 clipping、1-pixel cells 同 i32::MAX
+layout 邊界。既有文字／顏色、CJK、damage、frame 同 PTY regression 全部通過；
+Preedit overlay 尚未實作／驗證。獨立 read-only review 確認三種指定 cursor shapes
+無實質問題；HollowBlock 嘅 outline clipping 限制留待 backend 處理。
+
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。

@@ -1,4 +1,4 @@
-use super::{CellLayout, RenderInput, RenderOutput, Renderer, draw_commands};
+use super::{CellLayout, RenderInput, RenderOutput, Renderer, cursor_draw_command, draw_commands};
 use crate::{
     TabId, WindowId,
     damage::Rect,
@@ -19,6 +19,164 @@ use alacritty_terminal::{
 };
 
 struct FakeRenderer;
+
+#[test]
+fn cursor_shape_matches_mode() {
+    let mut terminal = Terminal::new(TabId(1), 3, 6).unwrap();
+    terminal.feed(TabId(1), b"\x1b[2;3H").unwrap();
+    let layout = CellLayout::new(
+        WindowSize::new(100, 100).unwrap(),
+        Scale::new(2).unwrap(),
+        7.25,
+        13.5,
+    )
+    .unwrap();
+    for (mode, shape, expected) in [
+        (0, CursorShape::Block, (29, 27, 15, 27)),
+        (1, CursorShape::Block, (29, 27, 15, 27)),
+        (2, CursorShape::Block, (29, 27, 15, 27)),
+        (3, CursorShape::Underline, (29, 53, 15, 1)),
+        (4, CursorShape::Underline, (29, 53, 15, 1)),
+        (5, CursorShape::Beam, (29, 27, 1, 27)),
+        (6, CursorShape::Beam, (29, 27, 1, 27)),
+    ] {
+        terminal
+            .feed(TabId(1), format!("\x1b[{mode} q").as_bytes())
+            .unwrap();
+        let command = cursor_draw_command(terminal.snapshot().unwrap(), &layout).unwrap();
+        assert_eq!(command.shape, shape);
+        let rect = command.rect;
+        assert_eq!((rect.x, rect.y, rect.width, rect.height), expected);
+        terminal.feed(TabId(1), b"\x1b[?25l").unwrap();
+        assert!(cursor_draw_command(terminal.snapshot().unwrap(), &layout).is_none());
+        terminal.feed(TabId(1), b"\x1b[?25h").unwrap();
+        assert_eq!(
+            cursor_draw_command(terminal.snapshot().unwrap(), &layout),
+            Some(command)
+        );
+    }
+}
+
+#[test]
+fn cursor_commands_follow_wide_cells_and_scrollback() {
+    let mut terminal = Terminal::new(TabId(1), 2, 4).unwrap();
+    terminal
+        .feed(TabId(1), "繁e\u{301}\x1b[1;2H".as_bytes())
+        .unwrap();
+    let layout = CellLayout::new(
+        WindowSize::new(100, 100).unwrap(),
+        Scale::new(1).unwrap(),
+        7.25,
+        10.0,
+    )
+    .unwrap();
+    for (mode, expected) in [(2, (0, 0, 15, 10)), (4, (0, 9, 15, 1)), (6, (0, 0, 1, 10))] {
+        terminal
+            .feed(TabId(1), format!("\x1b[{mode} q").as_bytes())
+            .unwrap();
+        let snapshot = terminal.snapshot().unwrap();
+        assert_eq!(
+            snapshot.content.cursor.point,
+            Point::new(Line(0), Column(0))
+        );
+        let rect = cursor_draw_command(snapshot, &layout).unwrap().rect;
+        assert_eq!((rect.x, rect.y, rect.width, rect.height), expected);
+    }
+    // A combining sequence still occupies just its base cell.
+    terminal.feed(TabId(1), b"\x1b[1;3H\x1b[2 q").unwrap();
+    let rect = cursor_draw_command(terminal.snapshot().unwrap(), &layout)
+        .unwrap()
+        .rect;
+    assert_eq!((rect.x, rect.y, rect.width, rect.height), (15, 0, 7, 10));
+
+    let mut terminal = Terminal::new(TabId(2), 2, 4).unwrap();
+    terminal.feed(TabId(2), b"old\r\nnew\r\nend").unwrap();
+    for row in [1, 2] {
+        terminal
+            .feed(TabId(2), format!("\x1b[{row};2H").as_bytes())
+            .unwrap();
+        // Supply a fake scrolled grid; production scrolling is a separate task.
+        let mut grid = terminal.grid().unwrap().clone();
+        grid.scroll_display(Scroll::Top);
+        let mut snapshot = terminal.snapshot().unwrap();
+        snapshot.content.display_iter = grid.display_iter();
+        snapshot.content.display_offset = grid.display_offset();
+        assert_eq!(snapshot.content.display_offset, 1);
+        let command = cursor_draw_command(snapshot, &layout);
+        if row == 1 {
+            let rect = command.unwrap().rect;
+            assert_eq!((rect.x, rect.y, rect.width, rect.height), (7, 10, 8, 10));
+        } else {
+            // The window has spare room, but the cursor is outside the grid viewport.
+            assert!(command.is_none());
+        }
+    }
+}
+
+#[test]
+fn cursor_commands_clip_without_moving_underline() {
+    let mut terminal = Terminal::new(TabId(1), 2, 4).unwrap();
+    terminal.feed(TabId(1), b"\x1b[2;2H").unwrap();
+    for (width, height, mode, expected) in [
+        (17, 15, 2, Some((10, 10, 7, 5))),
+        (17, 15, 6, Some((10, 10, 1, 5))),
+        (17, 15, 4, None),
+        (17, 20, 4, Some((10, 19, 7, 1))),
+        (9, 20, 2, None),
+        (9, 20, 4, None),
+        (9, 20, 6, None),
+    ] {
+        terminal
+            .feed(TabId(1), format!("\x1b[{mode} q").as_bytes())
+            .unwrap();
+        let layout = CellLayout::new(
+            WindowSize::new(width, height).unwrap(),
+            Scale::new(1).unwrap(),
+            10.0,
+            10.0,
+        )
+        .unwrap();
+        let actual = cursor_draw_command(terminal.snapshot().unwrap(), &layout).map(|command| {
+            let rect = command.rect;
+            (rect.x, rect.y, rect.width, rect.height)
+        });
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn cursor_commands_bound_one_pixel_and_extreme_layouts() {
+    let terminal = Terminal::new(TabId(1), 1, 2).unwrap();
+    for size in [1, i32::MAX as u32] {
+        let bounds = WindowSize::new(size, size).unwrap();
+        let layout = CellLayout::new(
+            bounds,
+            Scale::new(1).unwrap(),
+            f64::from(size),
+            f64::from(size),
+        )
+        .unwrap();
+        for shape in [
+            CursorShape::Block,
+            CursorShape::HollowBlock,
+            CursorShape::Beam,
+            CursorShape::Underline,
+        ] {
+            let mut snapshot = terminal.snapshot().unwrap();
+            snapshot.content.cursor.shape = shape;
+            let command = cursor_draw_command(snapshot, &layout).unwrap();
+            assert_eq!(command.shape, shape);
+            assert_eq!(command.rect.clipped(bounds), Some(command.rect));
+            let expected = match shape {
+                CursorShape::Beam => (0, 0, 1, size),
+                CursorShape::Underline => (0, size as i32 - 1, size, 1),
+                _ => (0, 0, size, size),
+            };
+            let rect = command.rect;
+            assert_eq!((rect.x, rect.y, rect.width, rect.height), expected);
+        }
+    }
+}
 
 #[test]
 fn draw_commands_preserve_colors() {
