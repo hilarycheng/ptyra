@@ -15,8 +15,8 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前只有基礎 li
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
-- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize 同單次 child exit → Tab event mapping。
-- `src/main.rs` 只印出應用程式名稱。PTY spawn/read/write/resize 仍係 library API；尚未有 Wayland 連線/dispatch、keyboard/paste/IME 輸入接線、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
+- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize、單次 child exit → Tab event mapping，以及保留跨 chunk parser state 嘅 terminal core adapter。
+- `src/main.rs` 只印出應用程式名稱。PTY spawn/read/write/resize 同 terminal core 仍係 library API；尚未有 Wayland 連線/dispatch、keyboard/paste/IME 輸入接線、renderer、Clipboard、IME 或 GUI Tabs 接線。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
 
@@ -412,3 +412,64 @@ Build/test/Clippy used Cargo jobs=2, test threads=2, CPU affinity 0,1 and
 checkbox and verification record changed; the passing source/tests remain unchanged.
 Cargo checks were not rerun for this documentation-only status update. The user
 authorized a scoped TASK-025 commit; no push was requested or performed.
+
+## TASK-026 Verification (2026-10-29)
+
+```text
+TASK: TASK-026
+Status: DONE — 實作及驗證完成；使用者已批准 checkbox 更新及 commit
+Dependencies: satisfied (TASK-022 已 [x])
+Changed files: Cargo.toml, Cargo.lock, src/lib.rs, src/terminal.rs,
+  src/terminal/tests.rs, tests/pty_spawn.rs, DEPENDENCIES.md, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline term_feed_handles_split_utf8
+Result: PASS；test-first compilation 因未有 Terminal API 而預期失敗
+Workspace tests: PASS — 50 unit tests + 9 Linux PTY integration tests + 1 doc-test
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 真 PTY 分段 output → core fixture PASS；
+  Sway/Fcitx5、GUI acceptance 同 Benchmark NOT RUN
+Security / Privacy impact: TabId 檢查、feed/grid/OSC/combining 上限；
+  metadata-only errors；OSC 52 同 Kitty keyboard 停用；冇新增 app unsafe/FFI、
+  threads、network、payload logs 或系統設定改動
+Known limitations: library API only；history 暫設 0；sync updates 即時套用；
+  core 外部 events（包括 PTY replies）暫時丟棄；未有 runtime 接線或 GUI
+Ready for [x]: YES
+Approval: 使用者批准 T026 實作及最小 OSC/combining 防護，並授權已批准 TASK
+  通過檢查後自行標記 [x] 同 commit。TASK-026 已 [x]；TASK-099 保持 [ ]。
+  未要求 push。
+```
+
+`Terminal` 為每個 Tab 保存獨立 `Term` 同持續存在嘅 VTE parser。
+`feed` 接收 `TabId` 同原始 bytes，唔逐 chunk 轉字串。Caller 只可以餵入
+PTY `Data(n)` 嘅有效 buffer prefix；WouldBlock／Interrupted／EOF 唔會產生
+新文字，亦唔應重建 parser。Child exit 同 PTY EOF 仍係原有獨立事件。
+`grid` 借用 core grid，唔複製畫面，亦唔開放 mutable core。
+
+Deterministic tests 涵蓋每個 UTF-8／ANSI 切分點、逐 byte 輸入、空 chunk、
+未完成 sequence、invalid UTF-8、明確 cells/colors/cursor 預期、Tab 隔離、
+錯 target、尺寸／feed 上限、OSC 跨 chunk 上限及 terminators、ESC 後全部
+256 種 byte 嘅 VTE OSC entry 核對、combining／wide spacer／wrap／REP 上限，
+以及停用 Kitty 同即時 sync-update 行為。
+
+既有真 PTY fixture 額外以兩-byte buffer 餵入 adapter，驗證 child 已退出後
+仍可 drain UTF-8／ANSI bytes，並核對 replacement character、繁體中文同紅色 cell。
+原有 PTY ownership、spawn/read/write/resize/exit regression 全部保留。
+
+固定邊界：每次 feed 16 KiB、每 screen 32,768 cells、OSC 4,096 bytes、
+每 cell 64 個 combining marks。錯 target／過大 call 會原子拒絕，保留原狀。
+Stream OSC／combining 超額會回傳 InvalidData，釋放該 core；後續 feed
+回傳 NotConnected，`grid` 回傳 None。Caller 必須處理停止狀態；唔可重試或
+改送另一個 Tab。Adapter 本身唔殺 Shell。暫存配置同 source 邊界詳見
+[DEPENDENCIES.md](DEPENDENCIES.md#dependency-review--task-026-2026-10-29)。
+
+未實作 T027 mode API、T029 scrollback policy、T030 renderer snapshot、
+Clipboard routing、IME、GUI Tabs 或 runtime event loop。T099 保持未完成；
+本次最小 OSC 防護唔代表其完整 rejection/recovery policy 已驗收。
+`TERM=dumb` 同現有環境策略保持不變。
+
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1，
+以及 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`。Checks 全部以 locked/offline
+方式執行；只有 dependency 下載及 metadata review 使用網絡。
+
+完成批准時只更新 checkbox 同驗證紀錄，source/tests 同上次通過檢查嘅版本一致，
+因此冇為呢次文件更新重跑 Cargo checks。

@@ -119,3 +119,125 @@ fixture installs a WINCH trap before sending its readiness byte; the trap invoke
 `stty size` and exits. Two owned sessions verify changed dimensions and signal
 isolation with deadlines, bounded output, FD accounting and normal child reaping.
 This is Linux PTY verification, not GUI resize, Wayland or Fcitx5 acceptance.
+
+
+# Dependency review — TASK-026 (2026-10-29)
+
+新增 `alacritty_terminal = 0.26.0`，停用預設 serde feature。用途係重用
+`Term` grid 同 re-export 嘅 `vte::ansi::Processor`，唔自行重寫 ANSI parser。
+Ptyra 只呼叫 core API，唔建立 upstream PTY、event loop 或 thread。
+冇新增 GTK、Qt、X11 或其他 GUI runtime；upstream 嘅 Linux/native dependencies
+仍會納入 build，唔代表零 native dependencies。
+
+## 版本、維護同授權
+
+官方 Cargo registry index 記錄 `alacritty_terminal 0.26.0` 於
+2026-04-06 發佈，最低 Rust 1.85，Apache-2.0；`vte 0.15.0` 於
+2025-02-02 發佈，最低 Rust 1.62.1，Apache-2.0 OR MIT。兩者均未 yanked。
+專案既有 KBVM 要求 Rust 1.95；本次使用 Rust 1.97.1。
+
+[Alacritty upstream](https://github.com/alacritty/alacritty) 未 archived，
+查核時最後 push 為 2026-10-26；[VTE upstream](https://github.com/alacritty/vte)
+未 archived，最後 push 為 2026-10-25。呢啲係維護活動證據，唔係安全保證。
+API 同 feature 依據 [0.26.0 manifest](https://docs.rs/crate/alacritty_terminal/0.26.0/source/Cargo.toml)
+及已下載、核對 checksum 嘅 source。
+
+Cargo.lock 新增 42 個 entries，包括非 Linux target 同 lockfile-only entries。
+所有新 entries 嘅 archive SHA-256、registry index checksum 同 lockfile checksum
+一致，亦未 yanked。原有 package 版本同 checksum 全部保留。
+以下 license 來自各 package manifest；並非對所有 transitive source 嘅完整審計。
+
+| Package | Version | License |
+|---|---|---|
+| aho-corasick | 1.1.5 | Unlicense OR MIT |
+| alacritty_terminal | 0.26.0 | Apache-2.0 |
+| atomic-waker | 1.1.2 | Apache-2.0 OR MIT |
+| base64 | 0.22.1 | MIT OR Apache-2.0 |
+| concurrent-queue | 2.5.0 | Apache-2.0 OR MIT |
+| crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 |
+| cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib |
+| errno | 0.3.14 | MIT OR Apache-2.0 |
+| fastrand | 2.5.0 | Apache-2.0 OR MIT |
+| futures-io | 0.3.34 | MIT OR Apache-2.0 |
+| hermit-abi | 0.5.3 | MIT OR Apache-2.0 |
+| home | 0.5.12 | MIT OR Apache-2.0 |
+| linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| lock_api | 0.4.14 | MIT OR Apache-2.0 |
+| log | 0.4.34 | MIT OR Apache-2.0 |
+| miow | 0.6.1 | MIT OR Apache-2.0 |
+| parking_lot | 0.12.5 | MIT OR Apache-2.0 |
+| parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
+| pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
+| piper | 0.2.5 | MIT OR Apache-2.0 |
+| polling | 3.11.0 | Apache-2.0 OR MIT |
+| redox_syscall | 0.5.18 | MIT |
+| regex-automata | 0.4.18 | MIT OR Apache-2.0 |
+| regex-syntax | 0.8.11 | MIT OR Apache-2.0 |
+| rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| rustix-openpty | 0.2.0 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| scopeguard | 1.2.0 | MIT OR Apache-2.0 |
+| signal-hook | 0.4.5 | MIT OR Apache-2.0 |
+| signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 |
+| vte | 0.15.0 | Apache-2.0 OR MIT |
+| windows-link | 0.2.1 | MIT OR Apache-2.0 |
+| windows-sys | 0.59.0 | MIT OR Apache-2.0 |
+| windows-sys | 0.61.2 | MIT OR Apache-2.0 |
+| windows-targets | 0.52.6 | MIT OR Apache-2.0 |
+| windows_aarch64_gnullvm | 0.52.6 | MIT OR Apache-2.0 |
+| windows_aarch64_msvc | 0.52.6 | MIT OR Apache-2.0 |
+| windows_i686_gnu | 0.52.6 | MIT OR Apache-2.0 |
+| windows_i686_gnullvm | 0.52.6 | MIT OR Apache-2.0 |
+| windows_i686_msvc | 0.52.6 | MIT OR Apache-2.0 |
+| windows_x86_64_gnu | 0.52.6 | MIT OR Apache-2.0 |
+| windows_x86_64_gnullvm | 0.52.6 | MIT OR Apache-2.0 |
+| windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 |
+
+## Advisory 查核
+
+重新取得完整、未截斷嘅官方 [RustSec tree 40f5be6](https://github.com/RustSec/advisory-db/tree/40f5be6fb12ed93fc591bf4ab23b7d793b3f2239)，
+比對全部 locked package names。新增套件匹配到以下 records：
+
+| Package | Advisory | Patched | Locked |
+|---|---|---|---|
+| base64 | [RUSTSEC-2017-0004](https://rustsec.org/advisories/RUSTSEC-2017-0004.html) | >=0.5.2 | 0.22.1 |
+| crossbeam-utils | [RUSTSEC-2022-0041](https://rustsec.org/advisories/RUSTSEC-2022-0041.html) | >=0.8.7 | 0.8.23 |
+| lock_api | [RUSTSEC-2020-0070](https://rustsec.org/advisories/RUSTSEC-2020-0070.html) | >=0.4.2 | 0.4.14 |
+| miow | [RUSTSEC-2020-0080](https://rustsec.org/advisories/RUSTSEC-2020-0080.html) | ^0.2.2 或 >=0.3.6 | 0.6.1 |
+
+其餘 matches 係前述已審核、版本未變嘅 hashbrown、nix 同 smallvec。
+冇匹配 alacritty_terminal 或 vte 嘅 advisory。呢次手動查核未發現受影響版本；
+冇執行 cargo-audit，亦唔保證冇未知漏洞。
+
+## Untrusted input 同資源邊界
+
+Source review 發現 VTE `std` feature 會用可增長 Vec 保存未終止 OSC；
+`Term::input` 亦會將 zero-width characters 加入 cell Vec。使用者另行明確批准
+T026 加入最小防護，並維持 T099 未完成。
+
+- 每次 feed 最多 16 KiB。錯 TabId／超大 call 會在修改 parser 前拒絕。
+- 每個 screen 最多 32,768 cells，至少一 row、兩 columns。
+  History 暫設 0，bounded scrollback policy 留待 TASK-029。
+- OSC 最多 4,096 bytes，跨 calls 累積。計入 separators 同被 core 忽略嘅 controls，
+  以保守方式限制長度。Guard 只追蹤 ESC／OSC 邊界；真正 ANSI 解讀由 VTE 負責。
+  BEL、CAN、SUB 或 ESC 結束當前 OSC，匹配 pinned VTE source。
+- 每個 cell 最多保留 64 個 zero-width characters。逐 parser step 檢查 core
+  目前可能附加 combining marks 嘅 cell，涵蓋 wide spacer 同 pending wrap。
+  VTE REP 一次最多輸入 65,535 個字元，因此偵測前可短暫多出至多呢個數量嘅
+  marks；唔會累積至下一個 step。呢個 cap 係保留狀態上限，唔係零暫存 allocation。
+- OSC／combining 超額會釋放該 adapter 嘅 core，回傳 InvalidData；後續 feed
+  回傳 NotConnected。唔會靜默截斷後繼續解析，唔會將 bytes 轉送其他 Tab。
+  同一 call 嘅 prefix 可能已解析；caller 必須停止使用該 stream，唔可以重試。
+  呢個 library API 本身唔關閉 PTY、唔殺 child。
+- Core 內建 title stack 上限為 4,096 entries。每個 title／hyperlink 嘅來源
+  已受 OSC cap 限制；兩個 grids 同 cell metadata 亦受以上固定尺寸限制。
+- OSC 52 明確設 Disabled，Kitty keyboard 明確設 false。`VoidListener`
+  丟棄 Clipboard、title、query response 等外部 events；呢次唔提供 PTY reply 接線。
+- Sync update sequences 即時套用，唔建立 wall-clock timeout 或等待 buffer。
+  VTE 仍預先配置約 2 MiB sync buffer；未宣稱支援 synchronized rendering。
+- 新 adapter 冇 unsafe、FFI、thread、network、payload log 或系統設定改動。
+  Upstream 仍有 native／unsafe code，同可能包含 payload 嘅 debug/trace statements。
+  目前程式冇安裝 logger；將來啟用 logger 前必須過濾呢啲 dependency logs。
+
+Limits 係本次固定 guardrails，唔係已完成 config、performance budget 或 fuzz task。
+Feed byte cap 唔係 CPU deadline：ANSI REP 等 sequence 會放大 parser 工作量。
+未做 performance benchmark、完整 source audit 或 fuzz campaign。

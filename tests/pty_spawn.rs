@@ -302,13 +302,17 @@ fn linux_pty_read_preserves_bytes_after_child_exit() {
         thread::sleep(Duration::from_millis(5));
     }
     let mut output = Vec::new();
+    let mut terminal = ptyra::terminal::Terminal::new(TabId(42), 31, 97).unwrap();
     let mut buffer = [0; 2]; // Forces UTF-8 and ANSI sequences across chunks.
     let mut eof = false;
     for _ in 0..100 {
         let result = session.read_chunk(&mut buffer).unwrap();
         assert_eq!(result.tab, TabId(42));
         match result.status {
-            PtyReadStatus::Data(n) => output.extend_from_slice(&buffer[..n]),
+            PtyReadStatus::Data(n) => {
+                terminal.feed(result.tab, &buffer[..n]).unwrap();
+                output.extend_from_slice(&buffer[..n]);
+            }
             PtyReadStatus::Eof => {
                 eof = true;
                 break;
@@ -321,6 +325,15 @@ fn linux_pty_read_preserves_bytes_after_child_exit() {
     }
     assert!(eof);
     assert_eq!(output, b"\0\xff\xe7\xb9\x81\x1b[31m\n  tail");
+    use alacritty_terminal::{
+        index::{Column, Line},
+        vte::ansi::{Color, NamedColor},
+    };
+    let grid = terminal.grid().unwrap();
+    assert_eq!(grid[Line(0)][Column(0)].c, '\u{fffd}');
+    assert_eq!(grid[Line(0)][Column(1)].c, '繁');
+    assert_eq!(grid[Line(1)][Column(5)].c, 't');
+    assert_eq!(grid[Line(1)][Column(5)].fg, Color::Named(NamedColor::Red));
     assert_eq!(
         session.read_chunk(&mut buffer).unwrap().status,
         PtyReadStatus::Eof

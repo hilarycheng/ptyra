@@ -121,7 +121,7 @@
   - **Dependencies:** `TASK-021`, `TASK-003`  |  **Unit Test:** `pty_exit_does_not_exit_app`
   - **Done:** 一個 child exit 唔影響其他 child
 
-- [ ] **TASK-026 — PTY byte stream → terminal core adapter**
+- [x] **TASK-026 — PTY byte stream → terminal core adapter**
   - **Dependencies:** `TASK-022`  |  **Unit Test:** `term_feed_handles_split_utf8`
   - **Done:** 分段 ANSI/UTF-8 input 產生一致 terminal state
 

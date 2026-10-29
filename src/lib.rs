@@ -9,6 +9,7 @@ pub mod keymap;
 pub mod pty;
 pub mod repeat;
 pub mod shell;
+pub mod terminal;
 pub mod wayland;
 pub mod window;
 
