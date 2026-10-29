@@ -56,3 +56,40 @@ KBVM's parser has an expression nesting limit; Ptyra additionally caps operator 
 No application unsafe or FFI was added. An isolated temporary compatibility check used the installed libxkbcommon 1.6.0 to generate a normal US/Greek serialized keymap from `/usr/share/X11/xkb`; ctypes signatures and object ownership were explicit, allocations freed in reverse order, and the helper had 256 MiB/10 CPU-second process limits. It did not connect to a display or modify configuration. The fixture was 70,067 bytes and the new adapter translated both layouts correctly. This is **offline library compatibility**, not Wayland/PTY/Fcitx5 integration acceptance.
 
 The Wayland adapter still needs to bound/read the keymap FD, validate the protocol format, update modifier masks from compositor events, and replace the keymap atomically. Terminal byte encoding, Compose, IME ownership, and repeat timing are later tasks. Full Sway/Fcitx5/PTY checks remain NOT RUN.
+
+# Dependency and unsafe-boundary review — TASK-021 (2026-10-29)
+
+The Linux-only PTY spawn adapter pins `nix = 0.31.3`, with default features disabled and `fs`, `process`, `signal`, and `term` enabled. It uses Linux PTYs and libc; it does not add a GUI runtime or install a system package. The existing `std::process::Command` helpers remain responsible for literal argv and the conservative terminal environment.
+
+## Backend choice and maintenance
+
+[`portable-pty` 0.9.0](https://docs.rs/portable-pty/0.9.0/portable_pty/) (MIT, released 2025-02-11) was evaluated, including its Unix spawn and CommandBuilder source. Its builder resolves HOME/SHELL and silently substitutes HOME when an explicit cwd is not a directory. Its post-fork descriptor cleanup also enumerates descriptors with Rust library operations. That API does not preserve this task's strict explicit-cwd/error semantics without extra adaptation. It was not added to Cargo.lock.
+
+[`nix` 0.31.3](https://docs.rs/nix/0.31.3/nix/pty/) provides the narrower PTY/FD/signal primitives needed with the existing Command. The [registry version record](https://crates.io/api/v1/crates/nix/0.31.3) reports release on 2026-05-11, MIT license, Rust 1.69 minimum, and not yanked. The [upstream repository](https://github.com/nix-rust/nix) was not archived and last pushed on 2026-10-18 when checked. Ptyra still requires Rust 1.95 through KBVM and was tested using Rust 1.97.1.
+
+The following packages are newly locked; existing locked versions are unchanged. Their downloaded crate archives, lockfile checksums and official registry checksums match. `cfg-if 1.0.5` is reused from the prior dependency set.
+
+| Package | Locked version | Declared license |
+|---|---|---|
+| nix | 0.31.3 | MIT |
+| libc | 0.2.191 | MIT OR Apache-2.0 |
+| bitflags | 2.13.2 | MIT OR Apache-2.0 |
+| cfg_aliases | 0.2.2 | MIT |
+
+The official, non-truncated RustSec tree was fetched again at [40f5be6](https://github.com/RustSec/advisory-db/tree/40f5be6fb12ed93fc591bf4ab23b7d793b3f2239). Matching the new package names and reused cfg-if found one advisory: [RUSTSEC-2021-0119](https://rustsec.org/advisories/RUSTSEC-2021-0119.html), a `getgrouplist` issue patched in nix >=0.23.0. The chosen 0.31.3 is outside the affected range, and the adapter does not use that API. No other matching advisory was present for these packages. This is a manual registry/advisory check, not cargo-audit or a full source audit; absence of a matching advisory does not guarantee safety.
+
+## Native ownership and unsafe boundaries
+
+- Master and slave are opened with atomic `O_CLOEXEC`. Slave duplicates use Rust's CLOEXEC duplication. Parent slave handles close on both success and failure. Only the master is nonblocking; the child's stdio stays blocking.
+- `TIOCSWINSZ` receives a live owned slave FD and a pointer to a fully initialized, stack-owned `winsize` for the duration of that ioctl. It sets initial dimensions only, not TASK-024 runtime resize behavior.
+- Rust's unsafe `CommandExt::pre_exec` runs after std has installed the slave on FD 0/1/2. The callback uses only setsid, the Linux TIOCSCTTY ioctl, sigaction and sigprocmask, with stack data prepared before fork. There is no allocation, logging, formatting, lock acquisition or directory enumeration after fork. TIOCSCTTY's force argument is zero; the new session does not steal another session's controlling terminal.
+- Signal defaults are restored for HUP/INT/QUIT/TERM/PIPE/CHLD/TSTP/TTIN/TTOU, and the child signal mask is cleared. These changes affect only the new child. Existing unrelated inheritable FDs are the caller's responsibility; this adapter guarantees CLOEXEC for the descriptors it creates.
+- A successful child is immediately wrapped in an owning guard. Failed exec/setup is reaped by std::Command. Explicit `terminate` closes the master and kills/reaps only the owned direct child; Drop is a best-effort fallback with no payload logging. The guard uses Child's reaped-status cache, avoiding signals to an already-reaped/reused PID. A kernel teardown wait may block; no reaper/event-loop thread is introduced. Detached descendants are not recursively killed, and this is not a shell sandbox.
+
+## Input and test boundaries
+
+Spawn requires an absolute executable path and absolute cwd. No PATH search, HOME fallback, shell-command concatenation or global environment mutation is added. Arguments retain the TASK-019 limits (256 arguments, 64 KiB including NUL separators); cwd is capped at 4,096 bytes and rejects NUL. Rows/columns are nonzero u16 values. `TERM=dumb` and removal of `COLORTERM` preserve TASK-020 until real terminal features exist. Other environment variables are inherited normally.
+
+Typed spawn errors retain only TabId, the validation/open/spawn stage, and AppError metadata. Requests and sessions deliberately have no payload-bearing Debug implementation. Unit tests inject open/spawn failures and track independent resource ownership. Linux integration fixtures use fixed `/bin/sh -c` scripts with separate literal arguments, `/usr/bin/stty`, a five-second parent deadline, a 16 KiB output cap, and owned-child cleanup. They check stdio/control-terminal setup, size, argv bytes, environment, cwd failure, CLOEXEC, nonblocking master, repeated failure FD accounting, child reaping and session isolation. The test-only read loop does not implement TASK-022's production output stream.
+
+Real Sway, Wayland, Fcitx5, application event-loop integration and interactive terminal acceptance remain NOT RUN. There is still no usable GUI terminal.

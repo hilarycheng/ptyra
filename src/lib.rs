@@ -5,6 +5,8 @@ pub mod frame;
 pub mod geometry;
 pub mod input;
 pub mod keymap;
+#[cfg(target_os = "linux")]
+pub mod pty;
 pub mod repeat;
 pub mod shell;
 pub mod wayland;

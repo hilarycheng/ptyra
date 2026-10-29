@@ -15,8 +15,8 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前只有基礎 li
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
-- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器，以及有界 XKB keymap 轉換同純邏輯 key-repeat scheduler。
-- `src/main.rs` 只印出應用程式名稱。尚未有 Wayland 連線/dispatch、真正 PTY、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
+- 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter。
+- `src/main.rs` 只印出應用程式名稱。PTY spawn 仍係 library API；尚未有 Wayland 連線/dispatch、PTY output/write queues、terminal core、renderer、Clipboard、IME 或 GUI Tabs 接線。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
 
@@ -154,3 +154,45 @@ contract. No unrelated task implementation or system changes are included.
 2. 喺 `TASKS.md` 選一個 Dependencies 已完成嘅 `TASK-XXX`。
 3. 按 `AGENTS.md` 建立 Unit Test 同最小實作。
 4. Unit Test、Regression 同所需 Acceptance Checks 通過後，先把 `[ ]` 改為 `[x]`。
+
+## TASK-021 Verification (2026-10-29)
+
+```text
+TASK: TASK-021
+Status: TODO — implementation verified; post-test checkbox approval pending
+Dependencies: satisfied (TASK-005, TASK-019, TASK-020)
+Changed files: Cargo.toml, Cargo.lock, src/lib.rs, src/pty.rs, src/pty/tests.rs,
+  tests/pty_spawn.rs, DEPENDENCIES.md, README.md
+Unit test: cargo test --workspace --locked --offline pty_spawn_failure_is_isolated
+Result: PASS; test-first failure recorded before implementation
+Workspace tests: PASS — 30 unit tests + 3 Linux PTY integration tests + 1 doc-test
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 3 bounded real Linux PTY fixtures PASS;
+  real Wayland/Sway/Fcitx5, GUI terminal acceptance and benchmarks NOT RUN
+Security / Privacy impact: bounded literal argv/cwd, metadata-only errors;
+  per-session FD/child ownership, no system/global environment changes;
+  dependency/license/advisory and unsafe-boundary review in DEPENDENCIES.md
+Known limitations: explicit absolute executable/cwd; no default-shell resolver,
+  output stream, write queue, runtime resize or child-exit Tab routing;
+  synchronous direct-child cleanup may wait on kernel teardown;
+  no recursive descendant cleanup or shell sandbox; no usable GUI Terminal
+Ready for [x]: YES technically; separate completion-status approval still pending
+Approval: user approved TASK-021 implementation and local commit;
+  AGENTS.md section 4 step 8 requires requesting checkbox approval after checks
+```
+
+The PTY adapter returns a TabId-owned `PtySession` or a typed `PtySpawnError`.
+A session owns its nonblocking CLOEXEC master and direct child; parent slave
+handles close before return. Validation/open/spawn failures are isolated from
+other sessions. The real fixtures verify controlling terminal and foreground
+session setup, stdin/stdout/stderr TTYs, initial 31x97 dimensions, literal Unicode
+and non-UTF-8 argv, cwd, TERM/COLORTERM policy, FD cleanup and child reaping.
+The test helper reads fixture output only; TASK-022 remains unimplemented.
+
+Test-first run: 2026-10-29 07:01:26.396–07:01:34.479 UTC (expected FAIL).
+Final staged checks: 07:04:26.722–07:04:28.564 UTC (all PASS).
+Final main-repository checks: 07:06:29.638–07:06:32.400 UTC (all PASS, same source).
+Every build/test used Cargo jobs=2, test threads=2 and CPU affinity 0,1, inherited
+by test children. No stress workload, system installation or app restart was used.
+TASK-021's checkbox is unchanged pending the required post-test status approval.
