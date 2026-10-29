@@ -129,7 +129,7 @@
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `terminal_modes_track_sequences`
   - **Done:** 可查詢 core 當前 mode，供 clipboard/render 使用
 
-- [ ] **TASK-028 — 驗證 CJK、combining 字元 cell width**
+- [x] **TASK-028 — 驗證 CJK、combining 字元 cell width**
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `cjk_combining_cells_align`
   - **Done:** 全形中文字/組合字不錯位
 

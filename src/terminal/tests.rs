@@ -52,6 +52,107 @@ fn term_feed_handles_split_utf8() {
 }
 
 #[test]
+fn cjk_combining_cells_align() {
+    let input = "A繁體\u{301}e\u{301}\u{323}Ｘ，　𠀀Z".as_bytes();
+    // Fixed column/width expectations, independent of the core's width lookup.
+    let expected: &[(usize, char, usize, &[char])] = &[
+        (0, 'A', 1, &[]),
+        (1, '繁', 2, &[]),
+        (3, '體', 2, &['\u{301}']),
+        (5, 'e', 1, &['\u{301}', '\u{323}']),
+        (6, 'Ｘ', 2, &[]),
+        (8, '，', 2, &[]),
+        (10, '　', 2, &[]),
+        (12, '𠀀', 2, &[]),
+        (14, 'Z', 1, &[]),
+    ];
+    for split in 0..=input.len() {
+        let mut term = terminal(1);
+        feed(&mut term, &input[..split]);
+        feed(&mut term, &input[split..]);
+        let grid = term.grid().unwrap();
+        for &(column, character, width, marks) in expected {
+            let cell = &grid[Line(0)][Column(column)];
+            assert_eq!(cell.c, character, "split {split}, column {column}");
+            assert_eq!(cell.zerowidth().unwrap_or_default(), marks);
+            let flags = if width == 2 {
+                Flags::WIDE_CHAR
+            } else {
+                Flags::empty()
+            };
+            assert_eq!(cell.flags, flags);
+            if width == 2 {
+                let spacer = &grid[Line(0)][Column(column + 1)];
+                assert_eq!(spacer.c, ' ');
+                assert_eq!(spacer.flags, Flags::WIDE_CHAR_SPACER);
+                assert!(spacer.zerowidth().unwrap_or_default().is_empty());
+            }
+        }
+        assert_eq!(grid[Line(0)][Column(15)], Cell::default());
+        assert_eq!(grid.cursor.point, Point::new(Line(0), Column(15)));
+        assert!(!grid.cursor.input_needs_wrap);
+    }
+}
+
+#[test]
+fn cjk_wraps_before_last_column() {
+    let mut term = Terminal::new(TabId(1), 3, 4).unwrap();
+    for byte in "abc繁\u{301}Z".as_bytes().chunks(1) {
+        feed(&mut term, byte);
+    }
+    let grid = term.grid().unwrap();
+    for (column, character) in "abc".chars().enumerate() {
+        assert_eq!(grid[Line(0)][Column(column)].c, character);
+    }
+    let gap = &grid[Line(0)][Column(3)];
+    assert_eq!(gap.c, ' ');
+    assert_eq!(gap.flags, Flags::LEADING_WIDE_CHAR_SPACER | Flags::WRAPLINE);
+    let wide = &grid[Line(1)][Column(0)];
+    assert_eq!(wide.c, '繁');
+    assert_eq!(wide.flags, Flags::WIDE_CHAR);
+    assert_eq!(wide.zerowidth(), Some(&['\u{301}'][..]));
+    let spacer = &grid[Line(1)][Column(1)];
+    assert_eq!(spacer.c, ' ');
+    assert_eq!(spacer.flags, Flags::WIDE_CHAR_SPACER);
+    assert!(spacer.zerowidth().unwrap_or_default().is_empty());
+    assert_eq!(grid[Line(1)][Column(2)].c, 'Z');
+    assert_eq!(grid[Line(1)][Column(2)].flags, Flags::empty());
+    assert_eq!(grid.cursor.point, Point::new(Line(1), Column(3)));
+    assert!(!grid.cursor.input_needs_wrap);
+}
+
+#[test]
+fn combining_at_right_margin_does_not_wrap() {
+    for (columns, text, base_column) in [(4, "ab繁", 2), (4, "abce", 3), (2, "𠀀", 0)] {
+        let mut term = Terminal::new(TabId(1), 3, columns).unwrap();
+        feed(&mut term, text.as_bytes());
+        let edge = Point::new(Line(0), Column(usize::from(columns - 1)));
+        assert_eq!(term.grid().unwrap().cursor.point, edge);
+        assert!(term.grid().unwrap().cursor.input_needs_wrap);
+        for byte in "\u{301}\u{323}".as_bytes().chunks(1) {
+            feed(&mut term, byte);
+            assert_eq!(term.grid().unwrap().cursor.point, edge);
+            assert!(term.grid().unwrap().cursor.input_needs_wrap);
+        }
+        let cell = &term.grid().unwrap()[Line(0)][Column(base_column)];
+        assert_eq!(cell.c, text.chars().last().unwrap());
+        assert_eq!(cell.zerowidth(), Some(&['\u{301}', '\u{323}'][..]));
+        if base_column != edge.column.0 {
+            let spacer = &term.grid().unwrap()[edge];
+            assert_eq!(spacer.flags, Flags::WIDE_CHAR_SPACER);
+            assert!(spacer.zerowidth().unwrap_or_default().is_empty());
+        }
+        assert!(!term.grid().unwrap()[edge].flags.contains(Flags::WRAPLINE));
+        feed(&mut term, b"Z");
+        let grid = term.grid().unwrap();
+        assert!(grid[edge].flags.contains(Flags::WRAPLINE));
+        assert_eq!(grid[Line(1)][Column(0)].c, 'Z');
+        assert_eq!(grid.cursor.point, Point::new(Line(1), Column(1)));
+        assert!(!grid.cursor.input_needs_wrap);
+    }
+}
+
+#[test]
 fn terminal_partial_input_and_tabs_are_isolated() {
     let mut first = terminal(1);
     let mut second = terminal(2);

@@ -509,3 +509,38 @@ Adapter 因資源上限停止後回傳 None，唔會將「無 core」誤報為�
 本次冇改變 parser、PTY 或 Clipboard policy。Build/test/Clippy 使用 Cargo jobs=2、
 test threads=2、CPU affinity 0,1 同 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；
 所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-028 Verification (2026-10-29)
+
+```text
+TASK: TASK-028
+Status: DONE
+Dependencies: satisfied (TASK-026 已 [x])
+Changed files: src/terminal/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline cjk_combining_cells_align
+Result: PASS；先加驗證測試，首次執行已通過現有 core，毋須 runtime 修正
+Workspace tests: PASS — 55 unit tests + 9 Linux PTY integration tests + 1 doc-test
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 既有 9 個真 PTY fixtures PASS；
+  字型繪製、Sway/Fcitx5 acceptance 同 Benchmark NOT RUN
+Security / Privacy impact: 只新增測試及文件；冇改 runtime、dependencies 或系統設定
+Known limitations: 驗證 core grid 嘅 cell width、combining attachment 同 cursor；
+  唔代表 font fallback、glyph shaping 或 renderer pixel alignment 已完成
+Ready for [x]: YES
+Approval: 使用者批准下一個 TASK，並已授權通過檢查後自行標記 [x] 同 commit。
+  TASK-028 已 [x]；未要求 push。
+```
+
+主測試用固定 column／width 預期驗證 ASCII、繁體中文、全形英文字／標點／空格，
+以及四-byte CJK 字元。寬字佔兩格，spacer 保持獨立；combining marks 附加喺
+原本 base cell，保留次序，同時唔推進 cursor。每個 UTF-8 byte 切分點都會重測。
+測試冇呼叫同一套 width lookup 去生成預期結果。
+
+另外兩個測試驗證右邊界：只剩一格時寬字移到下一行；剛好填滿一行時，
+combining marks 保留喺當前 base cell，直到下一個有寬度字元先換行。
+涵蓋 ASCII、CJK 同最小兩-column grid，並核對 wide/spacer/wrap flags。
+
+T028 係現有 core 行為嘅驗證 TASK，新增 3 個 deterministic tests，冇新增 runtime code。
+Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
+`CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
