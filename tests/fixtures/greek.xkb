@@ -1,0 +1,21 @@
+xkb_keymap {
+    xkb_keycodes { <AC01> = 38; <LFSH> = 50; <AD01> = 24; };
+    xkb_types {
+        type "TWO_LEVEL" {
+            modifiers = Shift;
+            map[None] = Level1;
+            map[Shift] = Level2;
+        };
+    };
+    xkb_compatibility {};
+    xkb_symbols {
+        key.repeat = true;
+        key <AC01> {
+            type = "TWO_LEVEL",
+            symbols[Group1] = [ Greek_alpha, Greek_ALPHA ],
+            symbols[Group2] = [ a, A ]
+        };
+        key <LFSH> { repeat = false, [ Shift_L ] };
+        key <AD01> { [ U4E2D ] };
+    };
+};

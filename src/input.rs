@@ -3,7 +3,7 @@ use crate::{
     error::{AppError, Component},
     geometry::Scale,
 };
-use std::io;
+use std::{io, sync::Arc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FocusTarget {
@@ -16,17 +16,20 @@ pub struct KeyRoute {
     pub target: FocusTarget,
     pub code: u32,
     pub pressed: bool,
+    pub(crate) focus_epoch: Arc<()>,
 }
 
 /// One instance per seat keyboard. Enter synchronizes focus without replaying keys.
 #[derive(Default)]
 pub struct KeyboardFocus {
     target: Option<FocusTarget>,
+    epoch: Arc<()>,
 }
 
 impl KeyboardFocus {
     pub fn enter(&mut self, window: WindowId, tab: TabId) {
         self.target = Some(FocusTarget { window, tab });
+        self.epoch = Arc::new(());
     }
 
     pub fn leave(&mut self, window: WindowId) {
@@ -40,11 +43,17 @@ impl KeyboardFocus {
         self.target = None;
     }
 
+    // Live tokens cannot be reused while a pending input still holds the old one.
+    pub(crate) fn matches(&self, target: FocusTarget, epoch: &Arc<()>) -> bool {
+        self.target == Some(target) && Arc::ptr_eq(&self.epoch, epoch)
+    }
+
     pub fn route_key(&self, code: u32, pressed: bool) -> Option<KeyRoute> {
         Some(KeyRoute {
             target: self.target?,
             code,
             pressed,
+            focus_epoch: self.epoch.clone(),
         })
     }
 }

@@ -63,11 +63,11 @@
   - **Dependencies:** `TASK-002`, `TASK-005`  |  **Unit Test:** `keyboard_focus_transitions`
   - **Done:** 失焦後無 key event 送到 PTY
 
-- [ ] **TASK-012 — 轉換 keysym 與實體 key code**
+- [x] **TASK-012 — 轉換 keysym 與實體 key code**
   - **Dependencies:** `TASK-011`  |  **Unit Test:** `keymap_translates_modifiers`
   - **Done:** 保留 Ctrl/Shift/Alt 與 key repeat flag
 
-- [ ] **TASK-013 — 純邏輯 key-repeat scheduler**
+- [x] **TASK-013 — 純邏輯 key-repeat scheduler**
   - **Dependencies:** `TASK-006`, `TASK-012`  |  **Unit Test:** `key_repeat_stops_on_release`
   - **Done:** 按鍵放開或失焦後停止 repeat
 

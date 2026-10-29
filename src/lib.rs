@@ -4,6 +4,8 @@ pub mod error;
 pub mod frame;
 pub mod geometry;
 pub mod input;
+pub mod keymap;
+pub mod repeat;
 pub mod shell;
 pub mod wayland;
 pub mod window;
