@@ -1,7 +1,7 @@
 use super::{
     ClipboardOwner, ClipboardState, DataOffer, DataSourceRequest, InputSerialEvent, PasteKeyAction,
-    SeatId, SeatSerialState, SelectionSerial, copy_shortcut, paste_shortcut, plan_data_source,
-    select_text_mime,
+    PastePayload, PasteSink, SeatId, SeatSerialState, SelectionSerial, copy_shortcut,
+    paste_shortcut, plan_data_source, select_text_mime,
 };
 use crate::{
     TabId, WindowId,
@@ -319,4 +319,59 @@ fn paste_shortcut_routes_to_focused_tab() {
         paste_shortcut(&focus, &current, modifiers, b'v' as u32, KeyState::Pressed),
         PasteKeyAction::Consumed
     ));
+}
+
+#[test]
+fn paste_never_switches_target_mid_transfer() {
+    struct Sink {
+        tab: TabId,
+        received: Vec<u8>,
+    }
+
+    impl PasteSink for Sink {
+        type Error = ();
+
+        fn tab(&self) -> TabId {
+            self.tab
+        }
+
+        fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.received.extend_from_slice(bytes);
+            Ok(())
+        }
+    }
+
+    let mut focus = KeyboardFocus::default();
+    focus.enter(WindowId(1), TabId(7));
+    let route = focus.route_key(47, true).unwrap();
+    let modifiers = Modifiers {
+        depressed: ModifierMask::CONTROL.0 | ModifierMask::SHIFT.0,
+        ..Modifiers::default()
+    };
+    let PasteKeyAction::Paste(intent) =
+        paste_shortcut(&focus, &route, modifiers, b'V' as u32, KeyState::Pressed)
+    else {
+        panic!("expected paste intent");
+    };
+    let text = "繁".repeat(6000);
+    let mut transfer = intent.with_payload(PastePayload::new(text.clone()).unwrap());
+    let mut original = Sink {
+        tab: TabId(7),
+        received: Vec::new(),
+    };
+    let mut switched = Sink {
+        tab: TabId(8),
+        received: Vec::new(),
+    };
+
+    assert!(transfer.enqueue_next(&mut original).unwrap());
+    assert!(!transfer.is_complete());
+    focus.enter(WindowId(1), TabId(8));
+    assert!(!transfer.enqueue_next(&mut switched).unwrap());
+    assert!(switched.received.is_empty());
+    assert!(!transfer.is_complete());
+    while transfer.enqueue_next(&mut original).unwrap() {}
+    assert!(transfer.is_complete());
+    assert_eq!(original.received, text.as_bytes());
+    assert!(switched.received.is_empty());
 }

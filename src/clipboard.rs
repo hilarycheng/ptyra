@@ -85,6 +85,53 @@ impl PasteIntent {
     pub fn target(self) -> FocusTarget {
         self.target
     }
+
+    /// Bind completed Clipboard data to the Tab that initiated Paste.
+    pub fn with_payload(self, payload: PastePayload) -> PendingPaste {
+        PendingPaste {
+            target: self.target,
+            payload,
+            sent: 0,
+        }
+    }
+}
+
+/// A target-identified enqueue endpoint; implementations may use a fake queue
+/// or a real Tab-owned PTY write queue.
+pub trait PasteSink {
+    type Error;
+
+    fn tab(&self) -> TabId;
+    fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error>;
+}
+
+/// Owns Paste bytes while chunks are queued. Sensitive bytes have no Debug.
+pub struct PendingPaste {
+    target: FocusTarget,
+    payload: PastePayload,
+    sent: usize,
+}
+
+impl PendingPaste {
+    pub fn target(&self) -> FocusTarget {
+        self.target
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.sent == self.payload.bytes.len()
+    }
+
+    /// A different Tab never receives a chunk, even after a focus switch.
+    /// Errors leave this chunk pending for a later retry.
+    pub fn enqueue_next<S: PasteSink>(&mut self, sink: &mut S) -> Result<bool, S::Error> {
+        if sink.tab() != self.target.tab || self.is_complete() {
+            return Ok(false);
+        }
+        let end = (self.sent + 16 * 1024).min(self.payload.bytes.len());
+        sink.enqueue(&self.payload.bytes[self.sent..end])?;
+        self.sent = end;
+        Ok(true)
+    }
 }
 
 /// `Consumed` keeps a matched shortcut out of ordinary Shell text even when

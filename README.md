@@ -1464,3 +1464,25 @@ Approval: user approved TASK-058 checkbox and scoped local commit; no push
 `PastePayload` takes completed Clipboard UTF-8 text and exposes the identical
 byte sequence for later PTY routing. The test spans split multibyte characters,
 tabs, spaces, LF and CRLF without normalization.
+
+## TASK-059 Verification (2026-10-30)
+
+```text
+TASK: TASK-059
+Status: DONE
+Dependencies: satisfied (TASK-057, TASK-002 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/tests.rs, src/pty.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline paste_never_switches_target_mid_transfer -- --test-threads=1
+Result: PASS; test-first compilation failed before PasteSink existed
+Workspace tests: PASS — 120 unit + 3 Linux pipe FD + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real Wayland Paste/PTY end-to-end NOT RUN
+Security / Privacy impact: pending payload has no Debug/logging; only its initiating Tab's PTY queue accepts chunks
+Known limitations: no runtime Paste event-loop wiring or close/focus cancellation; bracketed-paste policy remains separate
+Ready for [x]: YES
+Approval: user approved TASK-059 checkbox and scoped local commit; no push
+```
+
+`PendingPaste` keeps the initiating TabId while queuing bounded chunks. Each
+chunk checks the receiving Tab's identity; a queue error retains that chunk for
+retry. Switching focus cannot retarget an existing pending Paste.

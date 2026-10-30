@@ -259,7 +259,7 @@
   - **Dependencies:** `TASK-053`, `TASK-023`  |  **Unit Test:** `paste_preserves_utf8_and_newlines`
   - **Done:** 繁體中文、LF、tabs 不被無意改寫
 
-- [ ] **TASK-059 — Paste target 綁定發起時嘅 TabId**
+- [x] **TASK-059 — Paste target 綁定發起時嘅 TabId**
   - **Dependencies:** `TASK-057`, `TASK-002`  |  **Unit Test:** `paste_never_switches_target_mid_transfer`
   - **Done:** 切 Tab 時唔將 Paste 送錯 Shell
 

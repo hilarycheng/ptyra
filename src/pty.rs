@@ -406,6 +406,18 @@ impl PtySession {
     }
 }
 
+impl crate::clipboard::PasteSink for PtySession {
+    type Error = PtyWriteError;
+
+    fn tab(&self) -> TabId {
+        self.tab()
+    }
+
+    fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.enqueue_write(bytes).map(|_| ())
+    }
+}
+
 impl Drop for PtySession {
     fn drop(&mut self) {
         self.master.take();
