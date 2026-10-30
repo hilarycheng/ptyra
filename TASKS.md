@@ -231,7 +231,7 @@
   - **Dependencies:** `TASK-050`  |  **Unit Test:** `clipboard_write_handles_short_write`
   - **Done:** partial write、EINTR 和 peer-close 安全處理
 
-- [ ] **TASK-052 — 從 wl_data_offer event 建立可接收 offer**
+- [x] **TASK-052 — 從 wl_data_offer event 建立可接收 offer**
   - **Dependencies:** `TASK-047`  |  **Unit Test:** `data_offer_tracks_formats`
   - **Done:** 能保存 clipboard format / cancellation
 

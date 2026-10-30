@@ -1311,3 +1311,25 @@ Approval: user approved TASK-051 checkbox and scoped local commit; no push
 `ClipboardSend` retries EINTR within a bounded call, retains bytes on
 WouldBlock or partial writes, and releases payload on completion or terminal
 write error. A real Linux pipe test confirms Unicode bytes reach an FD.
+
+## TASK-052 Verification (2026-10-30)
+
+```text
+TASK: TASK-052
+Status: DONE
+Dependencies: satisfied (TASK-047 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline data_offer_tracks_formats -- --test-threads=1
+Result: PASS; test-first compilation failed before DataOffer existed
+Workspace tests: PASS — 113 unit + 1 Linux pipe FD + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real wl_data_offer event and Wayland Clipboard NOT RUN
+Security / Privacy impact: bounded MIME metadata only, no payload logging, I/O, unsafe or dependency
+Known limitations: Wayland adapter must map offer object IDs and coordinate DataOffer/ClipboardState cancellation; FD receive is later work
+Ready for [x]: YES
+Approval: user approved TASK-052 checkbox and scoped local commit; no push
+```
+
+`DataOffer` records up to 64 distinct advertised MIME strings, each at most
+256 bytes, and exposes the preferred text MIME. Cancellation drops formats
+and rejects later advertisements.

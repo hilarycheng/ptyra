@@ -1,6 +1,6 @@
 use super::{
-    ClipboardOwner, ClipboardState, DataSourceRequest, InputSerialEvent, SeatId, SeatSerialState,
-    SelectionSerial, plan_data_source, select_text_mime,
+    ClipboardOwner, ClipboardState, DataOffer, DataSourceRequest, InputSerialEvent, SeatId,
+    SeatSerialState, SelectionSerial, plan_data_source, select_text_mime,
 };
 use crate::{TabId, WindowId, input::FocusTarget};
 
@@ -124,4 +124,37 @@ fn data_source_advertises_text_mime() {
             serial: SelectionSerial(43)
         }
     );
+}
+
+#[test]
+fn data_offer_tracks_formats() {
+    let mut clipboard = ClipboardState::new();
+    let id = clipboard.offer_created().unwrap();
+    let mut offer = DataOffer::new(id);
+    assert_eq!(offer.id(), id);
+    assert_eq!(offer.preferred_text_mime(), None);
+    assert!(offer.advertise("text/plain").unwrap());
+    assert!(offer.advertise("text/plain;charset=utf-8").unwrap());
+    assert!(!offer.advertise("text/plain").unwrap());
+    assert_eq!(
+        offer.formats(),
+        &[
+            "text/plain".to_owned(),
+            "text/plain;charset=utf-8".to_owned()
+        ]
+    );
+    assert_eq!(
+        offer.preferred_text_mime(),
+        Some("text/plain;charset=utf-8")
+    );
+    assert!(offer.advertise("bad\0mime").is_err());
+    assert!(offer.advertise(&"x".repeat(257)).is_err());
+    assert!(clipboard.select_offer(id));
+    offer.cancel();
+    clipboard.cancel_offer(id);
+    assert!(offer.is_cancelled());
+    assert!(offer.formats().is_empty());
+    assert_eq!(offer.preferred_text_mime(), None);
+    assert!(offer.advertise("text/plain").is_err());
+    assert_eq!(clipboard.owner(), None);
 }

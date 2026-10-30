@@ -1,6 +1,11 @@
 //! Pure clipboard owner and offer identity state. No Wayland or FD I/O.
 
-use crate::{TabId, input::FocusTarget};
+use crate::{
+    TabId,
+    error::{AppError, Component},
+    input::FocusTarget,
+};
+use std::io::ErrorKind;
 
 pub mod write;
 
@@ -91,6 +96,74 @@ pub fn plan_data_source(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OfferId(u64);
 
+/// One received wl_data_offer object's advertised formats and lifetime.
+pub struct DataOffer {
+    id: OfferId,
+    formats: Vec<String>,
+    cancelled: bool,
+}
+
+impl DataOffer {
+    pub fn new(id: OfferId) -> Self {
+        Self {
+            id,
+            formats: Vec::new(),
+            cancelled: false,
+        }
+    }
+
+    pub fn id(&self) -> OfferId {
+        self.id
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
+    }
+    pub fn formats(&self) -> &[String] {
+        &self.formats
+    }
+
+    pub fn advertise(&mut self, mime: &str) -> Result<bool, AppError> {
+        if self.cancelled
+            || mime.is_empty()
+            || mime.len() > 256
+            || mime.contains('\0')
+            || self.formats.len() >= 64
+        {
+            return Err(AppError::new(Component::Clipboard, ErrorKind::InvalidInput));
+        }
+        if self
+            .formats
+            .iter()
+            .any(|format| format.eq_ignore_ascii_case(mime))
+        {
+            return Ok(false);
+        }
+        self.formats
+            .try_reserve(1)
+            .map_err(|_| AppError::new(Component::Clipboard, ErrorKind::OutOfMemory))?;
+        let mut format = String::new();
+        format
+            .try_reserve_exact(mime.len())
+            .map_err(|_| AppError::new(Component::Clipboard, ErrorKind::OutOfMemory))?;
+        format.push_str(mime);
+        self.formats.push(format);
+        Ok(true)
+    }
+
+    pub fn preferred_text_mime(&self) -> Option<&str> {
+        if self.cancelled {
+            return None;
+        }
+        let formats: Vec<_> = self.formats.iter().map(String::as_str).collect();
+        select_text_mime(&formats)
+    }
+
+    pub fn cancel(&mut self) {
+        self.cancelled = true;
+        self.formats = Vec::new();
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipboardOwner {
     Local(TabId),
@@ -157,7 +230,7 @@ impl ClipboardState {
 /// Return the exact advertised MIME string required by wl_data_offer.receive.
 /// Prefer explicit UTF-8, then legacy UTF8_STRING, then plain text whose
 /// charset will be validated by the later reader.
-pub fn select_text_mime<'a>(offered: &'a [&'a str]) -> Option<&'a str> {
+pub fn select_text_mime<'a>(offered: &[&'a str]) -> Option<&'a str> {
     if offered.len() > 64 {
         return None;
     }
