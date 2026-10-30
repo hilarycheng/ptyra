@@ -1032,3 +1032,37 @@ reverse drags produce the same normalized `SelectionRange`, including across
 lines and scrollback grid coordinates. Release finalizes the range; later motion
 does nothing. Wrong-Tab events cannot change it. The caller cancels an unfinished
 drag on focus/Tab change; a completed selection remains owned by its Tab.
+
+## TASK-041 Verification (2026-10-30)
+
+```text
+TASK: TASK-041
+Status: DONE
+Dependencies: satisfied (TASK-040 已 [x])
+Changed files: src/selection.rs, src/selection/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline double_click_selects_unicode_word -- --test-threads=1
+Result: PASS; test-first compilation failed before double_click existed
+Workspace tests: PASS — 99 unit tests + 9 Linux PTY integration tests + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: existing 9 real Linux PTY fixtures PASS;
+  real Wayland double-click and GUI selection NOT RUN
+Security / Privacy impact: bounded, read-only grid scan with per-Tab state;
+  no selected-text copying, logging, dependency, unsafe, I/O or network access
+Known limitations: word selection stays within one grid row, even across a
+  soft wrap; caller supplies grid coordinates, validates current Tab/focus and
+  routes real double-click events in later integration tasks
+Ready for [x]: YES
+Approval: user explicitly approved TASK-041, checkbox update and scoped commit;
+  no push requested
+```
+
+`DragSelection::double_click` returns and stores an inclusive `SelectionRange`.
+ASCII letters/digits/underscore form one run. Other narrow Unicode
+alphanumerics form a separate run, without language-specific segmentation.
+Each wide glyph (including CJK and emoji), punctuation or whitespace selects
+one cell. Combining marks remain attached to the base cell. Clicking a trailing
+wide spacer selects its lead glyph; a wrap-leading placeholder returns None.
+Invalid grid coordinates or a wrong Tab leave the existing selection unchanged.
+Tests cover mixed ASCII/Chinese/Greek, combining marks, punctuation, blank
+cells, spacers, wrap and row boundaries.

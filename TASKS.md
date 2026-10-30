@@ -185,7 +185,7 @@
   - **Dependencies:** `TASK-039`  |  **Unit Test:** `drag_selection_normalizes_direction`
   - **Done:** 由左至右／反向拖曳結果一致
 
-- [ ] **TASK-041 — Double-click word selection**
+- [x] **TASK-041 — Double-click word selection**
   - **Dependencies:** `TASK-040`  |  **Unit Test:** `double_click_selects_unicode_word`
   - **Done:** 中文及 ASCII 有清楚 word-boundary 策略
 
