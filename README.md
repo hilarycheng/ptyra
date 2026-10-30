@@ -1200,3 +1200,25 @@ Approval: user approved TASK-046 checkbox and scoped local commit; no push
 `TabSelections` keeps separate main and alternate-screen `DragSelection`
 instances for one TabId. Wrong-Tab access is rejected. `Screen::from_mode`
 maps the terminal core's ALT_SCREEN flag without changing the Grid.
+
+## TASK-047 Verification (2026-10-30)
+
+```text
+TASK: TASK-047
+Status: DONE
+Dependencies: satisfied (TASK-002, TASK-005 已 [x])
+Changed files: src/lib.rs, src/clipboard.rs, src/clipboard/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline clipboard_state_rejects_stale_offer -- --test-threads=1
+Result: PASS; test-first compilation failed before ClipboardState existed
+Workspace tests: PASS — 108 unit + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real Wayland Clipboard NOT RUN
+Security / Privacy impact: pure identity state only; no clipboard payload, logging, I/O, unsafe or dependency
+Known limitations: no wl_data_device/source/offer object binding or data transfer yet
+Ready for [x]: YES
+Approval: user approved TASK-047 checkbox and scoped local commit; no push
+```
+
+`ClipboardState` tracks one current owner and internal offer identities.
+Only the newest live offer can supersede an owner; stale and cancelled
+offers cannot take ownership. Local ownership invalidates older offers.

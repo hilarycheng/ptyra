@@ -211,7 +211,7 @@
 
 ## F. Clipboard / Copy & Paste
 
-- [ ] **TASK-047 — 定義 Clipboard state、owner、offer ID**
+- [x] **TASK-047 — 定義 Clipboard state、owner、offer ID**
   - **Dependencies:** `TASK-002`, `TASK-005`  |  **Unit Test:** `clipboard_state_rejects_stale_offer`
   - **Done:** 舊 offer 唔覆蓋新 owner
 
