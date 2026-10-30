@@ -205,7 +205,7 @@
   - **Dependencies:** `TASK-040`, `TASK-028`  |  **Unit Test:** `selection_preserves_fullwidth_glyph`
   - **Done:** 選中文字不產生半個 cell 或破字
 
-- [ ] **TASK-046 — Selection 狀態與 Screen/Tab 隔離**
+- [x] **TASK-046 — Selection 狀態與 Screen/Tab 隔離**
   - **Dependencies:** `TASK-040`, `TASK-002`  |  **Unit Test:** `selection_is_scoped_to_tab`
   - **Done:** 不同 Tab 選區互不影響
 

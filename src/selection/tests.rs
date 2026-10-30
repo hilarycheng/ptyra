@@ -1,4 +1,7 @@
-use super::{DragSelection, copy_logical_lines, copy_text, join_logical_lines, whole_glyph_range};
+use super::{
+    DragSelection, Screen, TabSelections, copy_logical_lines, copy_text, join_logical_lines,
+    whole_glyph_range,
+};
 use crate::TabId;
 use crate::terminal::Terminal;
 use alacritty_terminal::{
@@ -353,4 +356,55 @@ fn selection_preserves_fullwidth_glyph() {
         whole_glyph_range(grid, SelectionRange::new(point(-1, 0), point(0, 0), false)),
         None
     );
+}
+
+#[test]
+fn selection_is_scoped_to_tab() {
+    let first_tab = TabId(1);
+    let second_tab = TabId(2);
+    let mut terminal = Terminal::new(first_tab, 2, 4).unwrap();
+    assert_eq!(Screen::from_mode(terminal.mode().unwrap()), Screen::Main);
+    terminal.feed(first_tab, b"\x1b[?1049h").unwrap();
+    assert_eq!(
+        Screen::from_mode(terminal.mode().unwrap()),
+        Screen::Alternate
+    );
+    terminal.feed(first_tab, b"\x1b[?1049l").unwrap();
+    assert_eq!(Screen::from_mode(terminal.mode().unwrap()), Screen::Main);
+    let mut first = TabSelections::new(first_tab);
+    let mut second = TabSelections::new(second_tab);
+    let main = SelectionRange::new(point(0, 1), point(0, 2), false);
+    let alternate = SelectionRange::new(point(1, 0), point(1, 1), false);
+    first
+        .selection_mut(first_tab, Screen::Main)
+        .unwrap()
+        .press(first_tab, main.start);
+    first
+        .selection_mut(first_tab, Screen::Main)
+        .unwrap()
+        .release(first_tab, main.end);
+    assert_eq!(first.range(first_tab, Screen::Main), Some(main));
+    assert_eq!(first.range(first_tab, Screen::Alternate), None);
+    assert_eq!(second.range(second_tab, Screen::Main), None);
+    assert!(first.selection_mut(second_tab, Screen::Main).is_none());
+    assert_eq!(first.range(second_tab, Screen::Main), None);
+    first
+        .selection_mut(first_tab, Screen::Alternate)
+        .unwrap()
+        .press(first_tab, alternate.start);
+    first
+        .selection_mut(first_tab, Screen::Alternate)
+        .unwrap()
+        .release(first_tab, alternate.end);
+    assert_eq!(first.range(first_tab, Screen::Alternate), Some(alternate));
+    assert_eq!(first.range(first_tab, Screen::Main), Some(main));
+    second
+        .selection_mut(second_tab, Screen::Main)
+        .unwrap()
+        .press(second_tab, point(0, 0));
+    assert_eq!(
+        second.range(second_tab, Screen::Main),
+        Some(SelectionRange::new(point(0, 0), point(0, 0), false))
+    );
+    assert_eq!(first.range(first_tab, Screen::Main), Some(main));
 }

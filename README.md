@@ -1178,3 +1178,25 @@ Approval: user approved TASK-045 checkbox and scoped local commit; no push
 Wide-range normalization expands a selected lead or trailing spacer to both
 cells. A wrap-leading placeholder maps to the complete wide glyph on the next
 row. Copy uses the same normalization; combining marks stay on the lead cell.
+
+## TASK-046 Verification (2026-10-30)
+
+```text
+TASK: TASK-046
+Status: DONE
+Dependencies: satisfied (TASK-040, TASK-002 已 [x])
+Changed files: src/selection.rs, src/selection/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline selection_is_scoped_to_tab -- --test-threads=1
+Result: PASS; test-first compilation failed before TabSelections existed
+Workspace tests: PASS — 107 unit + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real GUI Tab switching/alternate-screen selection NOT RUN
+Security / Privacy impact: per-Tab pure state, no text logging, I/O, unsafe or dependency
+Known limitations: caller owns one TabSelections per Tab and maps the current terminal mode; no runtime Tab Manager wiring yet
+Ready for [x]: YES
+Approval: user approved TASK-046 checkbox and scoped local commit; no push
+```
+
+`TabSelections` keeps separate main and alternate-screen `DragSelection`
+instances for one TabId. Wrong-Tab access is rejected. `Screen::from_mode`
+maps the terminal core's ALT_SCREEN flag without changing the Grid.

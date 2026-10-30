@@ -4,10 +4,66 @@ use alacritty_terminal::{
     grid::{Dimensions, Grid},
     index::{Column, Line, Point},
     selection::SelectionRange,
-    term::cell::{Cell, Flags},
+    term::{
+        TermMode,
+        cell::{Cell, Flags},
+    },
 };
 
 const MAX_COPY_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Screen {
+    Main,
+    Alternate,
+}
+
+impl Screen {
+    pub fn from_mode(mode: &TermMode) -> Self {
+        if mode.contains(TermMode::ALT_SCREEN) {
+            Self::Alternate
+        } else {
+            Self::Main
+        }
+    }
+}
+
+/// One owner Tab with independent selection state on its two terminal screens.
+pub struct TabSelections {
+    tab: TabId,
+    main: DragSelection,
+    alternate: DragSelection,
+}
+
+impl TabSelections {
+    pub fn new(tab: TabId) -> Self {
+        Self {
+            tab,
+            main: DragSelection::new(tab),
+            alternate: DragSelection::new(tab),
+        }
+    }
+
+    pub fn selection_mut(&mut self, tab: TabId, screen: Screen) -> Option<&mut DragSelection> {
+        if tab != self.tab {
+            return None;
+        }
+        Some(match screen {
+            Screen::Main => &mut self.main,
+            Screen::Alternate => &mut self.alternate,
+        })
+    }
+
+    pub fn range(&self, tab: TabId, screen: Screen) -> Option<SelectionRange> {
+        if tab != self.tab {
+            return None;
+        }
+        match screen {
+            Screen::Main => self.main.range(),
+            Screen::Alternate => self.alternate.range(),
+        }
+    }
+}
 
 /// Own one instance per Tab. Input points are grid coordinates, so callers
 /// translate the hit-tested viewport row by the current display offset.
