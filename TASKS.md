@@ -255,7 +255,7 @@
   - **Dependencies:** `TASK-052`, `TASK-011`  |  **Unit Test:** `paste_shortcut_routes_to_focused_tab`
   - **Done:** Shortcut 不會當作 Shell 普通文字
 
-- [ ] **TASK-058 — Paste 保留 UTF-8、多行與空格**
+- [x] **TASK-058 — Paste 保留 UTF-8、多行與空格**
   - **Dependencies:** `TASK-053`, `TASK-023`  |  **Unit Test:** `paste_preserves_utf8_and_newlines`
   - **Done:** 繁體中文、LF、tabs 不被無意改寫
 

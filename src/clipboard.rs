@@ -13,6 +13,30 @@ use std::io::ErrorKind;
 pub mod read;
 pub mod write;
 
+/// Owned Paste bytes; no normalization, trimming, or payload Debug/logging.
+pub struct PastePayload {
+    bytes: Vec<u8>,
+}
+
+impl PastePayload {
+    pub fn new(text: String) -> Result<Self, AppError> {
+        if text.len() > read::MAX_PASTE_BYTES {
+            return Err(AppError::new(Component::Clipboard, ErrorKind::FileTooLarge));
+        }
+        Ok(Self {
+            bytes: text.into_bytes(),
+        })
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
 /// Sensitive Copy text deliberately has no Debug implementation.
 pub struct CopyIntent {
     target: FocusTarget,

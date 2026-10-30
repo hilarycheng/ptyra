@@ -1442,3 +1442,25 @@ Approval: user approved TASK-057 checkbox and scoped local commit; no push
 `paste_shortcut` produces a PasteIntent for the current focused Tab only on
 pressed Ctrl+Shift+V. A matched release, repeat or stale-focus event is
 consumed without forwarding shortcut bytes to the Shell.
+
+## TASK-058 Verification (2026-10-30)
+
+```text
+TASK: TASK-058
+Status: DONE
+Dependencies: satisfied (TASK-053, TASK-023 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/read/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline paste_preserves_utf8_and_newlines -- --test-threads=1
+Result: PASS; test-first compilation failed before PastePayload existed
+Workspace tests: PASS — 119 unit + 3 Linux pipe FD + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real Wayland Paste/PTY end-to-end NOT RUN
+Security / Privacy impact: PastePayload has no Debug/logging and enforces 16 MiB maximum; bytes are unchanged
+Known limitations: no runtime enqueue/chunk scheduler, target binding or bracketed-paste policy yet
+Ready for [x]: YES
+Approval: user approved TASK-058 checkbox and scoped local commit; no push
+```
+
+`PastePayload` takes completed Clipboard UTF-8 text and exposes the identical
+byte sequence for later PTY routing. The test spans split multibyte characters,
+tabs, spaces, LF and CRLF without normalization.

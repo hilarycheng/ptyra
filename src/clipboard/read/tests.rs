@@ -1,5 +1,5 @@
 use super::{ClipboardReceive, ClipboardTransfer, MAX_PASTE_BYTES, ReadProgress};
-use crate::clipboard::{ClipboardState, DataOffer};
+use crate::clipboard::{ClipboardState, DataOffer, PastePayload};
 use crate::error::{AppError, Component};
 use std::{
     cell::Cell,
@@ -197,4 +197,26 @@ fn clipboard_cancel_drops_pending_transfer() {
         ReadProgress::Closed
     ));
     assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn paste_preserves_utf8_and_newlines() {
+    let original = "繁體\t  \n第二行 \r\n";
+    let mut steps: VecDeque<_> = original
+        .as_bytes()
+        .chunks(2)
+        .map(|part| Step::Data(part.to_vec()))
+        .collect();
+    steps.push_back(Step::Eof);
+    let mut reader = FakeReader { steps };
+    let mut receive = ClipboardReceive::new();
+    let text = loop {
+        match receive.read_ready(&mut reader).unwrap() {
+            ReadProgress::Read(_) => continue,
+            ReadProgress::Complete(text) => break text,
+            _ => panic!("unexpected fixture state"),
+        }
+    };
+    let payload = PastePayload::new(text).unwrap();
+    assert_eq!(payload.bytes(), original.as_bytes());
 }
