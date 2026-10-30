@@ -1289,3 +1289,25 @@ Approval: user approved TASK-050 checkbox and scoped local commit; no push
 `plan_data_source` emits Create, two text MIME advertisements and
 SetSelection in order, only with a fresh matching seat serial. Planning
 consumes that serial but does not claim compositor success.
+
+## TASK-051 Verification (2026-10-30)
+
+```text
+TASK: TASK-051
+Status: DONE
+Dependencies: satisfied (TASK-050 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/write.rs, src/clipboard/write/tests.rs, tests/clipboard_fd.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline clipboard_write_handles_short_write -- --test-threads=1
+Result: PASS; test-first compilation failed before ClipboardSend existed
+Workspace tests: PASS — 112 unit + 1 real Linux pipe FD + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real pipe FD bytes PASS; real Wayland Clipboard NOT RUN
+Security / Privacy impact: owned payload has no Debug; 16 MiB input limit, bounded per-call writes, no payload logging or unsafe
+Known limitations: event-loop writable readiness and Wayland send/FD lifecycle not wired; peer-close path verified with fake writer
+Ready for [x]: YES
+Approval: user approved TASK-051 checkbox and scoped local commit; no push
+```
+
+`ClipboardSend` retries EINTR within a bounded call, retains bytes on
+WouldBlock or partial writes, and releases payload on completion or terminal
+write error. A real Linux pipe test confirms Unicode bytes reach an FD.

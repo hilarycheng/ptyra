@@ -227,7 +227,7 @@
   - **Dependencies:** `TASK-048`, `TASK-049`  |  **Unit Test:** `data_source_advertises_text_mime`
   - **Done:** Copy 時對外提供正確 MIME
 
-- [ ] **TASK-051 — 向 Clipboard FD 寫資料**
+- [x] **TASK-051 — 向 Clipboard FD 寫資料**
   - **Dependencies:** `TASK-050`  |  **Unit Test:** `clipboard_write_handles_short_write`
   - **Done:** partial write、EINTR 和 peer-close 安全處理
 

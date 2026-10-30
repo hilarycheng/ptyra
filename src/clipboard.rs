@@ -2,6 +2,8 @@
 
 use crate::{TabId, input::FocusTarget};
 
+pub mod write;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SeatId(pub u32);
 
