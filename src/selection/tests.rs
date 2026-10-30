@@ -140,3 +140,62 @@ fn double_click_stops_at_line_and_ignores_wrap_placeholder() {
     );
     assert!(grid[point(1, 0)].flags.contains(Flags::WIDE_CHAR));
 }
+
+#[test]
+fn triple_click_selects_logical_line() {
+    let tab = TabId(1);
+    let mut terminal = Terminal::new(tab, 3, 4).unwrap();
+    terminal.feed(tab, b"abcdEF\r\nGH").unwrap();
+    let grid = terminal.grid().unwrap();
+    assert!(grid[point(0, 3)].flags.contains(Flags::WRAPLINE));
+    assert!(!grid[point(1, 3)].flags.contains(Flags::WRAPLINE));
+    let mut selection = DragSelection::new(tab);
+    let wrapped = SelectionRange::new(point(0, 0), point(1, 3), false);
+    for clicked in [point(0, 2), point(1, 1)] {
+        assert_eq!(selection.triple_click(tab, grid, clicked), Some(wrapped));
+        assert_eq!(selection.range(), Some(wrapped));
+    }
+    let hard_line = SelectionRange::new(point(2, 0), point(2, 3), false);
+    assert_eq!(
+        selection.triple_click(tab, grid, point(2, 1)),
+        Some(hard_line)
+    );
+    assert_eq!(selection.triple_click(TabId(2), grid, point(0, 0)), None);
+    for invalid in [point(-1, 0), point(3, 0), point(0, 4), point(0, usize::MAX)] {
+        assert_eq!(selection.triple_click(tab, grid, invalid), None);
+        assert_eq!(selection.range(), Some(hard_line));
+    }
+}
+
+#[test]
+fn triple_click_respects_scrollback_edges() {
+    let tab = TabId(1);
+    let mut terminal = Terminal::with_scrollback(tab, 2, 4, 4).unwrap();
+    terminal.feed(tab, b"AAAA\r\nBBBB\r\nCCCC").unwrap();
+    let grid = terminal.grid().unwrap();
+    assert_eq!(grid.topmost_line(), Line(-1));
+    let mut selection = DragSelection::new(tab);
+    assert_eq!(
+        selection.triple_click(tab, grid, point(-1, 2)),
+        Some(SelectionRange::new(point(-1, 0), point(-1, 3), false))
+    );
+    assert_eq!(
+        selection.triple_click(tab, grid, point(0, 2)),
+        Some(SelectionRange::new(point(0, 0), point(0, 3), false))
+    );
+    assert_eq!(
+        selection.triple_click(tab, grid, point(1, 2)),
+        Some(SelectionRange::new(point(1, 0), point(1, 3), false))
+    );
+    assert_eq!(selection.triple_click(tab, grid, point(-2, 0)), None);
+
+    let mut wrapped = Terminal::with_scrollback(tab, 2, 4, 4).unwrap();
+    wrapped.feed(tab, b"abcdEF\r\nGH").unwrap();
+    let grid = wrapped.grid().unwrap();
+    assert_eq!(grid.topmost_line(), Line(-1));
+    assert!(grid[point(-1, 3)].flags.contains(Flags::WRAPLINE));
+    assert_eq!(
+        selection.triple_click(tab, grid, point(0, 1)),
+        Some(SelectionRange::new(point(-1, 0), point(0, 3), false))
+    );
+}

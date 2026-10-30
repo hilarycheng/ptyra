@@ -74,6 +74,41 @@ impl DragSelection {
         Some(range)
     }
 
+    /// Select the full logical line, including adjacent soft-wrapped rows.
+    pub fn triple_click(
+        &mut self,
+        tab: TabId,
+        grid: &Grid<Cell>,
+        point: Point,
+    ) -> Option<SelectionRange> {
+        if tab != self.tab
+            || point.line < grid.topmost_line()
+            || point.line > grid.bottommost_line()
+            || point.column.0 >= grid.columns()
+        {
+            return None;
+        }
+        let last = Column(grid.columns().checked_sub(1)?);
+        let mut start = point.line;
+        while start > grid.topmost_line()
+            && grid[Point::new(start - 1, last)]
+                .flags
+                .contains(Flags::WRAPLINE)
+        {
+            start -= 1;
+        }
+        let mut end = point.line;
+        while end < grid.bottommost_line()
+            && grid[Point::new(end, last)].flags.contains(Flags::WRAPLINE)
+        {
+            end += 1;
+        }
+        let range = SelectionRange::new(Point::new(start, Column(0)), Point::new(end, last), false);
+        self.dragging = None;
+        self.settled = Some(range);
+        Some(range)
+    }
+
     /// Call on focus loss or Tab switch. Completed selection remains owned by this Tab.
     pub fn cancel(&mut self) {
         self.dragging = None;

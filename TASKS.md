@@ -189,7 +189,7 @@
   - **Dependencies:** `TASK-040`  |  **Unit Test:** `double_click_selects_unicode_word`
   - **Done:** 中文及 ASCII 有清楚 word-boundary 策略
 
-- [ ] **TASK-042 — Triple-click line selection**
+- [x] **TASK-042 — Triple-click line selection**
   - **Dependencies:** `TASK-040`  |  **Unit Test:** `triple_click_selects_logical_line`
   - **Done:** 完整選取對應 terminal line
 

@@ -1066,3 +1066,33 @@ wide spacer selects its lead glyph; a wrap-leading placeholder returns None.
 Invalid grid coordinates or a wrong Tab leave the existing selection unchanged.
 Tests cover mixed ASCII/Chinese/Greek, combining marks, punctuation, blank
 cells, spacers, wrap and row boundaries.
+
+## TASK-042 Verification (2026-10-30)
+
+```text
+TASK: TASK-042
+Status: DONE
+Dependencies: satisfied (TASK-040 已 [x])
+Changed files: src/selection.rs, src/selection/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline triple_click_selects_logical_line -- --test-threads=1
+Result: PASS; test-first compilation failed before triple_click existed
+Workspace tests: PASS — 101 unit tests + 9 Linux PTY integration tests + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: existing 9 real Linux PTY fixtures PASS;
+  real Wayland triple-click and GUI selection NOT RUN
+Security / Privacy impact: bounded, read-only grid scan with per-Tab state;
+  no selected-text copying, logging, dependency, unsafe, I/O or network access
+Known limitations: caller supplies grid coordinates and routes real triple-click
+  events; no mouse event-loop wiring or Clipboard text extraction yet
+Ready for [x]: YES
+Approval: user explicitly approved TASK-042, checkbox update and scoped commit;
+  no push requested
+```
+
+`DragSelection::triple_click` selects the complete logical line. It expands
+backward and forward through rows marked with `WRAPLINE`, stopping at hard
+breaks and scrollback boundaries. Wrong-Tab and invalid grid points leave the
+previous selection unchanged. Tests cover clicks on either wrapped row,
+unwrapped lines, wrong-Tab/invalid points, and a wrap crossing the scrollback
+boundary.
