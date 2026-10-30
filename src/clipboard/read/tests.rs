@@ -1,8 +1,11 @@
-use super::{ClipboardReceive, MAX_PASTE_BYTES, ReadProgress};
+use super::{ClipboardReceive, ClipboardTransfer, MAX_PASTE_BYTES, ReadProgress};
+use crate::clipboard::{ClipboardState, DataOffer};
 use crate::error::{AppError, Component};
 use std::{
+    cell::Cell,
     collections::VecDeque,
     io::{self, Read},
+    rc::Rc,
 };
 
 enum Step {
@@ -124,4 +127,74 @@ fn clipboard_read_limit_is_explicit() {
             matches!(ClipboardReceive::with_limit(invalid), Err(error) if error == AppError::new(Component::Clipboard, io::ErrorKind::InvalidInput))
         );
     }
+}
+
+struct TrackedReader {
+    inner: FakeReader,
+    calls: Rc<Cell<usize>>,
+    dropped: Rc<Cell<bool>>,
+}
+impl Read for TrackedReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.calls.set(self.calls.get() + 1);
+        self.inner.read(buf)
+    }
+}
+impl Drop for TrackedReader {
+    fn drop(&mut self) {
+        self.dropped.set(true);
+    }
+}
+
+#[test]
+fn clipboard_cancel_drops_pending_transfer() {
+    let mut state = ClipboardState::new();
+    let id = state.offer_created().unwrap();
+    assert!(state.select_offer(id));
+    let mut offer = DataOffer::new(id);
+    let calls = Rc::new(Cell::new(0));
+    let dropped = Rc::new(Cell::new(false));
+    let reader = TrackedReader {
+        inner: FakeReader {
+            steps: [Step::Data(b"part".to_vec()), Step::Eof].into(),
+        },
+        calls: calls.clone(),
+        dropped: dropped.clone(),
+    };
+    let mut transfer = ClipboardTransfer::new(id, reader, 16).unwrap();
+    assert!(matches!(
+        transfer.read_ready(&offer, &state).unwrap(),
+        ReadProgress::Read(4)
+    ));
+    offer.cancel();
+    state.cancel_offer(id);
+    assert!(matches!(
+        transfer.read_ready(&offer, &state).unwrap(),
+        ReadProgress::Closed
+    ));
+    assert!(dropped.get());
+    assert_eq!(calls.get(), 1);
+    assert!(matches!(
+        transfer.read_ready(&offer, &state).unwrap(),
+        ReadProgress::Closed
+    ));
+
+    let old = state.offer_created().unwrap();
+    assert!(state.select_offer(old));
+    let old_offer = DataOffer::new(old);
+    let reader = TrackedReader {
+        inner: FakeReader {
+            steps: [Step::Data(b"stale".to_vec())].into(),
+        },
+        calls: calls.clone(),
+        dropped: Rc::new(Cell::new(false)),
+    };
+    let mut stale = ClipboardTransfer::new(old, reader, 16).unwrap();
+    let newer = state.offer_created().unwrap();
+    assert!(state.select_offer(newer));
+    assert!(matches!(
+        stale.read_ready(&old_offer, &state).unwrap(),
+        ReadProgress::Closed
+    ));
+    assert_eq!(calls.get(), 1);
 }

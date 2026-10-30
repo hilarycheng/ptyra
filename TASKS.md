@@ -243,7 +243,7 @@
   - **Dependencies:** `TASK-053`  |  **Unit Test:** `clipboard_read_limit_is_explicit`
   - **Done:** 超額拒絕而非靜默截斷
 
-- [ ] **TASK-055 — 取消或失效 offer 時停止讀取**
+- [x] **TASK-055 — 取消或失效 offer 時停止讀取**
   - **Dependencies:** `TASK-053`  |  **Unit Test:** `clipboard_cancel_drops_pending_transfer`
   - **Done:** 舊 FD 不再寫入 active Tab
 

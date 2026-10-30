@@ -1377,3 +1377,24 @@ Approval: user approved TASK-054 checkbox and scoped local commit; no push
 `ClipboardReceive::with_limit` rejects invalid settings. Reads that cross
 the selected byte limit return a Clipboard `FileTooLarge` error and close
 the receiver; a transfer exactly at the limit remains valid.
+
+## TASK-055 Verification (2026-10-30)
+
+```text
+TASK: TASK-055
+Status: DONE
+Dependencies: satisfied (TASK-053 已 [x])
+Changed files: src/clipboard/read.rs, src/clipboard/read/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline clipboard_cancel_drops_pending_transfer -- --test-threads=1
+Result: PASS; test-first compilation failed before ClipboardTransfer existed
+Workspace tests: PASS — 116 unit + 3 Linux pipe FD + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real Wayland offer invalidation and GUI Paste NOT RUN
+Security / Privacy impact: cancellation drops owned reader and buffered text; no payload logging or unsafe
+Known limitations: adapter must call read_ready with current offer and owner before each read; runtime routing is pending
+Ready for [x]: YES
+Approval: user approved TASK-055 checkbox and scoped local commit; no push
+```
+
+`ClipboardTransfer` owns one offer's reader. A cancelled offer or changed
+owner closes that reader and discards pending bytes before another read.

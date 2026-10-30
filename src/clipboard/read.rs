@@ -1,5 +1,6 @@
 //! Clipboard FD reader. Payload state deliberately has no Debug.
 
+use crate::clipboard::{ClipboardOwner, ClipboardState, DataOffer, OfferId};
 use crate::error::{AppError, Component};
 use std::io::{self, Read};
 
@@ -49,6 +50,10 @@ impl ClipboardReceive {
             closed: false,
             limit,
         })
+    }
+
+    pub fn cancel(&mut self) {
+        self.close();
     }
 
     pub fn read_ready<R: Read>(&mut self, reader: &mut R) -> Result<ReadProgress, AppError> {
@@ -112,6 +117,53 @@ impl ClipboardReceive {
     fn close(&mut self) {
         self.closed = true;
         self.bytes = Vec::new();
+    }
+}
+
+/// Owns the receive FD and bytes for exactly one offer identity.
+pub struct ClipboardTransfer<R: Read> {
+    offer: OfferId,
+    reader: Option<R>,
+    receive: ClipboardReceive,
+}
+
+impl<R: Read> ClipboardTransfer<R> {
+    pub fn new(offer: OfferId, reader: R, limit: usize) -> Result<Self, AppError> {
+        Ok(Self {
+            offer,
+            reader: Some(reader),
+            receive: ClipboardReceive::with_limit(limit)?,
+        })
+    }
+
+    pub fn cancel(&mut self) {
+        self.reader = None;
+        self.receive.cancel();
+    }
+
+    pub fn read_ready(
+        &mut self,
+        offer: &DataOffer,
+        clipboard: &ClipboardState,
+    ) -> Result<ReadProgress, AppError> {
+        if offer.id() != self.offer
+            || offer.is_cancelled()
+            || clipboard.owner() != Some(ClipboardOwner::External(self.offer))
+        {
+            self.cancel();
+            return Ok(ReadProgress::Closed);
+        }
+        let Some(reader) = self.reader.as_mut() else {
+            return Ok(ReadProgress::Closed);
+        };
+        let result = self.receive.read_ready(reader);
+        if matches!(
+            &result,
+            Ok(ReadProgress::Complete(_) | ReadProgress::Closed) | Err(_)
+        ) {
+            self.reader = None;
+        }
+        result
     }
 }
 
