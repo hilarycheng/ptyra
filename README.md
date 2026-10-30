@@ -896,3 +896,37 @@ Preedit overlay 尚未實作／驗證。獨立 read-only review 確認三種指�
 
 Build/test/Clippy 使用 Cargo jobs=2、test threads=2、CPU affinity 0,1 同
 `CARGO_TARGET_DIR=/tmp/ptyra-task012-target`；所有 Cargo build checks 均使用 locked/offline。
+
+## TASK-037 Verification (2026-10-30)
+
+```text
+TASK: TASK-037
+Status: DONE
+Dependencies: satisfied (TASK-035 已 [x])
+Changed files: src/renderer.rs, src/renderer/overlay.rs,
+  src/renderer/overlay/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline overlay_does_not_change_grid -- --test-threads=1
+Result: PASS (1 test); overlay test group PASS (4 tests)
+Workspace tests: PASS — 91 unit tests + 9 Linux PTY integration tests + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: 9 existing real Linux PTY fixtures PASS;
+  actual GUI/Wayland/Fcitx5 preedit rendering NOT RUN
+Security / Privacy impact: borrowed preedit text is bounded to 4096 UTF-8 bytes,
+  checked against TabId, and only returned as a render command; no PTY write,
+  payload logging, dependency, unsafe, or platform I/O added
+Known limitations: backend text shaping, painting, focus-epoch validation and
+  real preedit display remain for later integration tasks
+Ready for [x]: YES
+Approval: user explicitly approved finishing TASK-037 and later requested its commit;
+  no push requested
+```
+
+The independent overlay layer emits selection rectangles before a borrowed preedit
+command. It clips viewport coordinates, covers a selected wide glyph once, rejects
+wrong-tab or oversized preedit without truncation, and leaves the terminal grid,
+cursor, palette and mode untouched. The current executable has no GUI renderer;
+the tests validate render commands and state isolation, not visible output on Sway.
+
+All build checks used `taskset -c 0,1` with one Cargo job and one test thread;
+Cargo checks used `--locked --offline`.

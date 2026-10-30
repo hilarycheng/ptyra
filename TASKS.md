@@ -167,7 +167,7 @@
   - **Dependencies:** `TASK-035`  |  **Unit Test:** `cursor_shape_matches_mode`
   - **Done:** Block / Beam / Underline 位置正確
 
-- [ ] **TASK-037 — 獨立 selection/preedit overlay layer**
+- [x] **TASK-037 — 獨立 selection/preedit overlay layer**
   - **Dependencies:** `TASK-035`  |  **Unit Test:** `overlay_does_not_change_grid`
   - **Done:** Preedit 顯示但不修改 PTY Grid
 
