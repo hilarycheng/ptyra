@@ -1,6 +1,6 @@
 use super::{
-    ClipboardOwner, ClipboardState, InputSerialEvent, SeatId, SeatSerialState, SelectionSerial,
-    select_text_mime,
+    ClipboardOwner, ClipboardState, DataSourceRequest, InputSerialEvent, SeatId, SeatSerialState,
+    SelectionSerial, plan_data_source, select_text_mime,
 };
 use crate::{TabId, WindowId, input::FocusTarget};
 
@@ -88,4 +88,40 @@ fn clipboard_serial_requires_input_event() {
     assert!(serials.record_event(seat, other_target, 16, InputSerialEvent::KeyPress));
     serials.clear();
     assert_eq!(serials.take_for_selection(seat, other_target), None);
+}
+
+#[test]
+fn data_source_advertises_text_mime() {
+    let seat = SeatId(1);
+    let target = FocusTarget {
+        window: WindowId(1),
+        tab: TabId(7),
+    };
+    let mut serials = SeatSerialState::default();
+    assert_eq!(plan_data_source(&mut serials, seat, target), None);
+    serials.focus(seat, target);
+    assert_eq!(plan_data_source(&mut serials, seat, target), None);
+    assert!(serials.record_event(seat, target, 42, InputSerialEvent::KeyPress));
+    assert_eq!(
+        plan_data_source(&mut serials, seat, target),
+        Some([
+            DataSourceRequest::Create,
+            DataSourceRequest::Offer("text/plain;charset=utf-8"),
+            DataSourceRequest::Offer("text/plain"),
+            DataSourceRequest::SetSelection {
+                seat,
+                serial: SelectionSerial(42)
+            },
+        ])
+    );
+    assert_eq!(plan_data_source(&mut serials, seat, target), None);
+    assert!(serials.record_event(seat, target, 43, InputSerialEvent::PointerButtonPress));
+    assert_eq!(plan_data_source(&mut serials, SeatId(2), target), None);
+    assert_eq!(
+        plan_data_source(&mut serials, seat, target).unwrap()[3],
+        DataSourceRequest::SetSelection {
+            seat,
+            serial: SelectionSerial(43)
+        }
+    );
 }

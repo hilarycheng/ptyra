@@ -61,6 +61,31 @@ impl SeatSerialState {
     }
 }
 
+/// Pure request plan for one wl_data_source and its wl_data_device selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DataSourceRequest {
+    Create,
+    Offer(&'static str),
+    SetSelection {
+        seat: SeatId,
+        serial: SelectionSerial,
+    },
+}
+
+pub fn plan_data_source(
+    serials: &mut SeatSerialState,
+    seat: SeatId,
+    target: FocusTarget,
+) -> Option<[DataSourceRequest; 4]> {
+    let serial = serials.take_for_selection(seat, target)?;
+    Some([
+        DataSourceRequest::Create,
+        DataSourceRequest::Offer("text/plain;charset=utf-8"),
+        DataSourceRequest::Offer("text/plain"),
+        DataSourceRequest::SetSelection { seat, serial },
+    ])
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OfferId(u64);
 

@@ -1267,3 +1267,25 @@ Approval: user approved TASK-049 checkbox and scoped local commit; no push
 button press for the focused seat, window and Tab. A mismatched event, focus
 change or leave invalidates pending use; a serial is consumed once. Numeric
 zero remains valid because Wayland serials may wrap.
+
+## TASK-050 Verification (2026-10-30)
+
+```text
+TASK: TASK-050
+Status: DONE
+Dependencies: satisfied (TASK-048, TASK-049 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline data_source_advertises_text_mime -- --test-threads=1
+Result: PASS; test-first compilation failed before DataSourceRequest existed
+Workspace tests: PASS — 111 unit + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real Wayland data-source creation and Clipboard NOT RUN
+Security / Privacy impact: fixed metadata-only request plan; no payload, I/O, logging, unsafe or dependency
+Known limitations: adapter execution and compositor acceptance remain untested; local ownership is not asserted by planning
+Ready for [x]: YES
+Approval: user approved TASK-050 checkbox and scoped local commit; no push
+```
+
+`plan_data_source` emits Create, two text MIME advertisements and
+SetSelection in order, only with a fresh matching seat serial. Planning
+consumes that serial but does not claim compositor success.

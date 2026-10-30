@@ -223,7 +223,7 @@
   - **Dependencies:** `TASK-047`, `TASK-011`  |  **Unit Test:** `clipboard_serial_requires_input_event`
   - **Done:** 無有效 serial 時不可假裝成功 set_selection
 
-- [ ] **TASK-050 — 建立 wl_data_source request sequence**
+- [x] **TASK-050 — 建立 wl_data_source request sequence**
   - **Dependencies:** `TASK-048`, `TASK-049`  |  **Unit Test:** `data_source_advertises_text_mime`
   - **Done:** Copy 時對外提供正確 MIME
 
