@@ -1222,3 +1222,25 @@ Approval: user approved TASK-047 checkbox and scoped local commit; no push
 `ClipboardState` tracks one current owner and internal offer identities.
 Only the newest live offer can supersede an owner; stale and cancelled
 offers cannot take ownership. Local ownership invalidates older offers.
+
+## TASK-048 Verification (2026-10-30)
+
+```text
+TASK: TASK-048
+Status: DONE
+Dependencies: satisfied (TASK-047 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline mime_prefers_utf8_text -- --test-threads=1
+Result: PASS; test-first compilation failed before select_text_mime existed
+Workspace tests: PASS — 109 unit + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real Wayland MIME offer/Clipboard NOT RUN
+Security / Privacy impact: metadata-only, bounded MIME choice; no payload, I/O, logging, unsafe or dependency
+Known limitations: text/plain fallback still requires UTF-8 validation by the later reader; non-UTF-8 STRING is rejected
+Ready for [x]: YES
+Approval: user approved TASK-048 checkbox and scoped local commit; no push
+```
+
+`select_text_mime` returns the exact advertised MIME spelling for Wayland
+receive. It prefers explicit UTF-8 text, then UTF8_STRING, then text/plain;
+unsupported charset and non-text formats are rejected.

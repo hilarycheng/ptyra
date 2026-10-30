@@ -1,4 +1,4 @@
-use super::{ClipboardOwner, ClipboardState};
+use super::{ClipboardOwner, ClipboardState, select_text_mime};
 use crate::TabId;
 
 #[test]
@@ -29,4 +29,26 @@ fn clipboard_state_rejects_stale_offer() {
     clipboard.cancel_offer(newest);
     assert_eq!(clipboard.owner(), None);
     assert!(!clipboard.select_offer(newest));
+}
+
+#[test]
+fn mime_prefers_utf8_text() {
+    let offered = [
+        "text/html",
+        "text/plain",
+        "UTF8_STRING",
+        "text/plain; charset=UTF-8",
+    ];
+    assert_eq!(select_text_mime(&offered), Some(offered[3]));
+    assert_eq!(select_text_mime(&offered[..3]), Some("UTF8_STRING"));
+    assert_eq!(select_text_mime(&offered[..2]), Some("text/plain"));
+    assert_eq!(
+        select_text_mime(&["TEXT/PLAIN;CHARSET=\"utf-8\""]),
+        Some("TEXT/PLAIN;CHARSET=\"utf-8\"")
+    );
+    assert_eq!(
+        select_text_mime(&["text/html", "text/plain;charset=iso-8859-1", "STRING"]),
+        None
+    );
+    assert_eq!(select_text_mime(&[]), None);
 }

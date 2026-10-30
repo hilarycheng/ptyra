@@ -215,7 +215,7 @@
   - **Dependencies:** `TASK-002`, `TASK-005`  |  **Unit Test:** `clipboard_state_rejects_stale_offer`
   - **Done:** 舊 offer 唔覆蓋新 owner
 
-- [ ] **TASK-048 — 建立 text MIME selection 規則**
+- [x] **TASK-048 — 建立 text MIME selection 規則**
   - **Dependencies:** `TASK-047`  |  **Unit Test:** `mime_prefers_utf8_text`
   - **Done:** 優先用 UTF-8 text，缺少時可 fallback
 

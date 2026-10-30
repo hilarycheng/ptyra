@@ -68,5 +68,52 @@ impl ClipboardState {
     }
 }
 
+/// Return the exact advertised MIME string required by wl_data_offer.receive.
+/// Prefer explicit UTF-8, then legacy UTF8_STRING, then plain text whose
+/// charset will be validated by the later reader.
+pub fn select_text_mime<'a>(offered: &'a [&'a str]) -> Option<&'a str> {
+    if offered.len() > 64 {
+        return None;
+    }
+    let mut best = None;
+    let mut rank = 3;
+    for mime in offered {
+        if mime.len() > 256 {
+            continue;
+        }
+        let Some(candidate) = text_mime_rank(mime) else {
+            continue;
+        };
+        if candidate < rank {
+            best = Some(*mime);
+            rank = candidate;
+            if rank == 0 {
+                break;
+            }
+        }
+    }
+    best
+}
+
+fn text_mime_rank(mime: &str) -> Option<u8> {
+    if mime.eq_ignore_ascii_case("UTF8_STRING") {
+        return Some(1);
+    }
+    let mut parts = mime.split(';');
+    if !parts.next()?.trim().eq_ignore_ascii_case("text/plain") {
+        return None;
+    }
+    let Some(parameter) = parts.next() else {
+        return Some(2);
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    let (name, value) = parameter.split_once('=')?;
+    (name.trim().eq_ignore_ascii_case("charset")
+        && value.trim().trim_matches('"').eq_ignore_ascii_case("utf-8"))
+    .then_some(0)
+}
+
 #[cfg(test)]
 mod tests;
