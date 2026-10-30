@@ -969,3 +969,35 @@ Deterministic tests cover clean/hidden views, partial damage, 2x scale, wide
 glyphs, cursor and preedit overlays, pending and cancelled frames, rendering
 failure, and re-show after hidden updates. The current executable still has no
 GUI renderer or Tab Manager; this verifies the render model, not live Sway output.
+
+## TASK-039 Verification (2026-10-30)
+
+```text
+TASK: TASK-039
+Status: DONE
+Dependencies: satisfied (TASK-031 and TASK-014 已 [x])
+Changed files: src/renderer.rs, src/renderer/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline hit_test_maps_cell_boundaries -- --test-threads=1
+Result: PASS; test-first compilation failed before CellLayout::hit_test existed
+Workspace tests: PASS — 95 unit tests + 9 Linux PTY integration tests + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: existing 9 real Linux PTY fixtures PASS;
+  live Wayland mouse/GUI hit testing NOT RUN
+Security / Privacy impact: pure bounded-coordinate logic; no new dependency,
+  unsafe, platform I/O, input logging or network access
+Known limitations: caller translates surface pointer coordinates to grid-local
+  physical pixels; Tab bar, selection routing and wide-glyph normalization
+  belong to later tasks
+Ready for [x]: YES
+Approval: user explicitly approved TASK-039, checkbox update and scoped commit;
+  no push requested
+```
+
+`CellLayout::hit_test` uses a binary search over the same rounded, clipped
+`cell_rect` boundaries used for drawing. A point exactly on a shared edge maps
+to the cell on its right/below; negative, outside-window, blank-margin and
+zero-grid coordinates return None. The deterministic test covers a fake
+`PointerClick.buffer`, 2x scale, fractional cell advances, exact edges,
+resize, huge grid counts and invalid point/layout construction. It returns a
+viewport row/column only; no Tab or mouse-drag state is changed.

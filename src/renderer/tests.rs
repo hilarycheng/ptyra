@@ -934,3 +934,65 @@ fn hidden_or_clean_view_skips_draw() {
     assert!(render(&mut frames, &mut renderer, true).is_none());
     assert_eq!(renderer.0, 1);
 }
+
+#[test]
+fn hit_test_maps_cell_boundaries() {
+    use crate::input::{Point as PixelPoint, PointerFocus};
+
+    let scale = Scale::new(2).unwrap();
+    let layout = CellLayout::new(WindowSize::new(21, 30).unwrap(), scale, 7.25, 13.5).unwrap();
+    let hit = |x, y| layout.hit_test(PixelPoint::new(x, y).unwrap(), 3, 3);
+    assert_eq!(hit(0.0, 0.0), Some((0, 0)));
+    assert_eq!(hit(14.999, 26.999), Some((0, 0)));
+    assert_eq!(hit(15.0, 27.0), Some((1, 1)));
+    assert_eq!(hit(28.999, 53.999), Some((1, 1)));
+    assert_eq!(hit(29.0, 54.0), Some((2, 2)));
+    assert_eq!(hit(41.999, 59.999), Some((2, 2)));
+    for (x, y) in [(-0.001, 0.0), (0.0, -0.001), (42.0, 0.0), (0.0, 60.0)] {
+        assert_eq!(hit(x, y), None);
+    }
+
+    let mut pointer = PointerFocus::default();
+    pointer.enter(WindowId(3), PixelPoint::new(7.5, 13.5).unwrap());
+    let click = pointer.button(272, true, scale).unwrap().unwrap();
+    assert_eq!(layout.hit_test(click.buffer, 3, 3), Some((1, 1)));
+
+    let larger = CellLayout::new(WindowSize::new(101, 61).unwrap(), scale, 7.25, 13.5).unwrap();
+    assert_eq!(
+        larger.hit_test(PixelPoint::new(43.999, 80.999).unwrap(), 3, 3),
+        Some((2, 2))
+    );
+    assert_eq!(
+        larger.hit_test(PixelPoint::new(44.0, 0.0).unwrap(), 3, 3),
+        None
+    );
+    assert_eq!(
+        larger.hit_test(PixelPoint::new(0.0, 81.0).unwrap(), 3, 3),
+        None
+    );
+
+    let smaller = CellLayout::new(WindowSize::new(10, 10).unwrap(), scale, 7.25, 13.5).unwrap();
+    assert_eq!(
+        smaller.hit_test(PixelPoint::new(19.999, 19.999).unwrap(), 3, 3),
+        Some((0, 1))
+    );
+    assert_eq!(
+        smaller.hit_test(PixelPoint::new(20.0, 0.0).unwrap(), 3, 3),
+        None
+    );
+    assert_eq!(
+        smaller.hit_test(PixelPoint::new(0.0, 0.0).unwrap(), 0, 3),
+        None
+    );
+    assert_eq!(
+        smaller.hit_test(PixelPoint::new(0.0, 0.0).unwrap(), 3, 0),
+        None
+    );
+    assert_eq!(
+        layout.hit_test(PixelPoint::new(0.0, 0.0).unwrap(), usize::MAX, usize::MAX),
+        Some((0, 0))
+    );
+    assert!(PixelPoint::new(f64::NAN, 0.0).is_err());
+    assert!(PixelPoint::new(0.0, f64::INFINITY).is_err());
+    assert!(CellLayout::new(WindowSize::new(1, 1).unwrap(), scale, 0.0, 10.0).is_err());
+}

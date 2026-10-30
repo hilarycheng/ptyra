@@ -7,6 +7,7 @@ use crate::{
     damage::Rect,
     error::{AppError, Component},
     geometry::Scale,
+    input::Point,
     terminal::TerminalSnapshot,
     window::WindowSize,
 };
@@ -71,6 +72,43 @@ impl CellLayout {
             height: bottom - y,
         })
     }
+
+    /// Maps a grid-local physical pixel to a visible cell. Callers subtract any
+    /// tab bar/content origin from a surface-local pointer position first.
+    /// Exact shared edges belong to the cell on the right/below.
+    pub fn hit_test(&self, pixel: Point, rows: usize, columns: usize) -> Option<(usize, usize)> {
+        let row = hit_axis(pixel.y(), rows, |row| {
+            self.cell_rect(row, 0).map(|rect| {
+                (
+                    f64::from(rect.y),
+                    f64::from(rect.y) + f64::from(rect.height),
+                )
+            })
+        })?;
+        let column = hit_axis(pixel.x(), columns, |column| {
+            self.cell_rect(0, column)
+                .map(|rect| (f64::from(rect.x), f64::from(rect.x) + f64::from(rect.width)))
+        })?;
+        Some((row, column))
+    }
+}
+
+fn hit_axis(
+    position: f64,
+    cells: usize,
+    bounds: impl Fn(usize) -> Option<(f64, f64)>,
+) -> Option<usize> {
+    let (mut low, mut high) = (0, cells);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        match bounds(middle) {
+            Some((start, _)) if start <= position => low = middle + 1,
+            _ => high = middle,
+        }
+    }
+    let index = low.checked_sub(1)?;
+    let (start, end) = bounds(index)?;
+    (start <= position && position < end).then_some(index)
 }
 
 /// Backend-neutral cell instruction with raw terminal colors and style flags.

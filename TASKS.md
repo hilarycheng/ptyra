@@ -177,7 +177,7 @@
 
 ## E. Selection / 文字抽取
 
-- [ ] **TASK-039 — Mouse pixel → terminal cell 映射**
+- [x] **TASK-039 — Mouse pixel → terminal cell 映射**
   - **Dependencies:** `TASK-031`, `TASK-014`  |  **Unit Test:** `hit_test_maps_cell_boundaries`
   - **Done:** Click 落在正確 row/col
 
