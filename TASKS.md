@@ -251,7 +251,7 @@
   - **Dependencies:** `TASK-046`, `TASK-050`  |  **Unit Test:** `copy_shortcut_requires_selection`
   - **Done:** 冇 selection 時不產生錯誤 clipboard ownership
 
-- [ ] **TASK-057 — Ctrl+Shift+V 產生 PasteIntent**
+- [x] **TASK-057 — Ctrl+Shift+V 產生 PasteIntent**
   - **Dependencies:** `TASK-052`, `TASK-011`  |  **Unit Test:** `paste_shortcut_routes_to_focused_tab`
   - **Done:** Shortcut 不會當作 Shell 普通文字
 

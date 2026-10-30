@@ -3,7 +3,7 @@
 use crate::{
     TabId,
     error::{AppError, Component},
-    input::FocusTarget,
+    input::{FocusTarget, KeyRoute, KeyboardFocus},
     keymap::{KeyState, Modifiers},
     selection::copy_text,
 };
@@ -50,6 +50,47 @@ pub fn copy_shortcut(
     }
     let text = copy_text(grid, selection?)?;
     (!text.is_empty()).then_some(CopyIntent { target, text })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct PasteIntent {
+    target: FocusTarget,
+}
+
+impl PasteIntent {
+    pub fn target(self) -> FocusTarget {
+        self.target
+    }
+}
+
+/// `Consumed` keeps a matched shortcut out of ordinary Shell text even when
+/// its focus epoch is stale or it is a release/repeat event.
+pub enum PasteKeyAction {
+    Shell,
+    Consumed,
+    Paste(PasteIntent),
+}
+
+pub fn paste_shortcut(
+    focus: &KeyboardFocus,
+    route: &KeyRoute,
+    modifiers: Modifiers,
+    keysym: u32,
+    state: KeyState,
+) -> PasteKeyAction {
+    if !modifiers.ctrl() || !modifiers.shift() || modifiers.alt() || !matches!(keysym, 0x76 | 0x56)
+    {
+        return PasteKeyAction::Shell;
+    }
+    if state != KeyState::Pressed
+        || !route.pressed
+        || !focus.matches(route.target, &route.focus_epoch)
+    {
+        return PasteKeyAction::Consumed;
+    }
+    PasteKeyAction::Paste(PasteIntent {
+        target: route.target,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

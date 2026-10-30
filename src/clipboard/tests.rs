@@ -1,10 +1,11 @@
 use super::{
-    ClipboardOwner, ClipboardState, DataOffer, DataSourceRequest, InputSerialEvent, SeatId,
-    SeatSerialState, SelectionSerial, copy_shortcut, plan_data_source, select_text_mime,
+    ClipboardOwner, ClipboardState, DataOffer, DataSourceRequest, InputSerialEvent, PasteKeyAction,
+    SeatId, SeatSerialState, SelectionSerial, copy_shortcut, paste_shortcut, plan_data_source,
+    select_text_mime,
 };
 use crate::{
     TabId, WindowId,
-    input::FocusTarget,
+    input::{FocusTarget, KeyboardFocus},
     keymap::{KeyState, Modifiers},
     terminal::Terminal,
 };
@@ -270,4 +271,52 @@ fn copy_shortcut_requires_selection() {
         .is_none()
     );
     assert_eq!(ClipboardState::new().owner(), None);
+}
+
+#[test]
+fn paste_shortcut_routes_to_focused_tab() {
+    let mut focus = KeyboardFocus::default();
+    let modifiers = Modifiers {
+        depressed: ModifierMask::CONTROL.0 | ModifierMask::SHIFT.0,
+        ..Modifiers::default()
+    };
+    focus.enter(WindowId(1), TabId(7));
+    let old = focus.route_key(47, true).unwrap();
+    match paste_shortcut(&focus, &old, modifiers, b'V' as u32, KeyState::Pressed) {
+        PasteKeyAction::Paste(intent) => assert_eq!(intent.target().tab, TabId(7)),
+        _ => panic!("paste shortcut must be consumed"),
+    }
+    assert!(matches!(
+        paste_shortcut(&focus, &old, modifiers, b'V' as u32, KeyState::Released),
+        PasteKeyAction::Consumed
+    ));
+    assert!(matches!(
+        paste_shortcut(&focus, &old, modifiers, b'V' as u32, KeyState::Repeated),
+        PasteKeyAction::Consumed
+    ));
+    assert!(matches!(
+        paste_shortcut(
+            &focus,
+            &old,
+            Modifiers::default(),
+            b'V' as u32,
+            KeyState::Pressed
+        ),
+        PasteKeyAction::Shell
+    ));
+    focus.enter(WindowId(1), TabId(8));
+    assert!(matches!(
+        paste_shortcut(&focus, &old, modifiers, b'V' as u32, KeyState::Pressed),
+        PasteKeyAction::Consumed
+    ));
+    let current = focus.route_key(47, true).unwrap();
+    match paste_shortcut(&focus, &current, modifiers, b'v' as u32, KeyState::Pressed) {
+        PasteKeyAction::Paste(intent) => assert_eq!(intent.target().tab, TabId(8)),
+        _ => panic!("current tab must receive paste intent"),
+    }
+    focus.clear();
+    assert!(matches!(
+        paste_shortcut(&focus, &current, modifiers, b'v' as u32, KeyState::Pressed),
+        PasteKeyAction::Consumed
+    ));
 }

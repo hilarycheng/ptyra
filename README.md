@@ -1420,3 +1420,25 @@ Approval: user approved TASK-056 checkbox and scoped local commit; no push
 `copy_shortcut` creates a CopyIntent only for pressed Ctrl+Shift+C with a
 valid nonempty selection. Release, repeat, other keys and invalid selection
 produce no Copy request.
+
+## TASK-057 Verification (2026-10-30)
+
+```text
+TASK: TASK-057
+Status: DONE
+Dependencies: satisfied (TASK-052, TASK-011 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline paste_shortcut_routes_to_focused_tab -- --test-threads=1
+Result: PASS; test-first compilation failed before PasteIntent/PasteKeyAction existed
+Workspace tests: PASS — 118 unit + 3 Linux pipe FD + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real keyboard/Wayland Paste NOT RUN
+Security / Privacy impact: matching shortcut is consumed; stale focus emits no PasteIntent or Shell text; no payload logging or I/O
+Known limitations: caller supplies translated keysym/modifiers; config bindings and runtime keyboard routing remain pending
+Ready for [x]: YES
+Approval: user approved TASK-057 checkbox and scoped local commit; no push
+```
+
+`paste_shortcut` produces a PasteIntent for the current focused Tab only on
+pressed Ctrl+Shift+V. A matched release, repeat or stale-focus event is
+consumed without forwarding shortcut bytes to the Shell.
