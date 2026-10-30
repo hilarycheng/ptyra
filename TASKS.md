@@ -235,7 +235,7 @@
   - **Dependencies:** `TASK-047`  |  **Unit Test:** `data_offer_tracks_formats`
   - **Done:** 能保存 clipboard format / cancellation
 
-- [ ] **TASK-053 — 從 Clipboard FD 讀取文字**
+- [x] **TASK-053 — 從 Clipboard FD 讀取文字**
   - **Dependencies:** `TASK-052`, `TASK-048`  |  **Unit Test:** `clipboard_read_handles_partial_utf8`
   - **Done:** 分段 UTF-8 唔會被錯誤切開
 

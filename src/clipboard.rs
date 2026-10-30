@@ -7,6 +7,7 @@ use crate::{
 };
 use std::io::ErrorKind;
 
+pub mod read;
 pub mod write;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

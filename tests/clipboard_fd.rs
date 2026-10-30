@@ -1,7 +1,14 @@
 #![cfg(target_os = "linux")]
 
-use ptyra::clipboard::write::{ClipboardSend, SendProgress};
-use std::{fs::File, io::Read, thread};
+use ptyra::clipboard::{
+    read::{ClipboardReceive, ReadProgress},
+    write::{ClipboardSend, SendProgress},
+};
+use std::{
+    fs::File,
+    io::{Read, Write},
+    thread,
+};
 
 #[test]
 fn clipboard_bytes_reach_real_fd() {
@@ -24,4 +31,24 @@ fn clipboard_bytes_reach_real_fd() {
     assert_eq!(send.write_ready(&mut writer).unwrap(), SendProgress::Done);
     drop(writer);
     assert_eq!(receiver.join().unwrap(), text.as_bytes());
+}
+
+#[test]
+fn clipboard_utf8_arrives_from_real_fd() {
+    let (read_fd, write_fd) = nix::unistd::pipe().unwrap();
+    let mut writer = File::from(write_fd);
+    let mut reader = File::from(read_fd);
+    writer.write_all("繁體\n ".as_bytes()).unwrap();
+    drop(writer);
+    let mut receive = ClipboardReceive::new();
+    loop {
+        match receive.read_ready(&mut reader).unwrap() {
+            ReadProgress::Read(_) => continue,
+            ReadProgress::Complete(text) => {
+                assert_eq!(text, "繁體\n ");
+                break;
+            }
+            _ => panic!("unexpected pipe receive state"),
+        }
+    }
 }

@@ -1333,3 +1333,25 @@ Approval: user approved TASK-052 checkbox and scoped local commit; no push
 `DataOffer` records up to 64 distinct advertised MIME strings, each at most
 256 bytes, and exposes the preferred text MIME. Cancellation drops formats
 and rejects later advertisements.
+
+## TASK-053 Verification (2026-10-30)
+
+```text
+TASK: TASK-053
+Status: DONE
+Dependencies: satisfied (TASK-052, TASK-048 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/read.rs, src/clipboard/read/tests.rs, tests/clipboard_fd.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline clipboard_read_handles_partial_utf8 -- --test-threads=1
+Result: PASS; test-first compilation failed before ClipboardReceive existed
+Workspace tests: PASS — 114 unit + 2 real Linux pipe FD + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real pipe FD UTF-8 PASS; real Wayland Clipboard NOT RUN
+Security / Privacy impact: no payload Debug/logging; bounded per-call reads and 16 MiB hard safety cap, no unsafe or dependency
+Known limitations: no Wayland offer.receive/request/FD lifecycle wiring; explicit Paste limit policy is TASK-054
+Ready for [x]: YES
+Approval: user approved TASK-053 checkbox and scoped local commit; no push
+```
+
+`ClipboardReceive` retains partial UTF-8 bytes through interrupted or
+nonblocking reads, then validates and returns text only at EOF. Invalid UTF-8
+or fatal I/O releases the buffer. A Linux pipe test exercises the real FD path.
