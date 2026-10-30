@@ -1,6 +1,65 @@
 //! Pure clipboard owner and offer identity state. No Wayland or FD I/O.
 
-use crate::TabId;
+use crate::{TabId, input::FocusTarget};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SeatId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SelectionSerial(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputSerialEvent {
+    KeyPress,
+    PointerButtonPress,
+    Other,
+}
+
+/// A serial is usable once only for the focused seat, window and Tab.
+#[derive(Default)]
+pub struct SeatSerialState {
+    focused: Option<(SeatId, FocusTarget)>,
+    pending: Option<SelectionSerial>,
+}
+
+impl SeatSerialState {
+    pub fn focus(&mut self, seat: SeatId, target: FocusTarget) {
+        self.focused = Some((seat, target));
+        self.pending = None;
+    }
+
+    pub fn clear(&mut self) {
+        self.focused = None;
+        self.pending = None;
+    }
+
+    /// Called by the seat adapter only for a real input event's serial.
+    pub fn record_event(
+        &mut self,
+        seat: SeatId,
+        target: FocusTarget,
+        serial: u32,
+        event: InputSerialEvent,
+    ) -> bool {
+        if self.focused != Some((seat, target)) || event == InputSerialEvent::Other {
+            return false;
+        }
+        self.pending = Some(SelectionSerial(serial));
+        true
+    }
+
+    /// Returns no request serial without a fresh matching input event.
+    pub fn take_for_selection(
+        &mut self,
+        seat: SeatId,
+        target: FocusTarget,
+    ) -> Option<SelectionSerial> {
+        if self.focused != Some((seat, target)) {
+            return None;
+        }
+        self.pending.take()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OfferId(u64);

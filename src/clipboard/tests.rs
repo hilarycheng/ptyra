@@ -1,5 +1,8 @@
-use super::{ClipboardOwner, ClipboardState, select_text_mime};
-use crate::TabId;
+use super::{
+    ClipboardOwner, ClipboardState, InputSerialEvent, SeatId, SeatSerialState, SelectionSerial,
+    select_text_mime,
+};
+use crate::{TabId, WindowId, input::FocusTarget};
 
 #[test]
 fn clipboard_state_rejects_stale_offer() {
@@ -51,4 +54,38 @@ fn mime_prefers_utf8_text() {
         None
     );
     assert_eq!(select_text_mime(&[]), None);
+}
+
+#[test]
+fn clipboard_serial_requires_input_event() {
+    let seat = SeatId(1);
+    let other_seat = SeatId(2);
+    let target = FocusTarget {
+        window: WindowId(1),
+        tab: TabId(7),
+    };
+    let other_target = FocusTarget {
+        window: WindowId(1),
+        tab: TabId(8),
+    };
+    let mut serials = SeatSerialState::default();
+    assert_eq!(serials.take_for_selection(seat, target), None);
+    serials.focus(seat, target);
+    assert!(!serials.record_event(seat, target, 12, InputSerialEvent::Other));
+    assert!(!serials.record_event(other_seat, target, 13, InputSerialEvent::KeyPress));
+    assert!(!serials.record_event(seat, other_target, 14, InputSerialEvent::PointerButtonPress));
+    assert_eq!(serials.take_for_selection(seat, target), None);
+    assert!(serials.record_event(seat, target, 0, InputSerialEvent::KeyPress));
+    assert_eq!(
+        serials.take_for_selection(seat, target),
+        Some(SelectionSerial(0))
+    );
+    assert_eq!(serials.take_for_selection(seat, target), None);
+    assert!(serials.record_event(seat, target, 15, InputSerialEvent::PointerButtonPress));
+    serials.focus(seat, other_target);
+    assert_eq!(serials.take_for_selection(seat, target), None);
+    assert_eq!(serials.take_for_selection(seat, other_target), None);
+    assert!(serials.record_event(seat, other_target, 16, InputSerialEvent::KeyPress));
+    serials.clear();
+    assert_eq!(serials.take_for_selection(seat, other_target), None);
 }

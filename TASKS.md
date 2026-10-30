@@ -219,7 +219,7 @@
   - **Dependencies:** `TASK-047`  |  **Unit Test:** `mime_prefers_utf8_text`
   - **Done:** 優先用 UTF-8 text，缺少時可 fallback
 
-- [ ] **TASK-049 — 處理 Wayland seat serial validity**
+- [x] **TASK-049 — 處理 Wayland seat serial validity**
   - **Dependencies:** `TASK-047`, `TASK-011`  |  **Unit Test:** `clipboard_serial_requires_input_event`
   - **Done:** 無有效 serial 時不可假裝成功 set_selection
 

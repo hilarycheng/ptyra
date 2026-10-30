@@ -1244,3 +1244,26 @@ Approval: user approved TASK-048 checkbox and scoped local commit; no push
 `select_text_mime` returns the exact advertised MIME spelling for Wayland
 receive. It prefers explicit UTF-8 text, then UTF8_STRING, then text/plain;
 unsupported charset and non-text formats are rejected.
+
+## TASK-049 Verification (2026-10-30)
+
+```text
+TASK: TASK-049
+Status: DONE
+Dependencies: satisfied (TASK-047, TASK-011 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline clipboard_serial_requires_input_event -- --test-threads=1
+Result: PASS; test-first compilation failed before SeatSerialState existed
+Workspace tests: PASS — 110 unit + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real Wayland seat/Clipboard set_selection NOT RUN
+Security / Privacy impact: serial metadata only; no clipboard payload, logging, I/O, unsafe or dependency
+Known limitations: trusted seat adapter must supply actual key/button event serial; no wl_data_device.set_selection execution or compositor acceptance yet
+Ready for [x]: YES
+Approval: user approved TASK-049 checkbox and scoped local commit; no push
+```
+
+`SeatSerialState` yields a selection serial only after a key press or pointer
+button press for the focused seat, window and Tab. A mismatched event, focus
+change or leave invalidates pending use; a serial is consumed once. Numeric
+zero remains valid because Wayland serials may wrap.
