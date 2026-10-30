@@ -16,6 +16,17 @@ impl Rect {
         i64::from(self.y) + i64::from(self.height)
     }
 
+    pub fn intersects(self, other: Self) -> bool {
+        self.width > 0
+            && self.height > 0
+            && other.width > 0
+            && other.height > 0
+            && i64::from(self.x) < other.right()
+            && i64::from(other.x) < self.right()
+            && i64::from(self.y) < other.bottom()
+            && i64::from(other.y) < self.bottom()
+    }
+
     pub fn clipped(self, bounds: WindowSize) -> Option<Self> {
         let left = i64::from(self.x).max(0);
         let top = i64::from(self.y).max(0);

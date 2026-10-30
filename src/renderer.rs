@@ -1,4 +1,5 @@
 //! Renderer data contract; no PTY handles, Wayland objects or platform I/O.
+pub mod dirty;
 pub mod overlay;
 
 use crate::{
@@ -187,6 +188,8 @@ pub struct RenderInput<'a> {
     /// Acknowledged surface size in logical units, not a pixel allocation size.
     pub size: WindowSize,
     pub terminal: TerminalSnapshot<'a>,
+    /// Physical-pixel scissor; only intersecting content may be painted.
+    pub damage: Rect,
 }
 
 /// Prepared frame data; the platform adapter owns submission and presentation.
@@ -198,7 +201,8 @@ pub struct RenderOutput<Frame> {
     pub frame: Frame,
 }
 
-/// Prepares frames from data only; implementations must not perform PTY/Wayland I/O.
+/// Prepares frames from data only; implementations must scissor to input.damage
+/// and must not perform PTY/Wayland I/O.
 pub trait Renderer {
     /// Storage stays backend-specific so this contract does not select SHM or GPU.
     type Frame;

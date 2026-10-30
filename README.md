@@ -930,3 +930,42 @@ the tests validate render commands and state isolation, not visible output on Sw
 
 All build checks used `taskset -c 0,1` with one Cargo job and one test thread;
 Cargo checks used `--locked --offline`.
+
+## TASK-038 Verification (2026-10-30)
+
+```text
+TASK: TASK-038
+Status: DONE
+Dependencies: satisfied (TASK-017 and TASK-035 已 [x])
+Changed files: src/damage.rs, src/frame.rs, src/renderer.rs,
+  src/renderer/tests.rs, src/renderer/dirty.rs, src/renderer/dirty/tests.rs,
+  README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline hidden_or_clean_view_skips_draw -- --test-threads=1
+Result: PASS; test-first compilation failed before the dirty render API existed
+Workspace tests: PASS — 94 unit tests + 9 Linux PTY integration tests + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: existing 9 real Linux PTY fixtures PASS;
+  real Wayland rendering, tab switch and idle CPU measurement NOT RUN
+Security / Privacy impact: pure clipped geometry and metadata-only frame state;
+  no dependencies, unsafe, PTY/Wayland I/O, payload logging or network access
+Known limitations: no production renderer or Tab Manager wiring; caller must keep
+  a scheduler per view, supply physical-pixel damage and scissor the backend
+Ready for [x]: YES
+Approval: user explicitly approved TASK-038, checkbox update and scoped commit;
+  no push requested
+```
+
+`render_visible_dirty` skips clean or hidden views before invoking the renderer.
+Hiding a view restores pending damage, so an absent frame callback cannot block
+its next visible frame; a late callback is stale. Failed rendering also restores
+damage. `dirty_draw_commands`, `dirty_cursor_draw_command` and
+`dirty_overlay_commands` keep only geometry intersecting the physical-pixel
+damage. They preserve original glyph and overlay coordinates, including a wide
+glyph whose lead cell lies outside the dirty area; the backend must scissor to
+the supplied damage rectangle rather than move the glyph origin.
+
+Deterministic tests cover clean/hidden views, partial damage, 2x scale, wide
+glyphs, cursor and preedit overlays, pending and cancelled frames, rendering
+failure, and re-show after hidden updates. The current executable still has no
+GUI renderer or Tab Manager; this verifies the render model, not live Sway output.

@@ -79,6 +79,14 @@ impl FrameScheduler {
         }
     }
 
+    /// A hidden view may never receive its pending callback. Repaint its last
+    /// submitted region when shown again; any late callback becomes stale.
+    pub fn suspend(&mut self) {
+        if let Some((_, damage)) = self.pending.take() {
+            self.dirty.add(damage);
+        }
+    }
+
     /// Stops this window permanently and returns one payload-free diagnostic.
     pub fn apply_effect(&mut self, effect: &AppEffect) -> Option<AppError> {
         if let AppEffect::StopRendering(error) = effect

@@ -171,7 +171,7 @@
   - **Dependencies:** `TASK-035`  |  **Unit Test:** `overlay_does_not_change_grid`
   - **Done:** Preedit 顯示但不修改 PTY Grid
 
-- [ ] **TASK-038 — 只繪製可見 dirty content**
+- [x] **TASK-038 — 只繪製可見 dirty content**
   - **Dependencies:** `TASK-017`, `TASK-035`  |  **Unit Test:** `hidden_or_clean_view_skips_draw`
   - **Done:** Idle 不反覆 Render；隱藏 Tab 不 Render
 

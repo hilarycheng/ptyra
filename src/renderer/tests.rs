@@ -444,6 +444,12 @@ fn renderer_accepts_terminal_snapshot() {
             window: ack.window,
             size: ack.size,
             terminal: snapshot,
+            damage: Rect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
         })
         .unwrap();
     assert_eq!(output.window, WindowId(3));
@@ -687,6 +693,12 @@ fn cell_rect_maps_terminal_snapshot_without_changing_cells() {
         window: WindowId(1),
         size: WindowSize::new(31, 23).unwrap(),
         terminal: terminal.snapshot().unwrap(),
+        damage: Rect {
+            x: 0,
+            y: 0,
+            width: 62,
+            height: 46,
+        },
     };
     let layout = CellLayout::new(input.size, Scale::new(2).unwrap(), 7.25, 13.5).unwrap();
     let rects: Vec<_> = input
@@ -865,4 +877,60 @@ fn font_fallback_keeps_terminal_cell_geometry() {
     assert_eq!(grid[Line(0)][Column(2)].c, 'A');
     assert_eq!(metrics.width(), 6.5);
     assert_eq!(metrics.baseline(), 9.75);
+}
+
+#[test]
+fn hidden_or_clean_view_skips_draw() {
+    use super::dirty::render_visible_dirty;
+    use crate::{clock::FakeClock, frame::FrameScheduler};
+
+    struct CountingRenderer(usize);
+    impl Renderer for CountingRenderer {
+        type Frame = Rect;
+
+        fn render(&mut self, input: RenderInput<'_>) -> Result<RenderOutput<Rect>, AppError> {
+            self.0 += 1;
+            Ok(RenderOutput {
+                window: input.window,
+                tab: input.terminal.tab,
+                size: input.size,
+                frame: input.damage,
+            })
+        }
+    }
+
+    let clock = FakeClock::default();
+    let size = WindowSize::new(40, 20).unwrap();
+    let mut frames = FrameScheduler::new(WindowId(3), size);
+    let terminal = Terminal::new(TabId(7), 2, 4).unwrap();
+    let mut renderer = CountingRenderer(0);
+    let render = |frames: &mut FrameScheduler, renderer: &mut CountingRenderer, visible| {
+        render_visible_dirty(
+            frames,
+            &clock,
+            visible,
+            renderer,
+            size,
+            terminal.snapshot().unwrap(),
+        )
+        .unwrap()
+    };
+    assert!(render(&mut frames, &mut renderer, true).is_none());
+    let first_damage = Rect {
+        x: 10,
+        y: 0,
+        width: 10,
+        height: 10,
+    };
+    frames.damage(first_damage);
+    assert!(render(&mut frames, &mut renderer, false).is_none());
+    assert_eq!(renderer.0, 0);
+    let (first, output) = render(&mut frames, &mut renderer, true).unwrap();
+    assert_eq!(output.frame, first_damage);
+    assert_eq!(first.damage, first_damage);
+    assert_eq!(renderer.0, 1);
+    assert!(render(&mut frames, &mut renderer, true).is_none());
+    assert!(frames.frame_done(first.callback));
+    assert!(render(&mut frames, &mut renderer, true).is_none());
+    assert_eq!(renderer.0, 1);
 }
