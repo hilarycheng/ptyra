@@ -239,7 +239,7 @@
   - **Dependencies:** `TASK-052`, `TASK-048`  |  **Unit Test:** `clipboard_read_handles_partial_utf8`
   - **Done:** 分段 UTF-8 唔會被錯誤切開
 
-- [ ] **TASK-054 — 限制 Paste input size 並回報錯誤**
+- [x] **TASK-054 — 限制 Paste input size 並回報錯誤**
   - **Dependencies:** `TASK-053`  |  **Unit Test:** `clipboard_read_limit_is_explicit`
   - **Done:** 超額拒絕而非靜默截斷
 

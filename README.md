@@ -1355,3 +1355,25 @@ Approval: user approved TASK-053 checkbox and scoped local commit; no push
 `ClipboardReceive` retains partial UTF-8 bytes through interrupted or
 nonblocking reads, then validates and returns text only at EOF. Invalid UTF-8
 or fatal I/O releases the buffer. A Linux pipe test exercises the real FD path.
+
+## TASK-054 Verification (2026-10-30)
+
+```text
+TASK: TASK-054
+Status: DONE
+Dependencies: satisfied (TASK-053 已 [x])
+Changed files: src/clipboard/read.rs, src/clipboard/read/tests.rs, tests/clipboard_fd.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline clipboard_read_limit_is_explicit -- --test-threads=1
+Result: PASS; test-first compilation failed before with_limit existed
+Workspace tests: PASS — 115 unit + 3 real Linux pipe FD + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real pipe FD limit rejection PASS; real Wayland Clipboard/GUI NOT RUN
+Security / Privacy impact: explicit 1..=16 MiB Paste byte limit; overflow returns FileTooLarge and drops payload without logging or truncation
+Known limitations: application config and Wayland offer/FD lifecycle are not wired; 16 MiB is a hard ceiling, not a measured usage budget
+Ready for [x]: YES
+Approval: user approved TASK-054 checkbox and scoped local commit; no push
+```
+
+`ClipboardReceive::with_limit` rejects invalid settings. Reads that cross
+the selected byte limit return a Clipboard `FileTooLarge` error and close
+the receiver; a transfer exactly at the limit remains valid.

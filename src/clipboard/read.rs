@@ -5,7 +5,7 @@ use std::io::{self, Read};
 
 const READ_CHUNK_BYTES: usize = 16 * 1024;
 const MAX_READ_ATTEMPTS: usize = 4;
-const MAX_RECEIVE_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_PASTE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Complete carries sensitive text and deliberately has no Debug.
 pub enum ReadProgress {
@@ -16,15 +16,39 @@ pub enum ReadProgress {
     Closed,
 }
 
-#[derive(Default)]
 pub struct ClipboardReceive {
     bytes: Vec<u8>,
     closed: bool,
+    limit: usize,
+}
+
+impl Default for ClipboardReceive {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ClipboardReceive {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            bytes: Vec::new(),
+            closed: false,
+            limit: MAX_PASTE_BYTES,
+        }
+    }
+
+    pub fn with_limit(limit: usize) -> Result<Self, AppError> {
+        if limit == 0 || limit > MAX_PASTE_BYTES {
+            return Err(AppError::new(
+                Component::Clipboard,
+                io::ErrorKind::InvalidInput,
+            ));
+        }
+        Ok(Self {
+            bytes: Vec::new(),
+            closed: false,
+            limit,
+        })
     }
 
     pub fn read_ready<R: Read>(&mut self, reader: &mut R) -> Result<ReadProgress, AppError> {
@@ -47,12 +71,12 @@ impl ClipboardReceive {
                         .bytes
                         .len()
                         .checked_add(n)
-                        .is_none_or(|size| size > MAX_RECEIVE_BYTES)
+                        .is_none_or(|size| size > self.limit)
                     {
                         self.close();
                         return Err(AppError::new(
                             Component::Clipboard,
-                            io::ErrorKind::InvalidData,
+                            io::ErrorKind::FileTooLarge,
                         ));
                     }
                     if self.bytes.try_reserve(n).is_err() {

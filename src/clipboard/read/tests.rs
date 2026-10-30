@@ -1,4 +1,4 @@
-use super::{ClipboardReceive, ReadProgress};
+use super::{ClipboardReceive, MAX_PASTE_BYTES, ReadProgress};
 use crate::error::{AppError, Component};
 use std::{
     collections::VecDeque,
@@ -81,4 +81,47 @@ fn clipboard_read_handles_partial_utf8() {
         invalid.read_ready(&mut reader).unwrap(),
         ReadProgress::Closed
     ));
+}
+
+#[test]
+fn clipboard_read_limit_is_explicit() {
+    let mut receive = ClipboardReceive::with_limit(4).unwrap();
+    let mut reader = FakeReader {
+        steps: [
+            Step::Data("繁".as_bytes().to_vec()),
+            Step::Data("體".as_bytes().to_vec()),
+        ]
+        .into(),
+    };
+    assert!(matches!(
+        receive.read_ready(&mut reader).unwrap(),
+        ReadProgress::Read(3)
+    ));
+    let error = receive.read_ready(&mut reader).err().unwrap();
+    assert_eq!(
+        error,
+        AppError::new(Component::Clipboard, io::ErrorKind::FileTooLarge)
+    );
+    assert!(!format!("{error:?}").contains("繁"));
+    assert!(matches!(
+        receive.read_ready(&mut reader).unwrap(),
+        ReadProgress::Closed
+    ));
+
+    let mut exact = ClipboardReceive::with_limit(3).unwrap();
+    let mut reader = FakeReader {
+        steps: [Step::Data("繁".as_bytes().to_vec()), Step::Eof].into(),
+    };
+    assert!(matches!(
+        exact.read_ready(&mut reader).unwrap(),
+        ReadProgress::Read(3)
+    ));
+    assert!(
+        matches!(exact.read_ready(&mut reader).unwrap(), ReadProgress::Complete(text) if text == "繁")
+    );
+    for invalid in [0, MAX_PASTE_BYTES + 1] {
+        assert!(
+            matches!(ClipboardReceive::with_limit(invalid), Err(error) if error == AppError::new(Component::Clipboard, io::ErrorKind::InvalidInput))
+        );
+    }
 }
