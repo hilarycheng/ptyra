@@ -1001,3 +1001,34 @@ zero-grid coordinates return None. The deterministic test covers a fake
 `PointerClick.buffer`, 2x scale, fractional cell advances, exact edges,
 resize, huge grid counts and invalid point/layout construction. It returns a
 viewport row/column only; no Tab or mouse-drag state is changed.
+
+## TASK-040 Verification (2026-10-30)
+
+```text
+TASK: TASK-040
+Status: DONE
+Dependencies: satisfied (TASK-039 已 [x])
+Changed files: src/lib.rs, src/selection.rs, src/selection/tests.rs,
+  README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline drag_selection_normalizes_direction -- --test-threads=1
+Result: PASS; test-first compilation failed before DragSelection existed
+Workspace tests: PASS — 97 unit tests + 9 Linux PTY integration tests + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: existing 9 real Linux PTY fixtures PASS;
+  live Wayland mouse/selection/GUI acceptance NOT RUN
+Security / Privacy impact: per-Tab pure state with no selected text storage,
+  platform I/O, unsafe, dependency, logging or network access
+Known limitations: caller converts hit-tested viewport cells to grid points
+  using current scroll offset; no mouse event/Tab Manager wiring, word selection,
+  text extraction or Clipboard handling
+Ready for [x]: YES
+Approval: user explicitly approved TASK-040, checkbox update and scoped commit;
+  no push requested
+```
+
+`DragSelection` stores one TabId, a drag anchor and current point. Forward and
+reverse drags produce the same normalized `SelectionRange`, including across
+lines and scrollback grid coordinates. Release finalizes the range; later motion
+does nothing. Wrong-Tab events cannot change it. The caller cancels an unfinished
+drag on focus/Tab change; a completed selection remains owned by its Tab.

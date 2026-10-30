@@ -10,6 +10,7 @@ pub mod keymap;
 pub mod pty;
 pub mod renderer;
 pub mod repeat;
+pub mod selection;
 pub mod shell;
 pub mod terminal;
 pub mod wayland;

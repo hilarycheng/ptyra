@@ -181,7 +181,7 @@
   - **Dependencies:** `TASK-031`, `TASK-014`  |  **Unit Test:** `hit_test_maps_cell_boundaries`
   - **Done:** Click 落在正確 row/col
 
-- [ ] **TASK-040 — Mouse drag selection range reducer**
+- [x] **TASK-040 — Mouse drag selection range reducer**
   - **Dependencies:** `TASK-039`  |  **Unit Test:** `drag_selection_normalizes_direction`
   - **Done:** 由左至右／反向拖曳結果一致
 
