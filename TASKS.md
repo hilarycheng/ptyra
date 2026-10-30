@@ -201,7 +201,7 @@
   - **Dependencies:** `TASK-040`, `TASK-026`  |  **Unit Test:** `copy_hard_break_preserves_newline`
   - **Done:** 真實換行保留 `\n`
 
-- [ ] **TASK-045 — Selection 不切開 wide glyph**
+- [x] **TASK-045 — Selection 不切開 wide glyph**
   - **Dependencies:** `TASK-040`, `TASK-028`  |  **Unit Test:** `selection_preserves_fullwidth_glyph`
   - **Done:** 選中文字不產生半個 cell 或破字
 

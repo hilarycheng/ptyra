@@ -1156,3 +1156,25 @@ Approval: user explicitly approved TASK-044, checkbox update and scoped commit;
 `copy_text` joins logical-line fragments with `\n` only at hard breaks.
 Tests cover mixed soft and hard wraps, partial selections, visually empty
 rows, Unicode, scrollback and the separator-aware output size limit.
+
+## TASK-045 Verification (2026-10-30)
+
+```text
+TASK: TASK-045
+Status: DONE
+Dependencies: satisfied (TASK-040, TASK-028 已 [x])
+Changed files: src/selection.rs, src/selection/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline selection_preserves_fullwidth_glyph -- --test-threads=1
+Result: PASS; test-first compilation failed before wide-range API existed
+Workspace tests: PASS — 106 unit + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real Wayland mouse/GUI/Clipboard NOT RUN
+Security / Privacy impact: bounded, read-only Grid lookup; no I/O, payload logging, unsafe or dependency
+Known limitations: caller must use range_preserving_wide for rendering; native event-loop wiring is pending
+Ready for [x]: YES
+Approval: user approved TASK-045 checkbox and scoped local commit; no push
+```
+
+Wide-range normalization expands a selected lead or trailing spacer to both
+cells. A wrap-leading placeholder maps to the complete wide glyph on the next
+row. Copy uses the same normalization; combining marks stay on the lead cell.

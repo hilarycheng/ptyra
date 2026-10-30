@@ -32,6 +32,11 @@ impl DragSelection {
             .or(self.settled)
     }
 
+    /// Resolve the current range against the Grid so wide glyphs are whole.
+    pub fn range_preserving_wide(&self, grid: &Grid<Cell>) -> Option<SelectionRange> {
+        whole_glyph_range(grid, self.range()?)
+    }
+
     pub fn press(&mut self, tab: TabId, point: Point) -> Option<SelectionRange> {
         if tab != self.tab {
             return None;
@@ -185,20 +190,62 @@ fn word_range(grid: &Grid<Cell>, mut point: Point) -> Option<SelectionRange> {
     ))
 }
 
-/// Copy selected cells into logical-line fragments. Hard-line separators are
-/// deliberately left to the caller; a soft wrap joins adjacent rows here.
-pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Vec<String>> {
-    let columns = grid.columns();
+/// Expand selection endpoints to include entire wide glyphs. A wrap-leading
+/// placeholder belongs to the glyph at the start of the next row.
+pub fn whole_glyph_range(grid: &Grid<Cell>, range: SelectionRange) -> Option<SelectionRange> {
     if range.is_block
         || range.start > range.end
         || range.start.line < grid.topmost_line()
         || range.end.line > grid.bottommost_line()
-        || range.start.column.0 >= columns
-        || range.end.column.0 >= columns
+        || range.start.column.0 >= grid.columns()
+        || range.end.column.0 >= grid.columns()
     {
         return None;
     }
+    let (start, _) = glyph_bounds(grid, range.start)?;
+    let (_, end) = glyph_bounds(grid, range.end)?;
+    (start <= end).then(|| SelectionRange::new(start, end, false))
+}
 
+fn glyph_bounds(grid: &Grid<Cell>, point: Point) -> Option<(Point, Point)> {
+    let flags = grid[point].flags;
+    if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+        let line = Line(point.line.0.checked_add(1)?);
+        if line > grid.bottommost_line() || grid.columns() < 2 {
+            return None;
+        }
+        let lead = Point::new(line, Column(0));
+        let spacer = Point::new(line, Column(1));
+        return (grid[lead].flags.contains(Flags::WIDE_CHAR)
+            && grid[spacer].flags.contains(Flags::WIDE_CHAR_SPACER))
+        .then_some((lead, spacer));
+    }
+    if flags.contains(Flags::WIDE_CHAR_SPACER) {
+        let lead = Point::new(point.line, Column(point.column.0.checked_sub(1)?));
+        return grid[lead]
+            .flags
+            .contains(Flags::WIDE_CHAR)
+            .then_some((lead, point));
+    }
+    if flags.contains(Flags::WIDE_CHAR) {
+        let column = point.column.0.checked_add(1)?;
+        if column >= grid.columns() {
+            return None;
+        }
+        let spacer = Point::new(point.line, Column(column));
+        return grid[spacer]
+            .flags
+            .contains(Flags::WIDE_CHAR_SPACER)
+            .then_some((point, spacer));
+    }
+    Some((point, point))
+}
+
+/// Copy selected cells into logical-line fragments. Hard-line separators are
+/// deliberately left to the caller; a soft wrap joins adjacent rows here.
+pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Vec<String>> {
+    let range = whole_glyph_range(grid, range)?;
+    let columns = grid.columns();
     let last = Column(columns.checked_sub(1)?);
     let mut lines = Vec::new();
     let mut current = String::new();
@@ -212,7 +259,7 @@ pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Ve
         {
             lines.push(std::mem::take(&mut current));
         }
-        let mut first = if line == range.start.line {
+        let first = if line == range.start.line {
             range.start.column.0
         } else {
             0
@@ -222,13 +269,6 @@ pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Ve
         } else {
             last.0
         };
-        if grid[Point::new(line, Column(first))]
-            .flags
-            .contains(Flags::WIDE_CHAR_SPACER)
-            && first > 0
-        {
-            first -= 1;
-        }
         for column in first..=end {
             let cell = &grid[Point::new(line, Column(column))];
             if cell

@@ -1,4 +1,4 @@
-use super::{DragSelection, copy_logical_lines, copy_text, join_logical_lines};
+use super::{DragSelection, copy_logical_lines, copy_text, join_logical_lines, whole_glyph_range};
 use crate::TabId;
 use crate::terminal::Terminal;
 use alacritty_terminal::{
@@ -315,4 +315,42 @@ fn copy_hard_break_keeps_unicode_scrollback_and_caps_separators() {
     let lines = vec!["ab".into(), "".into(), "c".into()];
     assert_eq!(join_logical_lines(&lines, 5), Some("ab\n\nc".into()));
     assert_eq!(join_logical_lines(&lines, 4), None);
+}
+
+#[test]
+fn selection_preserves_fullwidth_glyph() {
+    let tab = TabId(1);
+    let mut terminal = Terminal::new(tab, 2, 8).unwrap();
+    terminal.feed(tab, "A繁\u{301}Z".as_bytes()).unwrap();
+    let grid = terminal.grid().unwrap();
+    let full = SelectionRange::new(point(0, 1), point(0, 2), false);
+    let mut forward = DragSelection::new(tab);
+    forward.press(tab, point(0, 1));
+    forward.release(tab, point(0, 2));
+    assert_eq!(forward.range_preserving_wide(grid), Some(full));
+    let mut reverse = DragSelection::new(tab);
+    reverse.press(tab, point(0, 2));
+    reverse.release(tab, point(0, 1));
+    assert_eq!(reverse.range_preserving_wide(grid), Some(full));
+    assert_eq!(copy_text(grid, full), Some("繁\u{301}".into()));
+    assert_eq!(
+        whole_glyph_range(grid, SelectionRange::new(point(0, 0), point(0, 1), false)),
+        Some(SelectionRange::new(point(0, 0), point(0, 2), false))
+    );
+
+    let mut wrapped = Terminal::new(tab, 2, 4).unwrap();
+    wrapped.feed(tab, "abc繁\u{301}".as_bytes()).unwrap();
+    let grid = wrapped.grid().unwrap();
+    assert_eq!(
+        whole_glyph_range(grid, SelectionRange::new(point(0, 3), point(0, 3), false)),
+        Some(SelectionRange::new(point(1, 0), point(1, 1), false))
+    );
+    assert_eq!(
+        copy_text(grid, SelectionRange::new(point(0, 3), point(0, 3), false)),
+        Some("繁\u{301}".into())
+    );
+    assert_eq!(
+        whole_glyph_range(grid, SelectionRange::new(point(-1, 0), point(0, 0), false)),
+        None
+    );
 }
