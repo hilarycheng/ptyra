@@ -197,7 +197,7 @@
   - **Dependencies:** `TASK-040`, `TASK-026`  |  **Unit Test:** `copy_soft_wrap_does_not_add_newline`
   - **Done:** 軟折行唔額外加入 `\n`
 
-- [ ] **TASK-044 — Copy 時保留 hard line breaks**
+- [x] **TASK-044 — Copy 時保留 hard line breaks**
   - **Dependencies:** `TASK-040`, `TASK-026`  |  **Unit Test:** `copy_hard_break_preserves_newline`
   - **Done:** 真實換行保留 `\n`
 

@@ -1127,3 +1127,32 @@ to join. It preserves selected spaces and combining marks, emits each wide
 glyph once, and rejects stale, out-of-grid, inverted or block ranges. Tests
 cover partial and reverse selections, Unicode, scrollback and hard-break
 boundaries. It does not send data to a clipboard.
+
+## TASK-044 Verification (2026-10-30)
+
+```text
+TASK: TASK-044
+Status: DONE
+Dependencies: satisfied (TASK-040, TASK-026 已 [x])
+Changed files: src/selection.rs, src/selection/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline copy_hard_break_preserves_newline -- --test-threads=1
+Result: PASS; test-first compilation failed before copy_text existed
+Workspace tests: PASS — 105 unit tests + 9 Linux PTY integration tests + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: existing 9 real Linux PTY fixtures PASS;
+  real Wayland Clipboard, GUI Copy and Sway/Fcitx5 NOT RUN
+Security / Privacy impact: pure text conversion, no payload logging or I/O;
+  inserted separators count toward the 16 MiB Copy limit, with rejection
+  instead of silent truncation
+Known limitations: selected blank Grid cells remain spaces, including on
+  visually empty rows; Grid cannot distinguish untouched padding from an
+  explicitly written space. No Clipboard transport or GUI wiring yet.
+Ready for [x]: YES
+Approval: user explicitly approved TASK-044, checkbox update and scoped commit;
+  no push requested
+```
+
+`copy_text` joins logical-line fragments with `\n` only at hard breaks.
+Tests cover mixed soft and hard wraps, partial selections, visually empty
+rows, Unicode, scrollback and the separator-aware output size limit.

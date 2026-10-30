@@ -1,4 +1,4 @@
-use super::{DragSelection, copy_logical_lines};
+use super::{DragSelection, copy_logical_lines, copy_text, join_logical_lines};
 use crate::TabId;
 use crate::terminal::Terminal;
 use alacritty_terminal::{
@@ -265,4 +265,54 @@ fn copy_soft_wrap_preserves_unicode_and_validates_range() {
     ] {
         assert_eq!(copy_logical_lines(grid, range), None);
     }
+}
+
+#[test]
+fn copy_hard_break_preserves_newline() {
+    let tab = TabId(1);
+    let mut terminal = Terminal::new(tab, 3, 4).unwrap();
+    terminal.feed(tab, b"abcdEFGH\r\nIJ").unwrap();
+    let grid = terminal.grid().unwrap();
+    assert_eq!(
+        copy_text(grid, SelectionRange::new(point(0, 0), point(2, 1), false)),
+        Some("abcdEFGH\nIJ".into())
+    );
+    assert_eq!(
+        copy_text(grid, SelectionRange::new(point(0, 2), point(2, 1), false)),
+        Some("cdEFGH\nIJ".into())
+    );
+    assert_eq!(
+        copy_text(grid, SelectionRange::new(point(0, 1), point(1, 2), false)),
+        Some("bcdEFG".into())
+    );
+    let mut blank = Terminal::new(tab, 3, 4).unwrap();
+    blank.feed(tab, b"A\r\n\r\nB").unwrap();
+    assert_eq!(
+        copy_text(
+            blank.grid().unwrap(),
+            SelectionRange::new(point(0, 0), point(2, 0), false)
+        ),
+        Some("A   \n    \nB".into())
+    );
+}
+
+#[test]
+fn copy_hard_break_keeps_unicode_scrollback_and_caps_separators() {
+    let tab = TabId(1);
+    let mut terminal = Terminal::with_scrollback(tab, 2, 4, 2).unwrap();
+    terminal
+        .feed(tab, "繁e\u{301}ZQWER\r\nR".as_bytes())
+        .unwrap();
+    let grid = terminal.grid().unwrap();
+    assert_eq!(
+        copy_text(grid, SelectionRange::new(point(-1, 0), point(1, 0), false)),
+        Some("繁e\u{301}ZQWER\nR".into())
+    );
+    assert_eq!(
+        copy_text(grid, SelectionRange::new(point(-2, 0), point(0, 0), false)),
+        None
+    );
+    let lines = vec!["ab".into(), "".into(), "c".into()];
+    assert_eq!(join_logical_lines(&lines, 5), Some("ab\n\nc".into()));
+    assert_eq!(join_logical_lines(&lines, 4), None);
 }

@@ -7,6 +7,8 @@ use alacritty_terminal::{
     term::cell::{Cell, Flags},
 };
 
+const MAX_COPY_BYTES: usize = 16 * 1024 * 1024;
+
 /// Own one instance per Tab. Input points are grid coordinates, so callers
 /// translate the hit-tested viewport row by the current display offset.
 pub struct DragSelection {
@@ -186,7 +188,6 @@ fn word_range(grid: &Grid<Cell>, mut point: Point) -> Option<SelectionRange> {
 /// Copy selected cells into logical-line fragments. Hard-line separators are
 /// deliberately left to the caller; a soft wrap joins adjacent rows here.
 pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Vec<String>> {
-    const MAX_COPY_BYTES: usize = 16 * 1024 * 1024;
     let columns = grid.columns();
     if range.is_block
         || range.start > range.end
@@ -248,6 +249,19 @@ pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Ve
     }
     lines.push(current);
     Some(lines)
+}
+
+/// Render selected logical lines as Copy text, separating only hard breaks.
+pub fn copy_text(grid: &Grid<Cell>, range: SelectionRange) -> Option<String> {
+    join_logical_lines(&copy_logical_lines(grid, range)?, MAX_COPY_BYTES)
+}
+
+fn join_logical_lines(lines: &[String], limit: usize) -> Option<String> {
+    let separators = lines.len().checked_sub(1)?;
+    let bytes = lines
+        .iter()
+        .try_fold(separators, |size, line| size.checked_add(line.len()))?;
+    (bytes <= limit).then(|| lines.join("\n"))
 }
 
 #[cfg(test)]
