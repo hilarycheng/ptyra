@@ -1096,3 +1096,34 @@ breaks and scrollback boundaries. Wrong-Tab and invalid grid points leave the
 previous selection unchanged. Tests cover clicks on either wrapped row,
 unwrapped lines, wrong-Tab/invalid points, and a wrap crossing the scrollback
 boundary.
+
+## TASK-043 Verification (2026-10-30)
+
+```text
+TASK: TASK-043
+Status: DONE
+Dependencies: satisfied (TASK-040, TASK-026 已 [x])
+Changed files: src/selection.rs, src/selection/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline copy_soft_wrap_does_not_add_newline -- --test-threads=1
+Result: PASS; test-first compilation failed before copy_logical_lines existed
+Workspace tests: PASS — 103 unit tests + 9 Linux PTY integration tests + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check;
+  cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: existing 9 real Linux PTY fixtures PASS;
+  real Wayland Clipboard, GUI Copy and Sway/Fcitx5 NOT RUN
+Security / Privacy impact: pure grid read, no payload logging or I/O;
+  copy rejects output above 16 MiB instead of silently truncating
+Known limitations: returns separate logical-line fragments; TASK-044 will
+  insert hard-break newlines. Caller must route the owning Tab/Grid and
+  handle unsupported block selections. Clipboard transport is not wired.
+Ready for [x]: YES
+Approval: user explicitly approved TASK-043, checkbox update and scoped commit;
+  no push requested
+```
+
+`copy_logical_lines` joins selected rows marked with `WRAPLINE` into one text
+fragment without a newline. A hard break starts a new fragment for TASK-044
+to join. It preserves selected spaces and combining marks, emits each wide
+glyph once, and rejects stale, out-of-grid, inverted or block ranges. Tests
+cover partial and reverse selections, Unicode, scrollback and hard-break
+boundaries. It does not send data to a clipboard.

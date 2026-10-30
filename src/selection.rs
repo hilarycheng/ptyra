@@ -2,7 +2,7 @@
 use crate::TabId;
 use alacritty_terminal::{
     grid::{Dimensions, Grid},
-    index::{Column, Point},
+    index::{Column, Line, Point},
     selection::SelectionRange,
     term::cell::{Cell, Flags},
 };
@@ -181,6 +181,73 @@ fn word_range(grid: &Grid<Cell>, mut point: Point) -> Option<SelectionRange> {
         Point::new(point.line, Column(end)),
         false,
     ))
+}
+
+/// Copy selected cells into logical-line fragments. Hard-line separators are
+/// deliberately left to the caller; a soft wrap joins adjacent rows here.
+pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Vec<String>> {
+    const MAX_COPY_BYTES: usize = 16 * 1024 * 1024;
+    let columns = grid.columns();
+    if range.is_block
+        || range.start > range.end
+        || range.start.line < grid.topmost_line()
+        || range.end.line > grid.bottommost_line()
+        || range.start.column.0 >= columns
+        || range.end.column.0 >= columns
+    {
+        return None;
+    }
+
+    let last = Column(columns.checked_sub(1)?);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut bytes = 0usize;
+    for row in range.start.line.0..=range.end.line.0 {
+        let line = Line(row);
+        if line > range.start.line
+            && !grid[Point::new(line - 1, last)]
+                .flags
+                .contains(Flags::WRAPLINE)
+        {
+            lines.push(std::mem::take(&mut current));
+        }
+        let mut first = if line == range.start.line {
+            range.start.column.0
+        } else {
+            0
+        };
+        let end = if line == range.end.line {
+            range.end.column.0
+        } else {
+            last.0
+        };
+        if grid[Point::new(line, Column(first))]
+            .flags
+            .contains(Flags::WIDE_CHAR_SPACER)
+            && first > 0
+        {
+            first -= 1;
+        }
+        for column in first..=end {
+            let cell = &grid[Point::new(line, Column(column))];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+            for c in std::iter::once(cell.c).chain(cell.zerowidth().into_iter().flatten().copied())
+            {
+                bytes = bytes.checked_add(c.len_utf8())?;
+                if bytes > MAX_COPY_BYTES {
+                    return None;
+                }
+                current.push(c);
+            }
+        }
+    }
+    lines.push(current);
+    Some(lines)
 }
 
 #[cfg(test)]

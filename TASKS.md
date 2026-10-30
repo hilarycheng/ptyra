@@ -193,7 +193,7 @@
   - **Dependencies:** `TASK-040`  |  **Unit Test:** `triple_click_selects_logical_line`
   - **Done:** 完整選取對應 terminal line
 
-- [ ] **TASK-043 — Copy 時合併 soft-wrapped lines**
+- [x] **TASK-043 — Copy 時合併 soft-wrapped lines**
   - **Dependencies:** `TASK-040`, `TASK-026`  |  **Unit Test:** `copy_soft_wrap_does_not_add_newline`
   - **Done:** 軟折行唔額外加入 `\n`
 

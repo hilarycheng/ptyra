@@ -1,4 +1,4 @@
-use super::DragSelection;
+use super::{DragSelection, copy_logical_lines};
 use crate::TabId;
 use crate::terminal::Terminal;
 use alacritty_terminal::{
@@ -198,4 +198,71 @@ fn triple_click_respects_scrollback_edges() {
         selection.triple_click(tab, grid, point(0, 1)),
         Some(SelectionRange::new(point(-1, 0), point(0, 3), false))
     );
+}
+
+#[test]
+fn copy_soft_wrap_does_not_add_newline() {
+    let tab = TabId(1);
+    let mut terminal = Terminal::new(tab, 3, 4).unwrap();
+    terminal.feed(tab, b"abcdEFGH\r\nIJ").unwrap();
+    let grid = terminal.grid().unwrap();
+    let full = SelectionRange::new(point(0, 0), point(1, 3), false);
+    assert_eq!(
+        copy_logical_lines(grid, full),
+        Some(vec!["abcdEFGH".into()])
+    );
+    let partial = SelectionRange::new(point(0, 2), point(1, 1), false);
+    assert_eq!(copy_logical_lines(grid, partial), Some(vec!["cdEF".into()]));
+    let mut reverse = DragSelection::new(tab);
+    reverse.press(tab, point(1, 1));
+    let normalized = reverse.release(tab, point(0, 2)).unwrap();
+    assert_eq!(
+        copy_logical_lines(grid, normalized),
+        Some(vec!["cdEF".into()])
+    );
+    let hard_boundary = SelectionRange::new(point(0, 0), point(2, 1), false);
+    assert_eq!(
+        copy_logical_lines(grid, hard_boundary),
+        Some(vec!["abcdEFGH".into(), "IJ".into()])
+    );
+    let mut spaced = Terminal::new(tab, 1, 4).unwrap();
+    spaced.feed(tab, b"a b ").unwrap();
+    assert_eq!(
+        copy_logical_lines(
+            spaced.grid().unwrap(),
+            SelectionRange::new(point(0, 0), point(0, 3), false)
+        ),
+        Some(vec!["a b ".into()])
+    );
+}
+
+#[test]
+fn copy_soft_wrap_preserves_unicode_and_validates_range() {
+    let tab = TabId(1);
+    let mut terminal = Terminal::with_scrollback(tab, 2, 4, 2).unwrap();
+    terminal.feed(tab, "繁e\u{301}ZQ\r\nR".as_bytes()).unwrap();
+    let grid = terminal.grid().unwrap();
+    assert_eq!(grid.topmost_line(), Line(-1));
+    assert_eq!(
+        copy_logical_lines(grid, SelectionRange::new(point(-1, 0), point(0, 0), false)),
+        Some(vec!["繁e\u{301}ZQ".into()])
+    );
+    assert_eq!(
+        copy_logical_lines(grid, SelectionRange::new(point(-1, 1), point(-1, 2), false)),
+        Some(vec!["繁e\u{301}".into()])
+    );
+    for range in [
+        SelectionRange::new(point(-2, 0), point(-1, 0), false),
+        SelectionRange::new(point(0, 0), point(2, 0), false),
+        SelectionRange::new(point(0, 4), point(0, 4), false),
+        SelectionRange::new(point(0, usize::MAX), point(0, usize::MAX), false),
+        SelectionRange {
+            start: point(0, 3),
+            end: point(0, 1),
+            is_block: false,
+        },
+        SelectionRange::new(point(0, 0), point(0, 0), true),
+    ] {
+        assert_eq!(copy_logical_lines(grid, range), None);
+    }
 }
