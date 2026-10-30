@@ -4,11 +4,53 @@ use crate::{
     TabId,
     error::{AppError, Component},
     input::FocusTarget,
+    keymap::{KeyState, Modifiers},
+    selection::copy_text,
 };
+use alacritty_terminal::{grid::Grid, selection::SelectionRange, term::cell::Cell};
 use std::io::ErrorKind;
 
 pub mod read;
 pub mod write;
+
+/// Sensitive Copy text deliberately has no Debug implementation.
+pub struct CopyIntent {
+    target: FocusTarget,
+    text: String,
+}
+
+impl CopyIntent {
+    pub fn target(&self) -> FocusTarget {
+        self.target
+    }
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+    pub fn into_text(self) -> String {
+        self.text
+    }
+}
+
+/// Only a pressed Ctrl+Shift+C with a valid nonempty selection creates Copy.
+pub fn copy_shortcut(
+    target: FocusTarget,
+    modifiers: Modifiers,
+    keysym: u32,
+    state: KeyState,
+    selection: Option<SelectionRange>,
+    grid: &Grid<Cell>,
+) -> Option<CopyIntent> {
+    if state != KeyState::Pressed
+        || !modifiers.ctrl()
+        || !modifiers.shift()
+        || modifiers.alt()
+        || !matches!(keysym, 0x63 | 0x43)
+    {
+        return None;
+    }
+    let text = copy_text(grid, selection?)?;
+    (!text.is_empty()).then_some(CopyIntent { target, text })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SeatId(pub u32);

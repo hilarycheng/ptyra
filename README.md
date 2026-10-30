@@ -1398,3 +1398,25 @@ Approval: user approved TASK-055 checkbox and scoped local commit; no push
 
 `ClipboardTransfer` owns one offer's reader. A cancelled offer or changed
 owner closes that reader and discards pending bytes before another read.
+
+## TASK-056 Verification (2026-10-30)
+
+```text
+TASK: TASK-056
+Status: DONE
+Dependencies: satisfied (TASK-046, TASK-050 已 [x])
+Changed files: src/clipboard.rs, src/clipboard/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline copy_shortcut_requires_selection -- --test-threads=1
+Result: PASS; test-first compilation failed before copy_shortcut existed
+Workspace tests: PASS — 117 unit + 3 Linux pipe FD + 9 Linux PTY integration + 2 doc-tests
+Format / Clippy: PASS — cargo fmt --all -- --check; cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+Manual / Integration checks: real keyboard shortcut and Wayland Clipboard NOT RUN
+Security / Privacy impact: CopyIntent text has no Debug; invalid/missing selection creates no intent or ownership
+Known limitations: caller must supply focused target, selection and Grid; config bindings and runtime data-source dispatch remain pending
+Ready for [x]: YES
+Approval: user approved TASK-056 checkbox and scoped local commit; no push
+```
+
+`copy_shortcut` creates a CopyIntent only for pressed Ctrl+Shift+C with a
+valid nonempty selection. Release, repeat, other keys and invalid selection
+produce no Copy request.

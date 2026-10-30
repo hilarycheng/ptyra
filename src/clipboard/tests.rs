@@ -1,8 +1,18 @@
 use super::{
     ClipboardOwner, ClipboardState, DataOffer, DataSourceRequest, InputSerialEvent, SeatId,
-    SeatSerialState, SelectionSerial, plan_data_source, select_text_mime,
+    SeatSerialState, SelectionSerial, copy_shortcut, plan_data_source, select_text_mime,
 };
-use crate::{TabId, WindowId, input::FocusTarget};
+use crate::{
+    TabId, WindowId,
+    input::FocusTarget,
+    keymap::{KeyState, Modifiers},
+    terminal::Terminal,
+};
+use alacritty_terminal::{
+    index::{Column, Line, Point},
+    selection::SelectionRange,
+};
+use kbvm::ModifierMask;
 
 #[test]
 fn clipboard_state_rejects_stale_offer() {
@@ -157,4 +167,107 @@ fn data_offer_tracks_formats() {
     assert_eq!(offer.preferred_text_mime(), None);
     assert!(offer.advertise("text/plain").is_err());
     assert_eq!(clipboard.owner(), None);
+}
+
+#[test]
+fn copy_shortcut_requires_selection() {
+    let tab = TabId(7);
+    let target = FocusTarget {
+        window: WindowId(1),
+        tab,
+    };
+    let mut terminal = Terminal::new(tab, 1, 4).unwrap();
+    terminal.feed(tab, b"ab").unwrap();
+    let grid = terminal.grid().unwrap();
+    let modifiers = Modifiers {
+        depressed: ModifierMask::CONTROL.0 | ModifierMask::SHIFT.0,
+        ..Modifiers::default()
+    };
+    let range = SelectionRange::new(
+        Point::new(Line(0), Column(0)),
+        Point::new(Line(0), Column(1)),
+        false,
+    );
+    assert!(
+        copy_shortcut(
+            target,
+            modifiers,
+            b'c' as u32,
+            KeyState::Pressed,
+            None,
+            grid
+        )
+        .is_none()
+    );
+    assert!(
+        copy_shortcut(
+            target,
+            Modifiers::default(),
+            b'C' as u32,
+            KeyState::Pressed,
+            Some(range),
+            grid
+        )
+        .is_none()
+    );
+    assert!(
+        copy_shortcut(
+            target,
+            modifiers,
+            b'c' as u32,
+            KeyState::Released,
+            Some(range),
+            grid
+        )
+        .is_none()
+    );
+    assert!(
+        copy_shortcut(
+            target,
+            modifiers,
+            b'c' as u32,
+            KeyState::Repeated,
+            Some(range),
+            grid
+        )
+        .is_none()
+    );
+    assert!(
+        copy_shortcut(
+            target,
+            modifiers,
+            b'v' as u32,
+            KeyState::Pressed,
+            Some(range),
+            grid
+        )
+        .is_none()
+    );
+    let intent = copy_shortcut(
+        target,
+        modifiers,
+        b'C' as u32,
+        KeyState::Pressed,
+        Some(range),
+        grid,
+    )
+    .unwrap();
+    assert_eq!(intent.target(), target);
+    assert_eq!(intent.text(), "ab");
+    assert!(
+        copy_shortcut(
+            target,
+            modifiers,
+            b'c' as u32,
+            KeyState::Pressed,
+            Some(SelectionRange::new(
+                Point::new(Line(2), Column(0)),
+                Point::new(Line(2), Column(0)),
+                false
+            )),
+            grid
+        )
+        .is_none()
+    );
+    assert_eq!(ClipboardState::new().owner(), None);
 }

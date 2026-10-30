@@ -247,7 +247,7 @@
   - **Dependencies:** `TASK-053`  |  **Unit Test:** `clipboard_cancel_drops_pending_transfer`
   - **Done:** 舊 FD 不再寫入 active Tab
 
-- [ ] **TASK-056 — Ctrl+Shift+C 只在有 selection 時複製**
+- [x] **TASK-056 — Ctrl+Shift+C 只在有 selection 時複製**
   - **Dependencies:** `TASK-046`, `TASK-050`  |  **Unit Test:** `copy_shortcut_requires_selection`
   - **Done:** 冇 selection 時不產生錯誤 clipboard ownership
 
