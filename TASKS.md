@@ -263,7 +263,7 @@
   - **Dependencies:** `TASK-057`, `TASK-002`  |  **Unit Test:** `paste_never_switches_target_mid_transfer`
   - **Done:** 切 Tab 時唔將 Paste 送錯 Shell
 
-- [ ] **TASK-060 — Tab close / focus lost 後取消 pending Paste**
+- [x] **TASK-060 — Tab close / focus lost 後取消 pending Paste**
   - **Dependencies:** `TASK-059`  |  **Unit Test:** `paste_to_closed_tab_is_cancelled`
   - **Done:** 不向已關閉 Tab 或新 Tab 發送殘留輸入
 
