@@ -1,9 +1,9 @@
 //! Persistent UI Preedit storage, separate from Commit bytes and terminal grid data.
 
-use super::ImePreedit;
+use super::{ImeFocus, ImePreedit, ImeState, ImeUpdate};
 use crate::{
     error::{AppError, Component},
-    input::FocusTarget,
+    input::{FocusTarget, KeyboardFocus},
     renderer::overlay::Preedit,
 };
 use std::io::ErrorKind;
@@ -12,6 +12,7 @@ use std::io::ErrorKind;
 pub struct PreeditState {
     target: FocusTarget,
     preedit: ImePreedit,
+    focus: Option<ImeFocus>,
 }
 
 impl PreeditState {
@@ -19,24 +20,51 @@ impl PreeditState {
         Self {
             target,
             preedit: ImePreedit::default(),
+            focus: None,
         }
     }
 
-    /// Apply only a completed, focus-validated ImeUpdate's Preedit field; keep Commit separate.
-    pub fn apply(&mut self, target: FocusTarget, preedit: ImePreedit) -> Result<(), AppError> {
-        if target != self.target {
+    /// Move the completed batch's Preedit into UI state; leave Commit available for PTY routing.
+    pub fn apply(
+        &mut self,
+        update: &mut ImeUpdate,
+        ime: &ImeState,
+        keyboard: &KeyboardFocus,
+    ) -> Result<bool, AppError> {
+        self.sync_focus(ime, keyboard);
+        if update.target != self.target {
             return Err(AppError::new(Component::Ime, ErrorKind::InvalidInput));
         }
-        preedit.validate()?;
-        self.preedit = preedit;
-        Ok(())
+        if !update.is_current(ime, keyboard) {
+            return Ok(false);
+        }
+        update.preedit.validate()?;
+        self.preedit = std::mem::take(&mut update.preedit);
+        self.focus = Some(update.focus.clone());
+        Ok(true)
     }
 
-    pub fn preedit(&self) -> &ImePreedit {
+    /// Call on focus/Tab changes to clear old UI state before the next render.
+    pub fn sync_focus(&mut self, ime: &ImeState, keyboard: &KeyboardFocus) -> bool {
+        if self
+            .focus
+            .as_ref()
+            .is_some_and(|focus| !ime.matches_focus(focus, keyboard))
+        {
+            self.focus = None;
+            self.preedit = ImePreedit::default();
+            return true;
+        }
+        false
+    }
+
+    pub fn preedit(&mut self, ime: &ImeState, keyboard: &KeyboardFocus) -> &ImePreedit {
+        self.sync_focus(ime, keyboard);
         &self.preedit
     }
 
-    pub fn overlay(&self) -> Option<Preedit<'_>> {
+    pub fn overlay(&mut self, ime: &ImeState, keyboard: &KeyboardFocus) -> Option<Preedit<'_>> {
+        self.sync_focus(ime, keyboard);
         (!self.preedit.text.is_empty()).then_some(Preedit {
             tab: self.target.tab,
             text: &self.preedit.text,
@@ -62,6 +90,81 @@ mod tests {
         window::WindowSize,
     };
     use std::io::Write;
+
+    #[test]
+    fn ime_preedit_does_not_cross_tab() {
+        let seat = SeatId(1);
+        let window = WindowId(1);
+        let first = FocusTarget {
+            window,
+            tab: TabId(7),
+        };
+        let second = FocusTarget {
+            window,
+            tab: TabId(8),
+        };
+        let caps = Capabilities::from_globals(&[Global {
+            name: 3,
+            interface: "zwp_text_input_manager_v3",
+            version: 1,
+        }]);
+        let mut keyboard = KeyboardFocus::default();
+        keyboard.enter(window, first.tab);
+        let mut ime = ImeState::new(seat, &caps);
+        ime.enter(seat, window);
+        ime.sync_enabled(seat, &keyboard, true);
+        let mut a = PreeditState::new(first);
+        let mut b = PreeditState::new(second);
+        let old = ime.capture_focus(seat, window, &keyboard);
+        let event = || ImeEvent::Preedit {
+            text: Some("舊組字"),
+            cursor_begin: 0,
+            cursor_end: 9,
+        };
+        ime.stage(&old, &keyboard, event()).unwrap();
+        let mut update = ime.done(&old, &keyboard, ime.commit_serial()).unwrap();
+        assert!(a.apply(&mut update, &ime, &keyboard).unwrap());
+        assert_eq!(a.overlay(&ime, &keyboard).unwrap().text, "舊組字");
+        ime.stage(&old, &keyboard, event()).unwrap();
+        let mut delayed = ime.done(&old, &keyboard, ime.commit_serial()).unwrap();
+
+        keyboard.enter(window, second.tab);
+        assert!(a.sync_focus(&ime, &keyboard));
+        assert!(a.overlay(&ime, &keyboard).is_none());
+        ime.sync_enabled(seat, &keyboard, true);
+        assert!(b.apply(&mut delayed, &ime, &keyboard).is_err());
+        assert!(!a.apply(&mut delayed, &ime, &keyboard).unwrap());
+        let current = ime.capture_focus(seat, window, &keyboard);
+        ime.stage(
+            &current,
+            &keyboard,
+            ImeEvent::Preedit {
+                text: Some("新"),
+                cursor_begin: 0,
+                cursor_end: 3,
+            },
+        )
+        .unwrap();
+        let mut update = ime.done(&current, &keyboard, ime.commit_serial()).unwrap();
+        assert!(b.apply(&mut update, &ime, &keyboard).unwrap());
+        assert_eq!(b.overlay(&ime, &keyboard).unwrap().text, "新");
+
+        keyboard.enter(window, first.tab);
+        ime.sync_enabled(seat, &keyboard, true);
+        // The render accessor also clears stale state if the focus notification was delayed.
+        assert!(b.overlay(&ime, &keyboard).is_none());
+        assert!(a.overlay(&ime, &keyboard).is_none());
+        assert!(!a.apply(&mut delayed, &ime, &keyboard).unwrap());
+        let current = ime.capture_focus(seat, window, &keyboard);
+        ime.stage(&current, &keyboard, event()).unwrap();
+        let mut update = ime.done(&current, &keyboard, ime.commit_serial()).unwrap();
+        assert!(a.apply(&mut update, &ime, &keyboard).unwrap());
+        assert!(!a.apply(&mut delayed, &ime, &keyboard).unwrap());
+        assert_eq!(a.overlay(&ime, &keyboard).unwrap().text, "舊組字");
+        keyboard.leave(window);
+        assert!(a.overlay(&ime, &keyboard).is_none());
+        assert!(a.preedit(&ime, &keyboard).text.is_empty());
+    }
 
     #[test]
     fn preedit_never_writes_to_pty() {
@@ -98,7 +201,7 @@ mod tests {
         )
         .unwrap();
         let mut fake_pty = Vec::new();
-        assert!(ui.overlay().is_none());
+        assert!(ui.overlay(&ime, &keyboard).is_none());
         for text in [
             Some("繁體字"),
             Some("更新e\u{301}"),
@@ -106,7 +209,7 @@ mod tests {
             Some(""),
             None,
         ] {
-            let previous = ui.preedit().text.clone();
+            let previous = ui.preedit(&ime, &keyboard).text.clone();
             ime.stage(
                 &ime.capture_focus(seat, target.window, &keyboard),
                 &keyboard,
@@ -117,23 +220,26 @@ mod tests {
                 },
             )
             .unwrap();
-            assert_eq!(ui.preedit().text, previous);
-            let update = ime
+            assert_eq!(ui.preedit(&ime, &keyboard).text, previous);
+            let mut update = ime
                 .done(
                     &ime.capture_focus(seat, target.window, &keyboard),
                     &keyboard,
                     ime.commit_serial(),
                 )
                 .unwrap();
-            ui.apply(update.target, update.preedit).unwrap();
+            ui.apply(&mut update, &ime, &keyboard).unwrap();
             // Fake downstream PTY consumer receives only the batch's Commit field.
             fake_pty.write_all(update.commit.as_bytes()).unwrap();
             assert!(fake_pty.is_empty());
-            assert_eq!(ui.preedit().text, text.unwrap_or_default());
-            let commands: Vec<_> =
-                overlay_commands(terminal.snapshot().unwrap(), &layout, ui.overlay())
-                    .unwrap()
-                    .collect();
+            assert_eq!(ui.preedit(&ime, &keyboard).text, text.unwrap_or_default());
+            let commands: Vec<_> = overlay_commands(
+                terminal.snapshot().unwrap(),
+                &layout,
+                ui.overlay(&ime, &keyboard),
+            )
+            .unwrap()
+            .collect();
             match text.filter(|text| !text.is_empty()) {
                 Some(expected) => {
                     assert_eq!(commands.len(), 1);
@@ -173,18 +279,18 @@ mod tests {
             },
         )
         .unwrap();
-        let update = ime
+        let mut update = ime
             .done(
                 &ime.capture_focus(seat, target.window, &keyboard),
                 &keyboard,
                 ime.commit_serial(),
             )
             .unwrap();
-        ui.apply(update.target, update.preedit).unwrap();
+        ui.apply(&mut update, &ime, &keyboard).unwrap();
         fake_pty.write_all(update.commit.as_bytes()).unwrap();
         assert_eq!(fake_pty, "確定".as_bytes());
-        assert_eq!(ui.preedit().text, "候選");
-        assert_eq!(ui.preedit().cursor_begin, -1);
+        assert_eq!(ui.preedit(&ime, &keyboard).text, "候選");
+        assert_eq!(ui.preedit(&ime, &keyboard).cursor_begin, -1);
         for wrong in [
             FocusTarget {
                 tab: TabId(8),
@@ -195,9 +301,11 @@ mod tests {
                 ..target
             },
         ] {
-            assert!(ui.apply(wrong, ImePreedit::default()).is_err());
-            assert_eq!(ui.preedit().text, "候選");
+            update.target = wrong;
+            assert!(ui.apply(&mut update, &ime, &keyboard).is_err());
+            assert_eq!(ui.preedit(&ime, &keyboard).text, "候選");
         }
+        update.target = target;
         for invalid in [
             ImePreedit {
                 text: "x".repeat(MAX_IME_TEXT_BYTES + 1),
@@ -210,18 +318,19 @@ mod tests {
                 cursor_end: 3,
             },
         ] {
-            assert!(ui.apply(target, invalid).is_err());
-            assert_eq!(ui.preedit().text, "候選");
+            update.preedit = invalid;
+            assert!(ui.apply(&mut update, &ime, &keyboard).is_err());
+            assert_eq!(ui.preedit(&ime, &keyboard).text, "候選");
         }
-        let empty = ime
+        let mut empty = ime
             .done(
                 &ime.capture_focus(seat, target.window, &keyboard),
                 &keyboard,
                 ime.commit_serial(),
             )
             .unwrap();
-        ui.apply(empty.target, empty.preedit).unwrap();
-        assert!(ui.overlay().is_none());
+        ui.apply(&mut empty, &ime, &keyboard).unwrap();
+        assert!(ui.overlay(&ime, &keyboard).is_none());
         assert!(empty.commit.is_empty());
     }
 }

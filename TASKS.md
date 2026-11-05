@@ -345,7 +345,7 @@
   - **Dependencies:** `TASK-012`, `TASK-072`  |  **Unit Test:** `ime_key_is_not_sent_twice`
   - **Done:** 中文組字唔重複輸入 key/character
 
-- [ ] **TASK-080 — Tab 切換時取消舊 preedit**
+- [x] **TASK-080 — Tab 切換時取消舊 preedit**
   - **Dependencies:** `TASK-078`, `TASK-002`  |  **Unit Test:** `ime_preedit_does_not_cross_tab`
   - **Done:** 轉 Tab 後唔保留舊 Tab 組字
 
