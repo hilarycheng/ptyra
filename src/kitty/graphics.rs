@@ -1,6 +1,7 @@
 //! Bounded, inert Kitty APC parsing. No filesystem, process or renderer access.
 use crate::error::{AppError, Component};
 use std::io::ErrorKind;
+pub mod transfer;
 
 pub const MAX_HEADER_BYTES: usize = 512;
 pub const MAX_CHUNK_BYTES: usize = 4096;

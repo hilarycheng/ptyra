@@ -5,6 +5,7 @@ fn reviewed_dependencies(manifest: &toml::Table) -> bool {
         deps.as_table().is_some_and(|deps| {
             deps.iter().all(|(name, spec)| {
                 let (version, allowed): (&str, &[&str]) = match name.as_str() {
+                    "base64" => ("=0.22.1", &["alloc"]),
                     "alacritty_terminal" => ("=0.26.0", &[]),
                     "kbvm" => ("=0.2.0", &[]),
                     "log" => ("=0.4.34", &["max_level_off", "release_max_level_off"]),

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+base64 = { version = "=0.22.1", default-features = false, features = ["alloc"] }
 alacritty_terminal = { version = "=0.26.0", default-features = false }
 kbvm = { version = "=0.2.0", default-features = false }
 # Dependency log statements may contain terminal or input payloads.

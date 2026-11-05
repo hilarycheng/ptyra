@@ -499,7 +499,7 @@
   - **Dependencies:** `TASK-099`  |  **Unit Test:** `kitty_apc_parser_rejects_invalid_header`
   - **Done:** 壞 header / 超長序列無 panic
 
-- [ ] **TASK-116 — 合併 direct transmission chunks**
+- [x] **TASK-116 — 合併 direct transmission chunks**
   - **Dependencies:** `TASK-115`  |  **Unit Test:** `kitty_chunks_reassemble_in_order`
   - **Done:** 不完整 chunk 不 Render
 

@@ -1,5 +1,12 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Direct graphics chunks — TASK-116 (2026-11-05)
+
+The already reviewed and locked `base64 0.22.1` becomes direct with only `alloc` enabled.
+No package/version is added. Its license remains MIT OR Apache-2.0.
+The assembler accepts only direct transport, caps each encoded chunk at 4096 bytes,
+and caps a transmission at 16 MiB decoded and 8192 chunks. Errors discard the incomplete transmission.
+
 ## Kitty keyboard primitives — TASK-108 (2026-11-05)
 
 Flags reuse the pinned VTE `KeyboardModes` definition; no dependency changes.

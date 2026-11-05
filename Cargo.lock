@@ -365,6 +365,7 @@ name = "ptyra"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "base64",
  "kbvm",
  "log",
  "nix",
