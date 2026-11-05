@@ -325,7 +325,7 @@
   - **Dependencies:** `TASK-072`, `TASK-023`  |  **Unit Test:** `ime_commit_is_written_once`
   - **Done:** 同一 commit 不重複、不漏寫
 
-- [ ] **TASK-075 — 安全處理 delete_surrounding_text**
+- [x] **TASK-075 — 安全處理 delete_surrounding_text**
   - **Dependencies:** `TASK-072`  |  **Unit Test:** `ime_delete_does_not_inject_backspace`
   - **Done:** 未設定 surrounding text 時唔注入 Backspace
 

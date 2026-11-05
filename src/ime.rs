@@ -24,6 +24,10 @@ pub enum ImeEvent<'a> {
     Commit {
         text: Option<&'a str>,
     },
+    DeleteSurroundingText {
+        before_length: u32,
+        after_length: u32,
+    },
 }
 
 #[derive(Default)]
@@ -212,6 +216,8 @@ impl ImeState {
             return Ok(false);
         }
         let result = match event {
+            // No editable surrounding text is advertised; never infer edits from terminal output.
+            ImeEvent::DeleteSurroundingText { .. } => return Ok(false),
             ImeEvent::Commit { text } => copy_ime_text(text).map(|text| self.pending_commit = text),
             ImeEvent::Preedit {
                 text,
@@ -291,6 +297,109 @@ mod tests {
         input::KeyboardFocus,
         wayland::{Binding, Capabilities, Global},
     };
+
+    #[test]
+    fn ime_delete_does_not_inject_backspace() {
+        use super::ImeEvent;
+        use crate::{clipboard::PasteSink, terminal::Terminal};
+
+        #[derive(Default)]
+        struct Sink(Vec<u8>);
+        impl PasteSink for Sink {
+            type Error = std::convert::Infallible;
+            fn tab(&self) -> TabId {
+                TabId(7)
+            }
+            fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+                self.0.extend_from_slice(bytes);
+                Ok(())
+            }
+        }
+
+        let seat = SeatId(1);
+        let window = WindowId(1);
+        let capabilities = Capabilities::from_globals(&[Global {
+            name: 3,
+            interface: "zwp_text_input_manager_v3",
+            version: 1,
+        }]);
+        let mut keyboard = KeyboardFocus::default();
+        keyboard.enter(window, TabId(7));
+        let mut ime = ImeState::new(seat, &capabilities);
+        ime.enter(seat, window);
+        ime.sync_enabled(seat, &keyboard, true);
+        let mut sink = Sink::default();
+        let mut terminal = Terminal::new(TabId(7), 2, 16).unwrap();
+        terminal.feed(TabId(7), "prompt> 中文".as_bytes()).unwrap();
+        let cells = || {
+            terminal
+                .grid()
+                .unwrap()
+                .display_iter()
+                .map(|cell| cell.cell.clone())
+                .collect::<Vec<_>>()
+        };
+        let before = cells();
+        let cursor = terminal.grid().unwrap().cursor.clone();
+        for (before_length, after_length) in [(0, 0), (1, 0), (0, 3), (3, 6), (u32::MAX, u32::MAX)]
+        {
+            for mixed in [false, true] {
+                if mixed {
+                    ime.stage(
+                        seat,
+                        window,
+                        &keyboard,
+                        ImeEvent::Commit {
+                            text: Some("確定")
+                        },
+                    )
+                    .unwrap();
+                    ime.stage(
+                        seat,
+                        window,
+                        &keyboard,
+                        ImeEvent::Preedit {
+                            text: Some("候選"),
+                            cursor_begin: 0,
+                            cursor_end: 6,
+                        },
+                    )
+                    .unwrap();
+                }
+                // Repeated deletion requests neither generate bytes nor erase staged text.
+                for _ in 0..2 {
+                    assert!(
+                        !ime.stage(
+                            seat,
+                            window,
+                            &keyboard,
+                            ImeEvent::DeleteSurroundingText {
+                                before_length,
+                                after_length,
+                            }
+                        )
+                        .unwrap()
+                    );
+                }
+                assert!(sink.0.is_empty());
+                let mut update = ime
+                    .done(seat, window, &keyboard, ime.commit_serial())
+                    .unwrap();
+                assert_eq!(update.preedit.text, if mixed { "候選" } else { "" });
+                assert_eq!(update.enqueue_commit(&mut sink).unwrap(), mixed);
+                assert_eq!(sink.0, if mixed { "確定".as_bytes() } else { b"" });
+                assert!(!update.enqueue_commit(&mut sink).unwrap());
+                sink.0.clear();
+                let mut empty = ime
+                    .done(seat, window, &keyboard, ime.commit_serial())
+                    .unwrap();
+                assert!(!empty.enqueue_commit(&mut sink).unwrap());
+                assert!(sink.0.is_empty());
+                assert_eq!(cells(), before);
+                assert_eq!(terminal.grid().unwrap().cursor, cursor);
+            }
+        }
+    }
 
     #[test]
     fn ime_done_applies_staged_events() {
