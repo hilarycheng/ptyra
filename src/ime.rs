@@ -1,5 +1,6 @@
 //! Seat-scoped text-input-v3 capability and focus state. No Wayland or IME I/O.
 
+pub mod cursor;
 pub mod preedit;
 
 use crate::{

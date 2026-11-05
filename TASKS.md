@@ -329,7 +329,7 @@
   - **Dependencies:** `TASK-072`  |  **Unit Test:** `ime_delete_does_not_inject_backspace`
   - **Done:** 未設定 surrounding text 時唔注入 Backspace
 
-- [ ] **TASK-076 — 計算 cursor rectangle (surface-local)**
+- [x] **TASK-076 — 計算 cursor rectangle (surface-local)**
   - **Dependencies:** `TASK-031`, `TASK-073`  |  **Unit Test:** `ime_cursor_rect_tracks_text_cell`
   - **Done:** IME candidate anchors 對應目前 Cursor
 

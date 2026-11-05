@@ -21,6 +21,7 @@ use std::io::ErrorKind;
 #[derive(Debug)]
 pub struct CellLayout {
     bounds: WindowSize,
+    scale: Scale,
     width: f64,
     height: f64,
 }
@@ -45,6 +46,7 @@ impl CellLayout {
         let bounds = scale.to_physical(size).map_err(|_| invalid())?;
         Ok(Self {
             bounds,
+            scale,
             width,
             height,
         })
@@ -70,6 +72,20 @@ impl CellLayout {
             y: y as i32,
             width: right - x,
             height: bottom - y,
+        })
+    }
+
+    /// The same clipped cell in surface-local units, rounded outward to cover its pixels.
+    pub fn surface_cell_rect(&self, row: usize, column: usize) -> Option<Rect> {
+        let rect = self.cell_rect(row, column)?;
+        let scale = self.scale.factor();
+        let x = rect.x as u32 / scale;
+        let y = rect.y as u32 / scale;
+        Some(Rect {
+            x: x as i32,
+            y: y as i32,
+            width: (rect.x as u32 + rect.width).div_ceil(scale) - x,
+            height: (rect.y as u32 + rect.height).div_ceil(scale) - y,
         })
     }
 
