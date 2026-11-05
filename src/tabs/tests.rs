@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Debug)]
-struct FakePty(TabId);
+pub(super) struct FakePty(TabId);
 impl TabPty for FakePty {
     fn tab(&self) -> TabId {
         self.0

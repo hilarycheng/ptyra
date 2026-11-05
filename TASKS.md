@@ -379,7 +379,7 @@
   - **Dependencies:** `TASK-083`, `TASK-025`  |  **Unit Test:** `close_tab_does_not_kill_other_pty`
   - **Done:** 退出一個 Tab 不影響其餘 Shell
 
-- [ ] **TASK-088 — Tab Bar item rectangles + hit test**
+- [x] **TASK-088 — Tab Bar item rectangles + hit test**
   - **Dependencies:** `TASK-031`, `TASK-083`  |  **Unit Test:** `tab_bar_hit_test_selects_correct_tab`
   - **Done:** Mouse click 可正確識別 Tab
 

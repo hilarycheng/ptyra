@@ -1,4 +1,5 @@
 //! Ordered, bounded ownership of independent Tab state. No platform I/O in registry operations.
+pub mod bar;
 use crate::{
     TabId,
     error::{AppError, Component},
