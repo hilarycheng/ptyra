@@ -353,7 +353,7 @@
   - **Dependencies:** `TASK-071`  |  **Unit Test:** `ime_restart_keeps_normal_keyboard`
   - **Done:** Fcitx5 重啟唔令一般 keyboard 失效
 
-- [ ] **TASK-082 — 保留正常 IME switch shortcut 路徑**
+- [x] **TASK-082 — 保留正常 IME switch shortcut 路徑**
   - **Dependencies:** `TASK-079`  |  **Unit Test:** `ime_toggle_key_is_not_swallowed`
   - **Done:** 按輸入法切換鍵唔被 Terminal 自行佔用
 

@@ -48,6 +48,67 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn ime_toggle_key_is_not_swallowed() {
+        use crate::{
+            clipboard::{PasteKeyAction, copy_shortcut, paste_shortcut},
+            keymap::Modifiers,
+            terminal::Terminal,
+        };
+        let map_text = br#"xkb_keymap {
+            xkb_keycodes { <SPCE> = 65; <LFSH> = 50; };
+            xkb_types { type "ONE_LEVEL" { modifiers = None; map[None] = Level1; }; };
+            xkb_compatibility {};
+            xkb_symbols { key <SPCE> { [ space ] }; key <LFSH> { repeat = false, [ Shift_L ] }; };
+        };"#;
+        let mut map = Keymap::from_bytes(map_text).unwrap();
+        let mut focus = KeyboardFocus::default();
+        focus.enter(WindowId(1), TabId(7));
+        let terminal = Terminal::new(TabId(7), 2, 8).unwrap();
+        let clock = FakeClock::default();
+        let mut repeat = RepeatScheduler::default();
+        for (code, modifiers) in [
+            (
+                57,
+                Modifiers {
+                    depressed: kbvm::ModifierMask::CONTROL.0,
+                    ..Modifiers::default()
+                },
+            ),
+            (42, Modifiers::default()),
+        ] {
+            map.update_modifiers(modifiers);
+            for pressed in [true, false] {
+                let raw = focus.route_key(code, pressed).unwrap();
+                let key = map
+                    .translate(focus.route_key(code, pressed).unwrap(), false)
+                    .unwrap()
+                    .unwrap();
+                let keysym = key.keysyms[0];
+                assert!(matches!(
+                    paste_shortcut(&focus, &raw, modifiers, keysym, key.state),
+                    PasteKeyAction::Shell
+                ));
+                assert!(
+                    copy_shortcut(
+                        key.target,
+                        modifiers,
+                        keysym,
+                        key.state,
+                        None,
+                        terminal.grid().unwrap()
+                    )
+                    .is_none()
+                );
+                assert!(
+                    route_key(key, KeyOwner::Terminal, &focus, &map, &mut repeat, &clock)
+                        .unwrap()
+                        .is_some()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn ime_key_is_not_sent_twice() {
         let clock = FakeClock::default();
         let mut keyboard = KeyboardFocus::default();
