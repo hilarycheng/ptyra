@@ -511,7 +511,7 @@
   - **Dependencies:** `TASK-117`, `TASK-097`  |  **Unit Test:** `kitty_image_budget_limits_allocations`
   - **Done:** 超額拒絕而非 OOM
 
-- [ ] **TASK-119 — Image ID 與 Placement state**
+- [x] **TASK-119 — Image ID 與 Placement state**
   - **Dependencies:** `TASK-118`  |  **Unit Test:** `kitty_image_ids_do_not_collide`
   - **Done:** 不同 images/placements 不互相覆蓋
 

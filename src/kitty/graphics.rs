@@ -2,6 +2,7 @@
 use crate::error::{AppError, Component};
 use std::io::ErrorKind;
 pub mod decode;
+pub mod store;
 pub mod transfer;
 
 pub const MAX_HEADER_BYTES: usize = 512;
