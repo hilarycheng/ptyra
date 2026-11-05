@@ -82,9 +82,7 @@ pub fn decode_with_limits(
     if bytes.len() > limits.bytes {
         return Err(AppError::new(Component::Terminal, ErrorKind::FileTooLarge));
     }
-    if header.value(b't', i64::from(b'd')) != i64::from(b'd') {
-        return Err(AppError::new(Component::Terminal, ErrorKind::Unsupported));
-    }
+    header.require_direct()?;
     match header.value(b'f', 32) {
         32 => {
             let width = u32::try_from(header.value(b's', 0)).map_err(|_| invalid())?;

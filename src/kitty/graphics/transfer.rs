@@ -45,10 +45,10 @@ impl Assembler {
     }
     fn append(&mut self, command: GraphicsCommand) -> Result<Option<Transmission>, AppError> {
         let GraphicsCommand { header, payload } = command;
-        if header.value(b't', i64::from(b'd')) != i64::from(b'd')
-            || !(*b"tTq")
-                .map(i64::from)
-                .contains(&header.value(b'a', i64::from(b't')))
+        header.require_direct()?;
+        if !(*b"tTq")
+            .map(i64::from)
+            .contains(&header.value(b'a', i64::from(b't')))
         {
             return Err(AppError::new(Component::Terminal, ErrorKind::Unsupported));
         }

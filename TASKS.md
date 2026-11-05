@@ -519,7 +519,7 @@
   - **Dependencies:** `TASK-119`  |  **Unit Test:** `kitty_delete_releases_memory`
   - **Done:** 刪除後 budget 可回收
 
-- [ ] **TASK-121 — 預設拒絕 file/temp/shared-memory transport**
+- [x] **TASK-121 — 預設拒絕 file/temp/shared-memory transport**
   - **Dependencies:** `TASK-115`  |  **Unit Test:** `kitty_file_transport_is_disabled`
   - **Done:** PTY output 不可令 Terminal 讀取本機檔案
 

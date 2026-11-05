@@ -29,6 +29,15 @@ impl Default for Header {
     }
 }
 impl Header {
+    pub(crate) fn require_direct(&self) -> Result<(), AppError> {
+        if self.value(b't', i64::from(b'd')) != i64::from(b'd') {
+            return Err(AppError::new(
+                Component::Terminal,
+                ErrorKind::PermissionDenied,
+            ));
+        }
+        Ok(())
+    }
     pub fn get(&self, key: u8) -> Option<i64> {
         self.fields.get(index(key)?).copied().flatten()
     }
@@ -99,6 +108,7 @@ impl Header {
             };
             header.fields[slot] = Some(value);
         }
+        header.require_direct()?;
         Ok(header)
     }
 }
@@ -221,6 +231,25 @@ impl GraphicsParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn kitty_file_transport_is_disabled() {
+        for transport in *b"fts" {
+            let mut parser = GraphicsParser::default();
+            let command = format!(
+                "\x1b_Ga=T,f=100,t={};L2V0Yy9wYXNzd2Q=\x1b\\",
+                char::from(transport)
+            );
+            let error = command
+                .bytes()
+                .try_for_each(|byte| parser.push(byte).map(|command| assert!(command.is_none())))
+                .unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+            assert!(parser.push(b'x').is_err());
+            assert!(Header::parse(format!("t={}", char::from(transport)).as_bytes()).is_err());
+        }
+        assert!(Header::parse(b"t=d").is_ok());
+        assert!(Header::parse(b"").is_ok());
+    }
     #[test]
     fn kitty_apc_parser_rejects_invalid_header() {
         for header in [
