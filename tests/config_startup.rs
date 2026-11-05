@@ -6,11 +6,18 @@ fn startup_reports_bad_config_without_rewriting() {
     fs::create_dir(&folder).unwrap();
     let path = folder.join("config.toml");
     let missing = Command::new(env!("CARGO_BIN_EXE_ptyra"))
+        .env_remove("WAYLAND_SOCKET")
+        .env("WAYLAND_DISPLAY", folder.join("missing-wayland-socket"))
         .arg("--config")
         .arg(&path)
         .output()
         .unwrap();
-    assert!(missing.status.success());
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("cannot connect to Wayland")
+    );
     let original = "font_size = 'SECRET'\n";
     fs::write(&path, original).unwrap();
     let bad = Command::new(env!("CARGO_BIN_EXE_ptyra"))

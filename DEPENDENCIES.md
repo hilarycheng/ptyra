@@ -1,5 +1,14 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Native Wayland — TASK-125 (2026-11-05)
+
+- `wayland-client =0.31.15` 同 `wayland-protocols =0.32.13`（只開 client feature），MIT，提供真 compositor connection、dispatch 同 xdg-shell。
+- 維護狀態：Smithay/wayland-rs 仍有維護及 releases；核對上游 source/examples 同 https://github.com/Smithay/wayland-rs 。使用 Rust backend，冇加入 GTK/Qt、額外 event-loop thread 或 app unsafe。
+- 新 transitive packages：wayland-backend 0.3.17、wayland-scanner 0.31.11、wayland-sys 0.31.11、quick-xml 0.41.0（MIT）；cc 1.11.0、find-msvc-tools 0.1.15、shlex 2.0.1（MIT OR Apache-2.0）；downcast-rs 1.2.1（MIT/Apache-2.0）。Cargo.lock 已提交。
+- 讀取完整 RustSec tree `26fd2d43f7280a1fb925a3743ec463017afe7119`，核對以上新增 package names：quick-xml RUSTSEC-2026-0194/0195 已由 0.41.0 修正；shlex RUSTSEC-2024-0006 已由 >=1.3.0 修正；其餘未找到記錄。未執行 cargo-audit，唔代表完整供應鏈審計。
+- 每個 frame 最多 4 Mi pixels；兩個 SHM slots 加一個 staging buffer，最多 48 MiB pixel storage。只喺 compositor release 後重用 slot；configure/ack 後先 attach，frame callback 限制提交頻率，idle blocking dispatch。
+- Native checks：獨立 `/tmp` headless Sway 映射 800×600 xdg-toplevel、grim screenshot、close exit 0；500ms idle CPU 增量 <=1 tick。呢個係 smoke check，唔係產品 performance benchmark。
+
 ## PNG decoder — TASK-117 (2026-11-05)
 
 `png = 0.18.1` supplies PNG decoding without an image framework or native codec.

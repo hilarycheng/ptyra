@@ -16,6 +16,7 @@ pub mod kitty;
 pub mod pty;
 pub mod renderer;
 pub mod repeat;
+pub mod runtime;
 pub mod selection;
 pub mod shell;
 pub mod tabs;

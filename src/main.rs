@@ -20,12 +20,21 @@ fn main() -> ExitCode {
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
             .map(|base| base.join("ptyra/config.toml")),
     };
-    if let Some(path) = path
-        && let Err(error) = ptyra::config::load::load_config(&path)
+    let config = match path
+        .map(|path| ptyra::config::load::load_config(&path))
+        .transpose()
     {
-        eprintln!("{error}");
-        return ExitCode::FAILURE;
+        Ok(config) => config.unwrap_or_default(),
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match ptyra::runtime::run(config) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Ptyra: {error}");
+            ExitCode::FAILURE
+        }
     }
-    println!("{}", ptyra::APP_NAME);
-    ExitCode::SUCCESS
 }

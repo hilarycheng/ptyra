@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 124 atomic TASKS。
+**Total:** 128 atomic TASKS。
 
 ## A. Foundation / 測試基礎
 
@@ -536,6 +536,26 @@
 - [x] **TASK-124 — Desktop entry schema/command 檢查**
   - **Dependencies:** `TASK-122`  |  **Unit Test:** `desktop_entry_points_to_ptyra`
   - **Done:** Desktop launcher 無任意 Shell evaluation
+
+## N. Native Runtime Integration（2026-11-05 已批准）
+
+- [x] **TASK-125 — 啟動真正 Wayland 視窗並正常關閉**
+  - **Dependencies:** `TASK-009`, `TASK-010`, `TASK-017`, `TASK-018`, `TASK-094` | **Unit Test:** `runtime_window_waits_for_configure`
+  - **Done:** main 連接 compositor；configure/ack 後提交有界 SHM buffer；無 dirty state 時阻塞等待；close/disconnect 正常退出；隔離 compositor 驗證真正視窗。
+
+- [ ] **TASK-126 — 將字形與 terminal grid 畫到視窗**
+  - **Dependencies:** `TASK-125`, `TASK-028`, `TASK-032`, `TASK-033` | **Unit Test:** `runtime_raster_draws_terminal_cells`
+  - **Done:** 載入實際字型，bounded rasterization 呈現 grid、顏色及 cursor；真 compositor screenshot 驗證可見文字。
+
+- [ ] **TASK-127 — Shell PTY output 接入 runtime 畫面**
+  - **Dependencies:** `TASK-126`, `TASK-021`, `TASK-022`, `TASK-024`, `TASK-025`, `TASK-026` | **Unit Test:** `runtime_pty_output_updates_grid`
+  - **Done:** 啟動 Shell；event-driven PTY read 更新畫面；resize 同步 grid/PTY；退出時回收 child；真 PTY 與 compositor 驗證。
+
+- [ ] **TASK-128 — Keyboard 輸入接入互動 Shell**
+  - **Dependencies:** `TASK-127`, `TASK-011`, `TASK-012`, `TASK-013`, `TASK-023`, `TASK-110` | **Unit Test:** `runtime_keyboard_routes_to_shell`
+  - **Done:** 真 Wayland keymap/focus/modifiers/repeat 接駁現有 encoder 同 PTY queue；失焦停止輸入；Enter、Backspace、arrows、Ctrl+C 可用；真 compositor/PTY 驗證互動指令。
+
+呢四項只交付單視窗、單 Shell 嘅 runtime；Clipboard、IME、Tabs、Kitty graphics runtime 接線仍須另外驗收。
 
 ## Integration / Acceptance Matrix（唔當作 Unit TASK）
 
