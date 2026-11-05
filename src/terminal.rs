@@ -25,6 +25,7 @@ pub const MAX_TERMINAL_CELLS: usize = 2_000_000;
 // alacritty_terminal 0.26.0 Storage grows in batches with up to 1,000 spare rows.
 const CORE_HISTORY_CACHE_LINES: usize = 1_000;
 /// Counts all bytes between ESC ] and BEL/CAN/SUB/ESC, including separators.
+/// Bounds OSC 52 encoded data before Base64 decoding; its header shares this budget.
 pub const MAX_OSC_BYTES: usize = 4096;
 pub const MAX_COMBINING_MARKS: usize = 64;
 

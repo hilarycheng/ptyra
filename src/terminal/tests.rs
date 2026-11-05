@@ -390,6 +390,93 @@ fn terminal_osc_bound_tracks_escape_controls_and_terminators() {
 }
 
 #[test]
+fn osc52_rejects_oversized_base64() {
+    use crate::clipboard::SelectionKind;
+
+    for (selection, kind) in [
+        ("", SelectionKind::Clipboard),
+        ("cccc", SelectionKind::Clipboard),
+        ("pppp", SelectionKind::Primary),
+    ] {
+        let header = format!("52;{selection};");
+        let encoded = "YWFh".repeat((MAX_OSC_BYTES - header.len()) / 4);
+        assert_eq!(header.len() + encoded.len(), MAX_OSC_BYTES);
+        for terminator in ["\x07", "\x1b\\"] {
+            for chunk_size in [1, 31, MAX_FEED_BYTES] {
+                for enabled in [false, true] {
+                    let mut term = terminal(1);
+                    term.set_osc52_write_enabled(enabled).unwrap();
+                    let sequence = format!("\x1b]{header}{encoded}{terminator}");
+                    for chunk in sequence.as_bytes().chunks(chunk_size) {
+                        feed(&mut term, chunk);
+                    }
+                    let request = term.take_osc52_write(kind);
+                    if enabled {
+                        let request = request.unwrap();
+                        assert_eq!(request.text, "a".repeat(encoded.len() / 4 * 3));
+                        assert_eq!(request.selection, kind);
+                    } else {
+                        assert!(request.is_none());
+                    }
+
+                    // Reject before any terminator arrives, including across feed calls.
+                    let oversized = format!("\x1b]{header}{encoded}A");
+                    let result = oversized
+                        .as_bytes()
+                        .chunks(chunk_size)
+                        .try_for_each(|chunk| term.feed(TabId(1), chunk));
+                    assert_eq!(
+                        result,
+                        Err(TerminalError {
+                            tab: TabId(1),
+                            error: AppError::new(Component::Terminal, ErrorKind::InvalidData),
+                        })
+                    );
+                    assert!(term.grid().is_none());
+                    assert!(term.take_osc52_write(SelectionKind::Clipboard).is_none());
+                    assert!(term.take_osc52_write(SelectionKind::Primary).is_none());
+                    assert_eq!(
+                        term.feed(TabId(1), terminator.as_bytes()),
+                        Err(TerminalError {
+                            tab: TabId(1),
+                            error: AppError::new(Component::Terminal, ErrorKind::NotConnected),
+                        })
+                    );
+                }
+            }
+        }
+    }
+
+    let mut term = terminal(1);
+    term.set_osc52_write_enabled(true).unwrap();
+    for bad in ["!", "A", "AA=A", "YQ===", "YWJj?", "/w=="] {
+        for selection in ["c", "p"] {
+            feed(&mut term, b"\x1b]52;c;YQ==\x07\x1b]52;p;Yg==\x07");
+            let sequence = format!("\x1b]52;{selection};{bad}\x07");
+            for byte in sequence.as_bytes() {
+                feed(&mut term, std::slice::from_ref(byte));
+            }
+            assert_eq!(
+                term.take_osc52_write(SelectionKind::Clipboard)
+                    .unwrap()
+                    .text,
+                "a"
+            );
+            assert_eq!(
+                term.take_osc52_write(SelectionKind::Primary).unwrap().text,
+                "b"
+            );
+        }
+    }
+    let invalid_at_limit = format!("\x1b]52;;{}\x07", "!".repeat(MAX_OSC_BYTES - 4));
+    feed(&mut term, invalid_at_limit.as_bytes());
+    assert!(term.take_osc52_write(SelectionKind::Clipboard).is_none());
+    assert!(term.take_osc52_write(SelectionKind::Primary).is_none());
+    feed(&mut term, b"Q");
+    assert_eq!(term.grid().unwrap()[Line(0)][Column(0)].c, 'Q');
+}
+
+#[test]
 fn osc52_write_needs_explicit_opt_in() {
     use crate::clipboard::SelectionKind;
 

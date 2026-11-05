@@ -295,7 +295,7 @@
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `osc52_write_needs_explicit_opt_in`
   - **Done:** 未 opt-in 時不覆寫 Clipboard
 
-- [ ] **TASK-068 — OSC 52 Base64 payload 設上限**
+- [x] **TASK-068 — OSC 52 Base64 payload 設上限**
   - **Dependencies:** `TASK-067`  |  **Unit Test:** `osc52_rejects_oversized_base64`
   - **Done:** 超額/壞編碼不造成無界 allocation
 
