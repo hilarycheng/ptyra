@@ -395,7 +395,7 @@
   - **Dependencies:** `TASK-085`, `TASK-038`  |  **Unit Test:** `only_active_tab_is_rendered`
   - **Done:** 切 Tab 時刷新，Idle 隱藏 Tab 不 repaint
 
-- [ ] **TASK-092 — Tab switch 時 Clipboard route 保持隔離**
+- [x] **TASK-092 — Tab switch 時 Clipboard route 保持隔離**
   - **Dependencies:** `TASK-085`, `TASK-059`  |  **Unit Test:** `copy_paste_targets_original_tab`
   - **Done:** Pending Paste 唔混入另一個 Tab
 

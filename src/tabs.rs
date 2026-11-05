@@ -3,6 +3,7 @@ pub mod bar;
 #[cfg(target_os = "linux")]
 pub mod output;
 mod render;
+mod routing;
 mod title;
 use crate::{
     TabId,
