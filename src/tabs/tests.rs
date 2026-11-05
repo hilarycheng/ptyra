@@ -9,6 +9,28 @@ impl TabPty for FakePty {
 }
 
 #[test]
+fn tab_cycle_wraps_at_ends() {
+    let mut tabs = TabRegistry::<FakePty>::default();
+    assert_eq!(tabs.cycle(TabDirection::Next), None);
+    assert_eq!(tabs.cycle(TabDirection::Previous), None);
+    tabs.insert(TabId(2), 2, 8).unwrap();
+    assert_eq!(tabs.cycle(TabDirection::Next), Some(TabId(2)));
+    assert_eq!(tabs.cycle(TabDirection::Previous), Some(TabId(2)));
+    tabs.insert(TabId(4), 2, 8).unwrap();
+    tabs.insert(TabId(9), 2, 8).unwrap();
+    for id in [4, 9, 2, 4] {
+        assert_eq!(tabs.cycle(TabDirection::Next), Some(TabId(id)));
+    }
+    for id in [2, 9, 4, 2] {
+        assert_eq!(tabs.cycle(TabDirection::Previous), Some(TabId(id)));
+    }
+    assert_eq!(
+        tabs.ids().collect::<Vec<_>>(),
+        [TabId(2), TabId(4), TabId(9)]
+    );
+}
+
+#[test]
 fn tab_switch_updates_active_id() {
     let mut tabs = TabRegistry::<FakePty>::default();
     assert_eq!(tabs.active(), None);

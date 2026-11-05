@@ -9,6 +9,11 @@ use std::io::ErrorKind;
 
 pub const MAX_TABS: usize = 64;
 
+pub enum TabDirection {
+    Next,
+    Previous,
+}
+
 /// A single spawn effect; the adapter consumes it and attaches its result by TabId.
 pub struct SpawnTab {
     pub tab: TabId,
@@ -123,6 +128,21 @@ impl<P: TabPty> TabRegistry<P> {
 
     pub fn active(&self) -> Option<TabId> {
         self.active
+    }
+
+    pub fn cycle(&mut self, direction: TabDirection) -> Option<TabId> {
+        let index = self
+            .entries
+            .iter()
+            .position(|tab| Some(tab.id) == self.active)?;
+        let count = self.entries.len();
+        let next = match direction {
+            TabDirection::Next => (index + 1) % count,
+            TabDirection::Previous => (index + count - 1) % count,
+        };
+        let id = self.entries[next].id;
+        self.activate(id);
+        Some(id)
     }
 
     /// False means no change, including unknown IDs; other Tab state is untouched.

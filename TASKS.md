@@ -371,7 +371,7 @@
   - **Dependencies:** `TASK-083`  |  **Unit Test:** `tab_switch_updates_active_id`
   - **Done:** 只更改目標 Tab，其他 state 原樣保留
 
-- [ ] **TASK-086 — Next/Previous Tab wrap-around**
+- [x] **TASK-086 — Next/Previous Tab wrap-around**
   - **Dependencies:** `TASK-085`  |  **Unit Test:** `tab_cycle_wraps_at_ends`
   - **Done:** 切換順序有確定結果
 
