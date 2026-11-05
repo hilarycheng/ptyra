@@ -489,7 +489,7 @@
   - **Dependencies:** `TASK-112`, `TASK-027`  |  **Unit Test:** `kitty_mode_stack_is_screen_scoped`
   - **Done:** 兩個 Screen 切換時狀態不污染
 
-- [ ] **TASK-114 — Kitty encoder 不重發 IME commit**
+- [x] **TASK-114 — Kitty encoder 不重發 IME commit**
   - **Dependencies:** `TASK-110`, `TASK-079`  |  **Unit Test:** `kitty_encoder_skips_ime_consumed_text`
   - **Done:** 中文輸入不重複
 

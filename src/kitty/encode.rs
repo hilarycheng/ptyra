@@ -5,6 +5,29 @@ use crate::{
 };
 use kbvm::{Keysym, ModifierMask};
 
+pub struct KeyEncoder {
+    pub flags: KeyboardFlags,
+    pub application_cursor: bool,
+}
+
+impl KeyEncoder {
+    pub fn route(
+        &self,
+        key: TranslatedKey,
+        owner: crate::ime::key::KeyOwner,
+        focus: &crate::input::KeyboardFocus,
+        map: &crate::keymap::Keymap,
+        repeat: &mut crate::repeat::RepeatScheduler,
+        clock: &impl crate::clock::Clock,
+    ) -> Result<Option<Vec<u8>>, AppError> {
+        let Some(key) = crate::ime::key::route_key(key, owner, focus, map, repeat, clock)? else {
+            return Ok(None);
+        };
+        let bytes = encode_key(&key, self.flags, self.application_cursor)?;
+        Ok((!bytes.is_empty()).then_some(bytes))
+    }
+}
+
 /// Encode only keys returned by the ownership gate; IME commits use their separate UTF-8 path.
 /// Unsupported enhancements or XKB multi-symbol keys fail explicitly, without partial output.
 pub fn encode_key(
@@ -169,6 +192,86 @@ mod tests {
         keymap::{Keymap, Modifiers},
     };
     use kbvm::ModifierMask;
+
+    #[test]
+    fn kitty_encoder_skips_ime_consumed_text() {
+        use crate::{clock::FakeClock, ime::key::KeyOwner, repeat::RepeatScheduler};
+        let map = Keymap::from_bytes(include_bytes!("../../tests/fixtures/greek.xkb")).unwrap();
+        let mut focus = KeyboardFocus::default();
+        focus.enter(WindowId(1), TabId(1));
+        let clock = FakeClock::default();
+        let mut repeat = RepeatScheduler::default();
+        let encoder = KeyEncoder {
+            flags: KeyboardFlags::DISAMBIGUATE_ESC_CODES | KeyboardFlags::REPORT_EVENT_TYPES,
+            application_cursor: false,
+        };
+        for (pressed, repeated) in [(true, false), (true, true), (false, false)] {
+            let key = map
+                .translate(focus.route_key(16, pressed).unwrap(), repeated)
+                .unwrap()
+                .unwrap();
+            assert!(
+                encoder
+                    .route(key, KeyOwner::Ime, &focus, &map, &mut repeat, &clock)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        use crate::{
+            clipboard::{PasteSink, SeatId},
+            ime::{ImeEvent, ImeState},
+            wayland::{Capabilities, Global},
+        };
+        struct Sink(Vec<u8>);
+        impl PasteSink for Sink {
+            type Error = std::convert::Infallible;
+            fn tab(&self) -> TabId {
+                TabId(1)
+            }
+            fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+                self.0.extend_from_slice(bytes);
+                Ok(())
+            }
+        }
+        let caps = Capabilities::from_globals(&[Global {
+            name: 1,
+            interface: "zwp_text_input_manager_v3",
+            version: 1,
+        }]);
+        let mut ime = ImeState::new(SeatId(1), &caps);
+        ime.enter(SeatId(1), WindowId(1));
+        ime.sync_enabled(SeatId(1), &focus, true);
+        let epoch = ime.capture_focus(SeatId(1), WindowId(1), &focus);
+        ime.stage(&epoch, &focus, ImeEvent::Commit { text: Some("中") })
+            .unwrap();
+        let mut update = ime.done(&epoch, &focus, ime.commit_serial()).unwrap();
+        let mut sink = Sink(Vec::new());
+        assert!(update.enqueue_commit(&ime, &focus, &mut sink).unwrap());
+        assert!(!update.enqueue_commit(&ime, &focus, &mut sink).unwrap());
+        assert_eq!(sink.0, "中".as_bytes());
+        let key = map
+            .translate(focus.route_key(16, true).unwrap(), false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            encoder
+                .route(key, KeyOwner::Terminal, &focus, &map, &mut repeat, &clock)
+                .unwrap()
+                .unwrap(),
+            "中".as_bytes()
+        );
+        let key = map
+            .translate(focus.route_key(16, true).unwrap(), false)
+            .unwrap()
+            .unwrap();
+        focus.enter(WindowId(1), TabId(2));
+        assert!(
+            encoder
+                .route(key, KeyOwner::Terminal, &focus, &map, &mut repeat, &clock)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn kitty_key_event_types_are_distinct() {
