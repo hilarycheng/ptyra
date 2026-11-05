@@ -370,6 +370,33 @@ fn terminal_combining_limit_includes_wide_cells_and_repeat() {
 }
 
 #[test]
+fn oversized_osc_is_rejected_safely() {
+    for header in ["2;", "8;;https://example.test/", "999;"] {
+        for chunk_size in [1, 31, MAX_FEED_BYTES] {
+            let body = format!("{header}{}", "x".repeat(MAX_OSC_BYTES - header.len()));
+            let mut bounded = terminal(1);
+            let sequence = format!("\x1b]{body}\x1b\\");
+            for chunk in sequence.as_bytes().chunks(chunk_size) {
+                feed(&mut bounded, chunk);
+            }
+            assert!(bounded.grid().is_some());
+            let mut oversized = terminal(2);
+            let sequence = format!("\x1b]{body}SECRET");
+            let result = sequence
+                .as_bytes()
+                .chunks(chunk_size)
+                .try_for_each(|chunk| oversized.feed(TabId(2), chunk));
+            let error = result.unwrap_err();
+            assert_eq!(error.error.kind(), std::io::ErrorKind::InvalidData);
+            assert!(!format!("{error:?}").contains("SECRET"));
+            assert!(oversized.grid().is_none());
+            assert!(oversized.feed(TabId(2), b"\x07after").is_err());
+            feed(&mut bounded, b"still works");
+        }
+    }
+}
+
+#[test]
 fn terminal_osc_bound_tracks_escape_controls_and_terminators() {
     for terminator in [&b"\x07"[..], &b"\x1b\\"[..], &b"\x18"[..], &b"\x1a"[..]] {
         let mut term = terminal(1);

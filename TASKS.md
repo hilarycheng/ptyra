@@ -427,7 +427,7 @@
 
 ## J. Security / Reliability / Performance
 
-- [ ] **TASK-099 — 限制不可信 OSC payload 長度**
+- [x] **TASK-099 — 限制不可信 OSC payload 長度**
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `oversized_osc_is_rejected_safely`
   - **Done:** 過長 sequence 不引致無界 allocation
 
