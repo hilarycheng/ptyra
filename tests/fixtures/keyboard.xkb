@@ -1,0 +1,20 @@
+xkb_keymap {
+    xkb_keycodes "test" {
+        minimum = 8; maximum = 255;
+        <AE04> = 13; <RTRN> = 36; <AC01> = 38; <UP> = 111;
+    };
+    xkb_types "test" {
+        type "TWO_LEVEL" {
+            modifiers = Shift;
+            map[None] = Level1;
+            map[Shift] = Level2;
+        };
+    };
+    xkb_compatibility "test" {};
+    xkb_symbols "test" {
+        key <AE04> { type="TWO_LEVEL", [ 4, dollar ] };
+        key <RTRN> { type="TWO_LEVEL", [ Return, Return ] };
+        key <AC01> { type="TWO_LEVEL", [ a, A ] };
+        key <UP> { type="TWO_LEVEL", [ Up, Up ] };
+    };
+};

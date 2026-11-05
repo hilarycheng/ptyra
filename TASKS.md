@@ -473,7 +473,7 @@
   - **Dependencies:** `TASK-108`  |  **Unit Test:** `kitty_query_reports_current_flags`
   - **Done:** query 只回報已支援 modes
 
-- [ ] **TASK-110 — 編碼普通及 modified key events**
+- [x] **TASK-110 — 編碼普通及 modified key events**
   - **Dependencies:** `TASK-108`, `TASK-012`  |  **Unit Test:** `kitty_encoder_handles_modified_enter`
   - **Done:** 不破壞 legacy keyboard 兼容
 

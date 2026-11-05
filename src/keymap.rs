@@ -54,6 +54,7 @@ pub struct TranslatedKey {
     pub target: FocusTarget,
     pub physical_code: u32,
     pub keysyms: Vec<u32>,
+    pub unshifted_keysyms: Vec<u32>,
     pub modifiers: Modifiers,
     pub state: KeyState,
     pub repeatable: bool,
@@ -173,10 +174,26 @@ impl Keymap {
             .with_ctrl_fallback(false)
             .with_caps_transform(false);
         let keysyms = lookup.into_iter().map(|symbol| symbol.keysym().0).collect();
+        let unshifted_keysyms = self
+            .lookup
+            .lookup(
+                GroupIndex(self.modifiers.group),
+                ModifierMask(
+                    self.modifiers.effective() & !(ModifierMask::SHIFT.0 | ModifierMask::LOCK.0),
+                ),
+                Keycode::from_x11(xkb_code),
+            )
+            .with_ctrl_transform(false)
+            .with_ctrl_fallback(false)
+            .with_caps_transform(false)
+            .into_iter()
+            .map(|symbol| symbol.keysym().to_lowercase().0)
+            .collect();
         Ok(Some(TranslatedKey {
             target: route.target,
             physical_code: route.code,
             keysyms,
+            unshifted_keysyms,
             modifiers: self.modifiers,
             state: if repeat {
                 KeyState::Repeated
