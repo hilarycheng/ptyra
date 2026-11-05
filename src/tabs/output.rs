@@ -46,6 +46,7 @@ impl<P: TabPtyRead> TabRegistry<P> {
             if length == 0 || length > limit {
                 return Err(AppError::new(Component::Pty, ErrorKind::InvalidData));
             }
+            tab.dirty = true;
             tab.terminal
                 .feed(id, &buffer[..length])
                 .map_err(|error| error.error)?;

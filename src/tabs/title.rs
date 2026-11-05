@@ -25,6 +25,7 @@ impl<P> Tab<P> {
             title.push(ch);
         }
         self.title = title;
+        self.dirty = true;
         Ok(())
     }
 

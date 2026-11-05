@@ -391,7 +391,7 @@
   - **Dependencies:** `TASK-085`, `TASK-026`  |  **Unit Test:** `inactive_tab_drains_output`
   - **Done:** 隱藏 Tab 不阻塞 child process
 
-- [ ] **TASK-091 — 只 Render Active Tab**
+- [x] **TASK-091 — 只 Render Active Tab**
   - **Dependencies:** `TASK-085`, `TASK-038`  |  **Unit Test:** `only_active_tab_is_rendered`
   - **Done:** 切 Tab 時刷新，Idle 隱藏 Tab 不 repaint
 

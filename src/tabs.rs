@@ -2,6 +2,7 @@
 pub mod bar;
 #[cfg(target_os = "linux")]
 pub mod output;
+mod render;
 mod title;
 use crate::{
     TabId,
@@ -48,6 +49,7 @@ pub struct Tab<P> {
     pty: Option<P>,
     selections: TabSelections,
     title: String,
+    dirty: bool,
 }
 
 impl<P> Tab<P> {
@@ -58,6 +60,7 @@ impl<P> Tab<P> {
         &self.terminal
     }
     pub fn terminal_mut(&mut self) -> &mut Terminal {
+        self.dirty = true;
         &mut self.terminal
     }
     pub fn pty(&self) -> Option<&P> {
@@ -67,6 +70,7 @@ impl<P> Tab<P> {
         &self.selections
     }
     pub fn selections_mut(&mut self) -> &mut TabSelections {
+        self.dirty = true;
         &mut self.selections
     }
 }
@@ -75,6 +79,7 @@ pub struct TabRegistry<P> {
     entries: Vec<Tab<P>>,
     next_id: Option<u64>,
     active: Option<TabId>,
+    render_target: Option<TabId>,
 }
 
 impl<P> Default for TabRegistry<P> {
@@ -83,6 +88,7 @@ impl<P> Default for TabRegistry<P> {
             entries: Vec::new(),
             next_id: Some(1),
             active: None,
+            render_target: None,
         }
     }
 }
@@ -117,6 +123,7 @@ impl<P: TabPty> TabRegistry<P> {
             pty: None,
             selections: TabSelections::new(id),
             title: "Terminal".into(),
+            dirty: true,
         });
         self.next_id = id.0.checked_add(1);
         if self.active.is_none() {
