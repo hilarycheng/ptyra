@@ -1,5 +1,14 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Network capability invariant — TASK-107 (2026-11-05)
+
+The application exposes only Wayland, PTY, IME and Clipboard event sources.
+No telemetry, analytics, update endpoint or network client is configured.
+The invariant test exhaustively matches effects and checks reviewed runtime dependencies, versions and features.
+Dependency or effect additions require updating that review guard; unknown telemetry config keys are rejected.
+This is an architecture regression guard, not a syscall sandbox or a proof about dependency internals.
+Shell children and explicitly requested external URL openers remain outside this guarantee.
+
 ## Sensitive logs — TASK-101 (2026-11-05)
 
 `log = 0.4.34` was already locked and reviewed under TASK-026 (MIT OR Apache-2.0).

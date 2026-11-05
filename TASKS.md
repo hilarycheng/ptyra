@@ -459,7 +459,7 @@
   - **Dependencies:** `TASK-099`, `TASK-048`, `TASK-072`  |  **Unit Test:** `malformed_input_never_panics`
   - **Done:** 預設 fuzz seed + property unit tests 無 panic
 
-- [ ] **TASK-107 — App side network/telemetry capability invariant**
+- [x] **TASK-107 — App side network/telemetry capability invariant**
   - **Dependencies:** `TASK-001`  |  **Unit Test:** `app_telemetry_is_disabled_by_design`
   - **Done:** Terminal 自身不主動上報資料；child process 不在此保證內
 
