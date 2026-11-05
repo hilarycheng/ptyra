@@ -485,7 +485,7 @@
   - **Dependencies:** `TASK-108`  |  **Unit Test:** `kitty_stack_is_bounded`
   - **Done:** 不能用 Escape 無限增長
 
-- [ ] **TASK-113 — Main/Alternate Screen 各自 mode stack**
+- [x] **TASK-113 — Main/Alternate Screen 各自 mode stack**
   - **Dependencies:** `TASK-112`, `TASK-027`  |  **Unit Test:** `kitty_mode_stack_is_screen_scoped`
   - **Done:** 兩個 Screen 切換時狀態不污染
 

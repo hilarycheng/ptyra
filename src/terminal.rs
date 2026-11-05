@@ -283,6 +283,8 @@ impl Core {
             // Check after each parser step: REP can append up to u16::MAX marks.
             self.parser
                 .advance(&mut self.term, std::slice::from_ref(byte));
+            self.keyboard
+                .set_screen(self.term.mode().contains(TermMode::ALT_SCREEN));
             let grid = self.term.grid();
             let cursor = &grid.cursor;
             let mut column = cursor.point.column;

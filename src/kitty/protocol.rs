@@ -15,14 +15,28 @@ pub(crate) struct KeyboardProtocol {
 struct KeyboardState {
     // shortcut: advertise no modes until screen-scoped state and input ownership are wired.
     supported: KeyboardFlags,
-    current: KeyboardFlags,
-    stack: [KeyboardFlags; MAX_KEYBOARD_STACK],
-    depth: usize,
+    active: ModeStack,
+    inactive: ModeStack,
+    alternate: bool,
     replies: VecDeque<KeyboardFlags>,
     failed: bool,
 }
 
+#[derive(Default)]
+struct ModeStack {
+    current: KeyboardFlags,
+    stack: [KeyboardFlags; MAX_KEYBOARD_STACK],
+    depth: usize,
+}
+
 impl KeyboardProtocol {
+    pub(crate) fn set_screen(&mut self, alternate: bool) {
+        if self.state.alternate != alternate {
+            std::mem::swap(&mut self.state.active, &mut self.state.inactive);
+            self.state.alternate = alternate;
+        }
+    }
+
     /// Terminal's OSC and per-feed limits must run before this secondary VTE observer.
     pub(crate) fn advance(&mut self, bytes: &[u8]) -> bool {
         self.parser.advance(&mut self.state, bytes);
@@ -56,35 +70,40 @@ impl Perform for KeyboardState {
                 {
                     self.failed = true;
                 } else {
-                    self.replies.push_back(self.current & self.supported);
+                    self.replies.push_back(self.active.current & self.supported);
                 }
             }
             b"=" => {
                 let flags = KeyboardFlags::from_bits_truncate(values[0] as u8) & self.supported;
                 match values[1] {
-                    0 | 1 => self.current = flags,
-                    2 => self.current |= flags,
-                    3 => self.current.remove(flags),
+                    0 | 1 => self.active.current = flags,
+                    2 => self.active.current |= flags,
+                    3 => self.active.current.remove(flags),
                     _ => return,
                 }
-                self.depth = self.depth.max(1);
-                self.stack[self.depth - 1] = self.current;
+                self.active.depth = self.active.depth.max(1);
+                self.active.stack[self.active.depth - 1] = self.active.current;
             }
             b">" if params.len() <= 1 => {
-                if self.depth == MAX_KEYBOARD_STACK {
-                    self.stack.copy_within(1.., 0);
-                    self.depth -= 1;
+                if self.active.depth == MAX_KEYBOARD_STACK {
+                    self.active.stack.copy_within(1.., 0);
+                    self.active.depth -= 1;
                 }
-                self.current = KeyboardFlags::from_bits_truncate(values[0] as u8) & self.supported;
-                self.stack[self.depth] = self.current;
-                self.depth += 1;
+                self.active.current =
+                    KeyboardFlags::from_bits_truncate(values[0] as u8) & self.supported;
+                self.active.stack[self.active.depth] = self.active.current;
+                self.active.depth += 1;
             }
             b"<" if params.len() <= 1 => {
-                self.depth = self.depth.saturating_sub(usize::from(values[0].max(1)));
-                self.current = self
+                self.active.depth = self
+                    .active
+                    .depth
+                    .saturating_sub(usize::from(values[0].max(1)));
+                self.active.current = self
+                    .active
                     .depth
                     .checked_sub(1)
-                    .map(|index| self.stack[index])
+                    .map(|index| self.active.stack[index])
                     .unwrap_or_default();
             }
             _ => {}
@@ -93,8 +112,9 @@ impl Perform for KeyboardState {
 
     fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
         if !ignore && intermediates.is_empty() && byte == b'c' {
-            self.current = KeyboardFlags::empty();
-            self.depth = 0;
+            self.active = ModeStack::default();
+            self.inactive = ModeStack::default();
+            self.alternate = false;
         }
     }
 }
@@ -103,6 +123,30 @@ impl Perform for KeyboardState {
 mod tests {
     use super::*;
     use crate::{TabId, kitty::KeyboardFlags, terminal::Terminal};
+
+    #[test]
+    fn kitty_mode_stack_is_screen_scoped() {
+        let mut protocol = KeyboardProtocol::default();
+        protocol.state.supported = KeyboardFlags::all();
+        protocol.advance(b"\x1b[>1u");
+        protocol.set_screen(true);
+        protocol.advance(b"\x1b[?u\x1b[>2u");
+        assert_eq!(protocol.take_reply().unwrap(), b"\x1b[?0u");
+        protocol.set_screen(true);
+        protocol.advance(b"\x1b[?u");
+        assert_eq!(protocol.take_reply().unwrap(), b"\x1b[?2u");
+        protocol.set_screen(false);
+        protocol.advance(b"\x1b[?u\x1b[<u");
+        assert_eq!(protocol.take_reply().unwrap(), b"\x1b[?1u");
+        protocol.set_screen(true);
+        protocol.advance(b"\x1b[?u\x1bc");
+        assert_eq!(protocol.take_reply().unwrap(), b"\x1b[?2u");
+        for alternate in [false, true] {
+            protocol.set_screen(alternate);
+            protocol.advance(b"\x1b[?u");
+            assert_eq!(protocol.take_reply().unwrap(), b"\x1b[?0u");
+        }
+    }
 
     #[test]
     fn kitty_stack_is_bounded() {
@@ -114,12 +158,12 @@ mod tests {
         for i in 0..=32 {
             assert!(protocol.advance(format!("\x1b[>{}u", i % 32).as_bytes()));
         }
-        assert_eq!(protocol.state.depth, MAX_KEYBOARD_STACK);
+        assert_eq!(protocol.state.active.depth, MAX_KEYBOARD_STACK);
         assert!(protocol.advance(b"\x1b[<31u\x1b[?u"));
         assert_eq!(protocol.take_reply().unwrap(), b"\x1b[?1u");
         assert!(protocol.advance(b"\x1b[<65535u\x1b[?u"));
         assert_eq!(protocol.take_reply().unwrap(), b"\x1b[?0u");
-        assert_eq!(protocol.state.depth, 0);
+        assert_eq!(protocol.state.active.depth, 0);
         assert!(protocol.advance(b"\x1b[>1u\x1b[>u\x1b[<u\x1b[?u"));
         assert_eq!(protocol.take_reply().unwrap(), b"\x1b[?1u");
         let mut terminal = Terminal::with_scrollback(TabId(1), 2, 8, 0).unwrap();
