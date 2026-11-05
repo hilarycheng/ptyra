@@ -543,7 +543,7 @@
   - **Dependencies:** `TASK-009`, `TASK-010`, `TASK-017`, `TASK-018`, `TASK-094` | **Unit Test:** `runtime_window_waits_for_configure`
   - **Done:** main 連接 compositor；configure/ack 後提交有界 SHM buffer；無 dirty state 時阻塞等待；close/disconnect 正常退出；隔離 compositor 驗證真正視窗。
 
-- [ ] **TASK-126 — 將字形與 terminal grid 畫到視窗**
+- [x] **TASK-126 — 將字形與 terminal grid 畫到視窗**
   - **Dependencies:** `TASK-125`, `TASK-028`, `TASK-032`, `TASK-033` | **Unit Test:** `runtime_raster_draws_terminal_cells`
   - **Done:** 載入實際字型，bounded rasterization 呈現 grid、顏色及 cursor；真 compositor screenshot 驗證可見文字。
 

@@ -1,5 +1,14 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Software text raster — TASK-126 (2026-11-05)
+
+- `ab_glyph =0.2.32`（std only，Apache-2.0）提供 software glyph coverage；ab_glyph_rasterizer 0.1.10、owned_ttf_parser 0.25.1（Apache-2.0）、ttf-parser 0.25.1（MIT OR Apache-2.0）。Source/maintenance：https://github.com/alexheretic/ab-glyph 。
+- 核對 TASK-125 同一完整 RustSec snapshot。`ttf-parser` 有 **RUSTSEC-2026-0192 unmaintained** 通知，冇 patched version；上游 issue 217 亦提及未公開細節嘅 complexity/DoS 報告。唔聲稱冇漏洞。呢個係已知維護風險，後續應換成維護中嘅 parser。
+- 只讀本機 Fontconfig 選出嘅字型，唔接受 PTY 傳入字型/path；每個檔案 <=32 MiB、最多兩個 faces，glyph raster bounds <=1024²，cache 重用現有 byte/entry caps。檔案及像素上限唔係 parser CPU 時限。只應使用可信本機字型。
+- Native dependency：Fontconfig `fc-match` executable；以 argv 執行，冇 Shell evaluation，唔改 Fontconfig 設定。Primary 來自 config；CJK fallback 用 charset query；缺字仍可能顯示 missing-glyph。
+- `tests/fixtures/demo.ttf` 係 ttf-parser 0.25.1 嘅 400-byte test font；附上原 MIT notice `demo-LICENSE-MIT`。Unit test 唔依賴主機字型。
+- 隔離 Sway screenshot 已目視核對 ASCII、綠色文字、繁體中文及 cursor。暫時 steady outline cursor、單一 regular face；完整 shaping、bold/italic faces、HiDPI raster calibration 未驗收。
+
 ## Native Wayland — TASK-125 (2026-11-05)
 
 - `wayland-client =0.31.15` 同 `wayland-protocols =0.32.13`（只開 client feature），MIT，提供真 compositor connection、dispatch 同 xdg-shell。

@@ -1,4 +1,5 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
+mod raster;
 use nix::sys::memfd::{MFdFlags, memfd_create};
 use std::{
     fs::File,
@@ -79,13 +80,30 @@ struct Runtime {
     pixels: Vec<u8>,
     running: bool,
     failure: Option<&'static str>,
+    raster: raster::Raster,
+    terminal: crate::terminal::Terminal,
 }
 
-pub fn run(_config: crate::config::Config) -> Result<()> {
+pub fn run(config: crate::config::Config) -> Result<()> {
     let connection =
         Connection::connect_to_env().map_err(|_| "cannot connect to Wayland compositor")?;
     let mut queue = connection.new_event_queue();
     let qh = queue.handle();
+    let raster = raster::Raster::load(&config)?;
+    let mut terminal = crate::terminal::Terminal::with_scrollback(
+        crate::TabId(1),
+        24,
+        80,
+        config.scrollback_lines,
+    )
+    .map_err(|_| "terminal allocation failed")?;
+    terminal
+        .feed(
+            crate::TabId(1),
+            "Ptyra — Native Wayland\r\n\x1b[32mTerminal grid rendering\x1b[0m\r\n繁體中文\r\n"
+                .as_bytes(),
+        )
+        .map_err(|_| "terminal initialization failed")?;
     let mut app = Runtime {
         compositor: None,
         shm: None,
@@ -97,6 +115,8 @@ pub fn run(_config: crate::config::Config) -> Result<()> {
         pixels: Vec::new(),
         running: true,
         failure: None,
+        raster,
+        terminal,
     };
     connection.display().get_registry(&qh, ());
     queue
@@ -184,9 +204,8 @@ impl Runtime {
             .try_reserve(bytes)
             .map_err(|_| "frame allocation failed")?;
         self.pixels.resize(bytes, 0);
-        for pixel in self.pixels.chunks_exact_mut(4) {
-            pixel.copy_from_slice(&0xff181818u32.to_ne_bytes());
-        }
+        self.raster
+            .draw(&self.terminal, self.paint.size, &mut self.pixels)?;
         let slot = self.slots[index].as_mut().ok_or("frame slot unavailable")?;
         slot.file
             .write_all_at(&self.pixels, 0)
