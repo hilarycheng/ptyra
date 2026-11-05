@@ -1,0 +1,11 @@
+# Invalid UTF-8, truncated CSI/OSC/APC, malformed OSC52 and MIME, CJK with combining marks.
+ff fe c0 af ed a0 80 f4 90 80 80
+1b 5b 39 39 39 39 39 39 39 39 39 39 3b 3b 3a 6d
+1b 5d 35 32 3b 63 3b 21 21 21 07
+1b 5d 38 3b 3b 1b 5c
+1b 5f 47 61 3d 54 2c 6d 3d 31 3b 21 21 1b 5c
+1b 5b 3f 31 30 34 39 68 1b 5b 3f 31 30 34 39 6c
+74 65 78 74 2f 70 6c 61 69 6e 3b 63 68 61 72 73 65 74 3d 00
+e4 b8 ad e6 96 87 cc 81 0d 0a
+1b 5d 32 3b 00 18 1b 5b 30 6d
+1b 5b

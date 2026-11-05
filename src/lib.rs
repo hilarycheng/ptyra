@@ -23,6 +23,9 @@ pub mod window;
 
 pub const APP_NAME: &str = "Ptyra";
 
+#[cfg(test)]
+mod fuzz_tests;
+
 /// A window ID cannot be used where a tab ID is required.
 ///
 /// ```compile_fail

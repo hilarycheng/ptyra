@@ -455,7 +455,7 @@
   - **Dependencies:** `TASK-083`, `TASK-097`  |  **Unit Test:** `tab_budget_rejects_overallocation`
   - **Done:** 新增 Tab 不造成無界 cache
 
-- [ ] **TASK-106 — Terminal/Clipboard/IME parser fuzz fixtures**
+- [x] **TASK-106 — Terminal/Clipboard/IME parser fuzz fixtures**
   - **Dependencies:** `TASK-099`, `TASK-048`, `TASK-072`  |  **Unit Test:** `malformed_input_never_panics`
   - **Done:** 預設 fuzz seed + property unit tests 無 panic
 
