@@ -279,7 +279,7 @@
   - **Dependencies:** `TASK-008`  |  **Unit Test:** `primary_selection_capability_is_optional`
   - **Done:** 缺少 protocol 時正常使用一般 Clipboard
 
-- [ ] **TASK-064 — Primary Selection state 與 Clipboard 分離**
+- [x] **TASK-064 — Primary Selection state 與 Clipboard 分離**
   - **Dependencies:** `TASK-063`, `TASK-047`  |  **Unit Test:** `primary_selection_does_not_replace_clipboard`
   - **Done:** Mouse selection / Copy 兩套 owner 狀態互不覆寫
 

@@ -46,6 +46,78 @@ fn clipboard_state_rejects_stale_offer() {
 }
 
 #[test]
+fn primary_selection_does_not_replace_clipboard() {
+    let mut clipboard = ClipboardState::new();
+    let mut primary = ClipboardState::new_primary();
+    assert_eq!(clipboard.owner(), None);
+    assert_eq!(primary.owner(), None);
+
+    assert!(clipboard.set_local_owner(TabId(7)));
+    assert_eq!(primary.owner(), None);
+    assert!(primary.set_local_owner(TabId(8)));
+    assert_eq!(clipboard.owner(), Some(ClipboardOwner::Local(TabId(7))));
+    assert_eq!(primary.owner(), Some(ClipboardOwner::Local(TabId(8))));
+
+    let clipboard_offer = clipboard.offer_created().unwrap();
+    let primary_offer = primary.offer_created().unwrap();
+    assert_ne!(clipboard_offer, primary_offer);
+    assert!(!clipboard.select_offer(primary_offer));
+    assert!(!primary.select_offer(clipboard_offer));
+    clipboard.cancel_offer(primary_offer);
+    primary.cancel_offer(clipboard_offer);
+    assert!(clipboard.select_offer(clipboard_offer));
+    assert!(primary.select_offer(primary_offer));
+    clipboard.cancel_offer(primary_offer);
+    primary.cancel_offer(clipboard_offer);
+    assert_eq!(
+        clipboard.owner(),
+        Some(ClipboardOwner::External(clipboard_offer))
+    );
+    assert_eq!(
+        primary.owner(),
+        Some(ClipboardOwner::External(primary_offer))
+    );
+
+    // A Clipboard receive must not accept a Primary Selection owner as its authority.
+    let mut transfer = super::read::ClipboardTransfer::new(
+        clipboard_offer,
+        std::io::Cursor::new(b"clipboard"),
+        64,
+    )
+    .unwrap();
+    assert!(matches!(
+        transfer
+            .read_ready(&DataOffer::new(clipboard_offer), &primary)
+            .unwrap(),
+        super::read::ReadProgress::Closed
+    ));
+
+    let pending_clipboard = clipboard.offer_created().unwrap();
+    assert!(primary.set_local_owner(TabId(9)));
+    assert!(clipboard.select_offer(pending_clipboard));
+    primary.cancel_offer(primary_offer);
+    assert_eq!(primary.owner(), Some(ClipboardOwner::Local(TabId(9))));
+    assert_eq!(
+        clipboard.owner(),
+        Some(ClipboardOwner::External(pending_clipboard))
+    );
+
+    let pending_primary = primary.offer_created().unwrap();
+    assert!(clipboard.set_local_owner(TabId(10)));
+    assert!(primary.select_offer(pending_primary));
+    clipboard.cancel_offer(pending_clipboard);
+    assert_eq!(clipboard.owner(), Some(ClipboardOwner::Local(TabId(10))));
+    assert_eq!(
+        primary.owner(),
+        Some(ClipboardOwner::External(pending_primary))
+    );
+    primary.cancel_offer(pending_primary);
+    assert_eq!(primary.owner(), None);
+    assert_eq!(clipboard.owner(), Some(ClipboardOwner::Local(TabId(10))));
+    assert!(!primary.select_offer(pending_primary));
+}
+
+#[test]
 fn mime_prefers_utf8_text() {
     let offered = [
         "text/html",

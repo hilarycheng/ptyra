@@ -317,8 +317,15 @@ pub fn plan_data_source(
     ])
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SelectionKind {
+    #[default]
+    Clipboard,
+    Primary,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OfferId(u64);
+pub struct OfferId(u64, SelectionKind);
 
 /// One received wl_data_offer object's advertised formats and lifetime.
 pub struct DataOffer {
@@ -394,9 +401,11 @@ pub enum ClipboardOwner {
     External(OfferId),
 }
 
-/// One instance per Wayland clipboard data device.
+/// Independent owner/offer state per seat and selection data device.
+/// Keep the ordinary Clipboard and Primary Selection in separate instances.
 #[derive(Default)]
 pub struct ClipboardState {
+    selection: SelectionKind,
     next_epoch: u64,
     current_epoch: u64,
     latest_offer: Option<OfferId>,
@@ -404,8 +413,17 @@ pub struct ClipboardState {
 }
 
 impl ClipboardState {
+    /// State for the ordinary Wayland Clipboard (also the Default).
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// State for Primary Selection; its offer identities cannot match ordinary Clipboard offers.
+    pub fn new_primary() -> Self {
+        Self {
+            selection: SelectionKind::Primary,
+            ..Self::default()
+        }
     }
 
     pub fn owner(&self) -> Option<ClipboardOwner> {
@@ -415,7 +433,7 @@ impl ClipboardState {
     /// Create an app-owned identity for an arriving wl_data_offer object.
     pub fn offer_created(&mut self) -> Option<OfferId> {
         self.next_epoch = self.next_epoch.checked_add(1)?;
-        let id = OfferId(self.next_epoch);
+        let id = OfferId(self.next_epoch, self.selection);
         self.latest_offer = Some(id);
         Some(id)
     }
