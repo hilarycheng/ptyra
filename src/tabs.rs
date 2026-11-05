@@ -53,9 +53,13 @@ pub struct Tab<P> {
     title: String,
     dirty: bool,
     preedit: Option<crate::ime::preedit::PreeditState>,
+    exit_status: Option<std::process::ExitStatus>,
 }
 
 impl<P> Tab<P> {
+    pub fn exit_status(&self) -> Option<std::process::ExitStatus> {
+        self.exit_status
+    }
     pub fn id(&self) -> TabId {
         self.id
     }
@@ -101,6 +105,22 @@ impl<P> Default for TabRegistry<P> {
 }
 
 impl<P: TabPty> TabRegistry<P> {
+    /// Keep the PTY for final output drainage; child exit never closes other Tabs.
+    pub fn apply_effect(&mut self, effect: &crate::AppEffect) -> bool {
+        let crate::AppEffect::PtyExited { tab, status } = effect else {
+            return false;
+        };
+        let Some(tab) = self
+            .get_mut(*tab)
+            .filter(|tab| tab.pty.is_some() && tab.exit_status.is_none())
+        else {
+            return false;
+        };
+        tab.exit_status = Some(*status);
+        tab.dirty = true;
+        true
+    }
+
     pub fn with_scrollback(lines: usize) -> Result<Self, AppError> {
         if lines > crate::terminal::MAX_SCROLLBACK_LINES {
             return Err(AppError::new(Component::Config, ErrorKind::InvalidInput));
@@ -143,6 +163,7 @@ impl<P: TabPty> TabRegistry<P> {
             title: "Terminal".into(),
             dirty: true,
             preedit: None,
+            exit_status: None,
         });
         self.next_id = id.0.checked_add(1);
         if self.active.is_none() {

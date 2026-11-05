@@ -1,5 +1,40 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn unexpected_exit_is_per_tab() {
+    use std::{os::unix::process::ExitStatusExt, process::ExitStatus};
+    let mut tabs = TabRegistry::<FakePty>::default();
+    for id in [1, 2] {
+        tabs.insert(TabId(id), 2, 8).unwrap();
+        tabs.attach_pty(FakePty(TabId(id))).unwrap();
+        tabs.get_mut(TabId(id)).unwrap().dirty = false;
+    }
+    let effect = crate::reduce(&crate::AppEvent::PtyExited {
+        tab: TabId(2),
+        status: ExitStatus::from_raw(9),
+    });
+    assert!(tabs.apply_effect(&effect));
+    assert_eq!(
+        tabs.get(TabId(2)).unwrap().exit_status().unwrap().signal(),
+        Some(9)
+    );
+    assert!(tabs.get(TabId(2)).unwrap().dirty);
+    assert!(tabs.get(TabId(1)).unwrap().exit_status().is_none());
+    assert!(!tabs.get(TabId(1)).unwrap().dirty);
+    assert_eq!(tabs.active(), Some(TabId(1)));
+    assert!(tabs.get(TabId(2)).unwrap().pty().is_some());
+    tabs.get_mut(TabId(2))
+        .unwrap()
+        .terminal_mut()
+        .feed(TabId(2), b"last")
+        .unwrap();
+    assert!(!tabs.apply_effect(&effect));
+    tabs.close(TabId(2));
+    assert!(!tabs.apply_effect(&effect));
+    assert!(!tabs.apply_effect(&crate::AppEffect::Route(crate::EventSource::Pty)));
+}
+
 #[derive(Debug)]
 pub(super) struct FakePty(TabId);
 impl TabPty for FakePty {
