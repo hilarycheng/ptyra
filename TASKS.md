@@ -349,7 +349,7 @@
   - **Dependencies:** `TASK-078`, `TASK-002`  |  **Unit Test:** `ime_preedit_does_not_cross_tab`
   - **Done:** 轉 Tab 後唔保留舊 Tab 組字
 
-- [ ] **TASK-081 — IME unavailable/restart 狀態復原**
+- [x] **TASK-081 — IME unavailable/restart 狀態復原**
   - **Dependencies:** `TASK-071`  |  **Unit Test:** `ime_restart_keeps_normal_keyboard`
   - **Done:** Fcitx5 重啟唔令一般 keyboard 失效
 

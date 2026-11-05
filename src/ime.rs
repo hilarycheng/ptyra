@@ -138,6 +138,12 @@ impl ImeState {
         self.seat
     }
 
+    /// Call when the adapter loses/recreates its text-input object; require a new enter before enabling.
+    /// Keyboard state is independent. Fcitx restarts behind the compositor need no keyboard reset.
+    pub fn reset(&mut self, capabilities: &Capabilities) {
+        *self = Self::new(self.seat, capabilities);
+    }
+
     /// None means IME is unavailable; ordinary keyboard handling remains independent.
     pub fn manager_binding(&self) -> Option<Binding> {
         self.manager

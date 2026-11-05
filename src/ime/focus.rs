@@ -65,6 +65,62 @@ mod tests {
     };
 
     #[test]
+    fn ime_restart_keeps_normal_keyboard() {
+        use crate::{
+            clock::FakeClock,
+            ime::key::{KeyOwner, route_key},
+            keymap::Keymap,
+            repeat::RepeatScheduler,
+        };
+        let seat = SeatId(1);
+        let window = WindowId(1);
+        let caps = Capabilities::from_globals(&[Global {
+            name: 3,
+            interface: "zwp_text_input_manager_v3",
+            version: 1,
+        }]);
+        let mut keyboard = KeyboardFocus::default();
+        keyboard.enter(window, TabId(7));
+        let map = Keymap::from_bytes(include_bytes!("../../tests/fixtures/greek.xkb")).unwrap();
+        let clock = FakeClock::default();
+        let mut repeat = RepeatScheduler::default();
+        let mut ime = ImeState::new(seat, &caps);
+        ime.enter(seat, window);
+        ime.sync_enabled(seat, &keyboard, true);
+        let old = ime.capture_focus(seat, window, &keyboard);
+        ime.stage(&old, &keyboard, ImeEvent::Commit { text: Some("old") })
+            .unwrap();
+        for capabilities in [&Capabilities::default(), &caps] {
+            ime.reset(capabilities);
+            assert!(ime.done(&old, &keyboard, 1).is_none());
+            assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
+            let key = map
+                .translate(keyboard.route_key(30, true).unwrap(), false)
+                .unwrap()
+                .unwrap();
+            assert!(
+                route_key(
+                    key,
+                    KeyOwner::Terminal,
+                    &keyboard,
+                    &map,
+                    &mut repeat,
+                    &clock
+                )
+                .unwrap()
+                .is_some()
+            );
+        }
+        assert!(ime.enter(seat, window));
+        assert!(!ime.sync_enabled(seat, &keyboard, true).is_empty());
+        assert!(ime.done(&old, &keyboard, 1).is_none());
+        let fresh = ime.capture_focus(seat, window, &keyboard);
+        ime.stage(&fresh, &keyboard, ImeEvent::Commit { text: Some("新") })
+            .unwrap();
+        assert_eq!(ime.done(&fresh, &keyboard, 1).unwrap().commit, "新");
+    }
+
+    #[test]
     fn stale_ime_transaction_is_ignored() {
         struct Sink(TabId, Vec<u8>);
         impl PasteSink for Sink {
