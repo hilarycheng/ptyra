@@ -48,8 +48,13 @@ impl FrameScheduler {
         }
     }
 
+    /// False means wait for input/damage or the pending callback; no periodic redraw timer is needed.
+    pub fn needs_frame(&self) -> bool {
+        !self.stopped && self.pending.is_none() && self.dirty.is_dirty()
+    }
+
     pub fn schedule(&mut self, clock: &impl Clock) -> Result<Option<FramePlan>, AppError> {
-        if self.stopped || self.pending.is_some() || !self.dirty.is_dirty() {
+        if !self.needs_frame() {
             return Ok(None);
         }
         let next = self
@@ -118,6 +123,36 @@ mod tests {
     use super::{FrameScheduler, FrameToken};
     use crate::{WindowId, clock::FakeClock, damage::Rect, window::WindowSize};
     use std::time::Duration;
+
+    #[test]
+    fn idle_does_not_schedule_unneeded_frames() {
+        let clock = FakeClock::default();
+        let size = WindowSize::new(80, 40).unwrap();
+        let mut frames = FrameScheduler::new(WindowId(1), size);
+        let dirty = Rect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        for _ in 0..10_000 {
+            clock.advance(Duration::from_millis(16)).unwrap();
+            frames.resize(size);
+            assert!(!frames.needs_frame());
+            assert!(frames.schedule(&clock).unwrap().is_none());
+        }
+        frames.damage(dirty);
+        assert!(frames.needs_frame());
+        let pending = frames.schedule(&clock).unwrap().unwrap();
+        frames.damage(dirty);
+        assert!(!frames.needs_frame());
+        assert!(frames.frame_done(pending.callback));
+        assert!(frames.needs_frame());
+        let next = frames.schedule(&clock).unwrap().unwrap();
+        assert!(frames.frame_done(next.callback));
+        assert!(!frames.needs_frame());
+        assert!(frames.schedule(&clock).unwrap().is_none());
+    }
 
     #[test]
     fn frame_callback_does_not_busy_loop() {

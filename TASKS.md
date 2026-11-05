@@ -447,7 +447,7 @@
   - **Dependencies:** `TASK-025`, `TASK-083`  |  **Unit Test:** `unexpected_exit_is_per_tab`
   - **Done:** 單個 Shell crash 不會令 App crash
 
-- [ ] **TASK-104 — 無 dirty output 時禁止固定頻率 redraw**
+- [x] **TASK-104 — 無 dirty output 時禁止固定頻率 redraw**
   - **Dependencies:** `TASK-017`, `TASK-038`  |  **Unit Test:** `idle_does_not_schedule_unneeded_frames`
   - **Done:** event-loop 無 busy spin
 
