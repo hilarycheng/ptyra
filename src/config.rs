@@ -1,5 +1,6 @@
 //! Bounded TOML configuration; diagnostics contain metadata, never source text or values.
 pub mod bindings;
+pub mod load;
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, PartialEq)]

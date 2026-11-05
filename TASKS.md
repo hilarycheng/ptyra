@@ -421,7 +421,7 @@
   - **Dependencies:** `TASK-094`  |  **Unit Test:** `config_limits_are_bounded`
   - **Done:** 無效/極端值回報錯誤
 
-- [ ] **TASK-098 — 損壞 Config 唔令 App 無提示退出**
+- [x] **TASK-098 — 損壞 Config 唔令 App 無提示退出**
   - **Dependencies:** `TASK-094`  |  **Unit Test:** `invalid_config_returns_diagnostic`
   - **Done:** 指出設定檔與錯誤，但不自動改檔
 
