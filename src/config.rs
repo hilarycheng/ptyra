@@ -41,8 +41,38 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn glyph_cache(&self) -> Result<crate::font::cache::GlyphCache, crate::error::AppError> {
+        crate::font::cache::GlyphCache::new(
+            self.glyph_cache_bytes,
+            crate::font::cache::MAX_CACHE_ENTRIES,
+        )
+    }
+
+    pub fn clipboard_receiver(
+        &self,
+    ) -> Result<crate::clipboard::read::ClipboardReceive, crate::error::AppError> {
+        crate::clipboard::read::ClipboardReceive::with_limit(self.clipboard_bytes)
+    }
+
+    pub fn tab_registry<P: crate::tabs::TabPty>(
+        &self,
+    ) -> Result<crate::tabs::TabRegistry<P>, crate::error::AppError> {
+        crate::tabs::TabRegistry::with_scrollback(self.scrollback_lines)
+    }
+
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.bindings.validate()?;
+        if self.scrollback_lines > crate::terminal::MAX_SCROLLBACK_LINES {
+            return Err(error("scrollback_lines", "expected 0..=10000 lines"));
+        }
+        if self.clipboard_bytes == 0
+            || self.clipboard_bytes > crate::clipboard::read::MAX_PASTE_BYTES
+        {
+            return Err(error("clipboard_bytes", "expected 1..=16777216 bytes"));
+        }
+        if self.glyph_cache_bytes > crate::font::cache::MAX_CACHE_BYTES {
+            return Err(error("glyph_cache_bytes", "expected 0..=16777216 bytes"));
+        }
         if !self.font_size.is_finite() || !(1.0..=256.0).contains(&self.font_size) {
             return Err(error(
                 "font_size",
@@ -112,6 +142,58 @@ fn integer(value: &toml::Value, field: &'static str) -> Result<usize, ConfigErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn config_limits_are_bounded() {
+        for source in [
+            "scrollback_lines=10001",
+            "clipboard_bytes=0",
+            "clipboard_bytes=16777217",
+            "glyph_cache_bytes=16777217",
+            "scrollback_lines=-1",
+            "clipboard_bytes=9223372036854775807",
+        ] {
+            assert!(Config::from_toml(Some(source)).is_err(), "{source}");
+        }
+        let config = Config::from_toml(Some(
+            "scrollback_lines=0\nclipboard_bytes=4\nglyph_cache_bytes=0",
+        ))
+        .unwrap();
+        let cache = config.glyph_cache().unwrap();
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.bytes_used(), 0);
+        let mut receiver = config.clipboard_receiver().unwrap();
+        let mut input = std::io::Cursor::new(b"12345");
+        assert!(receiver.read_ready(&mut input).is_err());
+        struct FakePty;
+        impl crate::tabs::TabPty for FakePty {
+            fn tab(&self) -> crate::TabId {
+                crate::TabId(1)
+            }
+        }
+        let mut tabs = config.tab_registry::<FakePty>().unwrap();
+        tabs.insert(crate::TabId(1), 2, 8).unwrap();
+        tabs.get_mut(crate::TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(crate::TabId(1), b"a\r\nb\r\nc\r\nd")
+            .unwrap();
+        use alacritty_terminal::grid::Dimensions;
+        assert_eq!(
+            tabs.get(crate::TabId(1))
+                .unwrap()
+                .terminal()
+                .grid()
+                .unwrap()
+                .history_size(),
+            0
+        );
+        let maximum = Config::from_toml(Some(
+            "scrollback_lines=10000\nclipboard_bytes=16777216\nglyph_cache_bytes=16777216",
+        ))
+        .unwrap();
+        assert!(maximum.validate().is_ok());
+    }
+
     #[test]
     fn config_rejects_invalid_font_size() {
         for size in ["0", "-1", "nan", "inf", "-inf", "1e300", "257", "'large'"] {

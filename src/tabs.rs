@@ -83,6 +83,7 @@ pub struct TabRegistry<P> {
     next_id: Option<u64>,
     active: Option<TabId>,
     render_target: Option<TabId>,
+    scrollback_lines: usize,
 }
 
 impl<P> Default for TabRegistry<P> {
@@ -92,11 +93,22 @@ impl<P> Default for TabRegistry<P> {
             next_id: Some(1),
             active: None,
             render_target: None,
+            scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
         }
     }
 }
 
 impl<P: TabPty> TabRegistry<P> {
+    pub fn with_scrollback(lines: usize) -> Result<Self, AppError> {
+        if lines > crate::terminal::MAX_SCROLLBACK_LINES {
+            return Err(AppError::new(Component::Config, ErrorKind::InvalidInput));
+        }
+        Ok(Self {
+            scrollback_lines: lines,
+            ..Self::default()
+        })
+    }
+
     /// One New Tab event reserves one state and emits one effect, without spawning in the reducer.
     pub fn new_tab(&mut self, rows: u16, columns: u16) -> Result<SpawnTab, AppError> {
         let id = TabId(
@@ -119,7 +131,8 @@ impl<P: TabPty> TabRegistry<P> {
         self.entries
             .try_reserve(1)
             .map_err(|_| AppError::new(Component::Terminal, ErrorKind::OutOfMemory))?;
-        let terminal = Terminal::new(id, rows, columns).map_err(|error| error.error)?;
+        let terminal = Terminal::with_scrollback(id, rows, columns, self.scrollback_lines)
+            .map_err(|error| error.error)?;
         self.entries.push(Tab {
             id,
             terminal,

@@ -417,7 +417,7 @@
   - **Dependencies:** `TASK-094`  |  **Unit Test:** `config_detects_duplicate_shortcuts`
   - **Done:** Paste、IME、Tab shortcut 不意外重疊
 
-- [ ] **TASK-097 — Scrollback / Clipboard / Glyph budgets**
+- [x] **TASK-097 — Scrollback / Clipboard / Glyph budgets**
   - **Dependencies:** `TASK-094`  |  **Unit Test:** `config_limits_are_bounded`
   - **Done:** 無效/極端值回報錯誤
 
