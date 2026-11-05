@@ -439,7 +439,7 @@
   - **Dependencies:** `TASK-007`  |  **Unit Test:** `logs_do_not_include_sensitive_content`
   - **Done:** 預設日誌不洩漏輸入字串
 
-- [ ] **TASK-102 — PTY flood 事件處理設 batching/budget**
+- [x] **TASK-102 — PTY flood 事件處理設 batching/budget**
   - **Dependencies:** `TASK-022`, `TASK-017`  |  **Unit Test:** `pty_flood_is_bounded_per_tick`
   - **Done:** 大量輸出不令 UI 永遠無機會處理輸入
 

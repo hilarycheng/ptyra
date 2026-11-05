@@ -84,6 +84,7 @@ pub struct TabRegistry<P> {
     active: Option<TabId>,
     render_target: Option<TabId>,
     scrollback_lines: usize,
+    output_cursor: usize,
 }
 
 impl<P> Default for TabRegistry<P> {
@@ -94,6 +95,7 @@ impl<P> Default for TabRegistry<P> {
             active: None,
             render_target: None,
             scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
+            output_cursor: 0,
         }
     }
 }

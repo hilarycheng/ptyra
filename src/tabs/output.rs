@@ -7,6 +7,8 @@ use crate::{
 };
 use std::io::ErrorKind;
 
+pub const MAX_READS_PER_TICK: usize = 4;
+
 pub trait TabPtyRead: TabPty {
     fn read_chunk(&mut self, buffer: &mut [u8]) -> Result<PtyReadResult, PtyReadError>;
 }
@@ -18,6 +20,33 @@ impl TabPtyRead for PtySession {
 }
 
 impl<P: TabPtyRead> TabRegistry<P> {
+    /// Service at most four ready sessions once each, then return to input dispatch.
+    /// Keep readable sessions registered; Interrupted must be retried on a later tick.
+    pub fn drain_ready(
+        &mut self,
+        ready: &[TabId],
+        buffer: &mut [u8],
+        mut report: impl FnMut(TabId, Result<PtyReadResult, AppError>),
+    ) -> Result<usize, AppError> {
+        if ready.len() > super::MAX_TABS || buffer.is_empty() {
+            return Err(AppError::new(Component::Pty, ErrorKind::InvalidInput));
+        }
+        let mut reads = 0;
+        for _ in 0..self.entries.len() {
+            self.output_cursor %= self.entries.len();
+            let id = self.entries[self.output_cursor].id;
+            self.output_cursor += 1;
+            if ready.contains(&id) {
+                report(id, self.drain_output(id, buffer));
+                reads += 1;
+                if reads == MAX_READS_PER_TICK {
+                    break;
+                }
+            }
+        }
+        Ok(reads)
+    }
+
     /// One bounded read per readiness dispatch, for active and hidden Tabs alike.
     /// Wait for readiness after WouldBlock; reschedule Interrupted without spinning.
     pub fn drain_output(
@@ -60,6 +89,56 @@ impl<P: TabPtyRead> TabRegistry<P> {
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+    #[test]
+    fn pty_flood_is_bounded_per_tick() {
+        struct Flood(TabId);
+        impl TabPty for Flood {
+            fn tab(&self) -> TabId {
+                self.0
+            }
+        }
+        impl TabPtyRead for Flood {
+            fn read_chunk(&mut self, buffer: &mut [u8]) -> Result<PtyReadResult, PtyReadError> {
+                buffer.fill(b'x');
+                Ok(PtyReadResult {
+                    tab: self.0,
+                    status: PtyReadStatus::Data(buffer.len()),
+                })
+            }
+        }
+        let mut tabs = TabRegistry::with_scrollback(0).unwrap();
+        let ready: Vec<_> = (1..=10).map(TabId).collect();
+        for &id in &ready {
+            tabs.insert(id, 2, 16).unwrap();
+            tabs.attach_pty(Flood(id)).ok().unwrap();
+        }
+        let mut buffer = vec![0; MAX_FEED_BYTES * 2];
+        let mut visited = Vec::new();
+        for _ in 0..3 {
+            let mut bytes = 0;
+            let count = tabs
+                .drain_ready(&ready, &mut buffer, |id, result| {
+                    visited.push(id);
+                    if let PtyReadStatus::Data(n) = result.unwrap().status {
+                        bytes += n;
+                    }
+                })
+                .unwrap();
+            assert_eq!(count, 4);
+            assert_eq!(bytes, 4 * MAX_FEED_BYTES);
+            // Returning here lets the dispatcher service input between batches.
+        }
+        assert_eq!(&visited[..10], ready.as_slice());
+        assert_eq!(
+            tabs.drain_ready(&[], &mut buffer, |_, _| panic!("not ready"))
+                .unwrap(),
+            0
+        );
+        assert!(
+            tabs.drain_ready(&vec![TabId(1); 65], &mut buffer, |_, _| {})
+                .is_err()
+        );
+    }
     #[derive(Debug)]
     struct FakePty {
         tab: TabId,
