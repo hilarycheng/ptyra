@@ -146,6 +146,9 @@ def main():
     screenshot = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
     with tempfile.TemporaryDirectory(prefix="ptyra-smoke-") as folder:
         root = Path(folder)
+        assets = Path(__file__).resolve().parent.parent / "assets"
+        subprocess.run(["tic", "-o", str(root / "terminfo"), str(assets / "ptyra.terminfo")], check=True)
+        assert (root / "terminfo/p/ptyra").read_bytes() == (assets / "ptyra.terminfo.bin").read_bytes()
         config = root / "sway.conf"
         config.write_text("output * mode 800x600\nseat seat0 fallback true\n")
         keymap = root / "keymap.xkb"
@@ -172,6 +175,8 @@ def main():
                 wrapper.write_text("#!/bin/sh\nexec /bin/bash --noprofile --norc\n")
             wrapper.chmod(0o700)
             env["SHELL"] = str(wrapper)
+            if os.environ.get("PTYRA_TEST_TRACE"):
+                env["PTYRA_TRACE_INPUT"] = "1"
             keyboard = Keyboard(display, keymap.read_bytes())
             with open(root / "app.log", "w") as log:
                 app = subprocess.Popen([binary, "--config", str(root / "missing.toml")], env=env, stdout=log, stderr=log)
@@ -180,6 +185,16 @@ def main():
             wait_until(lambda: any(n.get("app_id") == "ptyra" for n in nodes(json.loads(ipc("-t", "get_tree")))))
             time.sleep(0.2)
             assert app.poll() is None, (root / "app.log").read_text()
+            if os.environ.get("PTYRA_TEST_TRACE"):
+                keyboard.key(30)
+                keyboard.sync()
+                time.sleep(0.05)
+                keyboard.key(30, False)
+                keyboard.sync()
+                wait_until(lambda: "press=1 release=1 repeat=0 queued=1 written=1" in (root / "app.log").read_text())
+                keyboard.tap(14)
+                keyboard.sync()
+                print("PASS: one tap = 1 press + 1 release + 0 repeats + 1 queued byte + 1 written byte")
             proof = root / "proof"
             keyboard.text("echo wrongx")
             keyboard.tap(14)  # Backspace

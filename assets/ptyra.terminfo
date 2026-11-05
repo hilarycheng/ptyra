@@ -1,6 +1,6 @@
 # Source format: https://invisible-island.net/ncurses/man/terminfo.5.html
 # Deliberately standalone: no inherited Kitty, mouse, graphics or extended keyboard claims.
-# Runtime stays TERM=dumb until installation and native GUI integration are complete.
+# Embedded compiled entry is exposed through a private per-session TERMINFO directory.
 ptyra|Ptyra conservative terminal,
 	am, xenl,
 	cols#80, lines#24, colors#8, pairs#64,

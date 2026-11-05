@@ -73,6 +73,37 @@ struct Slot {
     size: (u32, u32),
     busy: bool,
 }
+/// Opt-in counts only; never records keycodes, key text or PTY payloads.
+#[derive(Default)]
+struct InputTrace {
+    counts: [u64; 5], // press, release, repeat, queued bytes, written bytes
+    previous: Option<([u64; 5], i32, usize)>,
+}
+impl InputTrace {
+    fn add(&mut self, index: usize, count: usize) {
+        self.counts[index] = self.counts[index].saturating_add(count as u64);
+    }
+    fn report(&mut self, terminal: &crate::terminal::Terminal) {
+        if self.counts[0] == 0 && self.counts[1] == 0 {
+            return;
+        }
+        let Some(grid) = terminal.grid() else {
+            return;
+        };
+        let point = grid.cursor.point;
+        let snapshot = (self.counts, point.line.0, point.column.0);
+        if self.previous == Some(snapshot) {
+            return;
+        }
+        self.previous = Some(snapshot);
+        let [press, release, repeat, queued, written] = self.counts;
+        eprintln!(
+            "Ptyra input counts: press={press} release={release} repeat={repeat} queued={queued} written={written} cursor={}:{}",
+            point.line.0, point.column.0
+        );
+    }
+}
+
 struct Runtime {
     compositor: Option<wl_compositor::WlCompositor>,
     shm: Option<wl_shm::WlShm>,
@@ -92,6 +123,7 @@ struct Runtime {
     keyboard: Option<wl_keyboard::WlKeyboard>,
     input: keyboard::KeyboardInput,
     clock: crate::clock::MonotonicClock,
+    input_trace: Option<InputTrace>,
 }
 
 pub fn run(config: crate::config::Config) -> Result<()> {
@@ -126,6 +158,9 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         keyboard: None,
         input: keyboard::KeyboardInput::default(),
         clock: crate::clock::MonotonicClock::default(),
+        input_trace: (std::env::var_os("PTYRA_TRACE_INPUT").as_deref()
+            == Some(std::ffi::OsStr::new("1")))
+        .then(InputTrace::default),
     };
     connection.display().get_registry(&qh, ());
     queue
@@ -160,11 +195,24 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             break;
         }
         let bytes = app.input.tick(app.application_cursor(), &app.clock)?;
+        if bytes.is_some()
+            && let Some(trace) = &mut app.input_trace
+        {
+            trace.add(2, 1);
+        }
         app.enqueue_input(bytes)?;
         if let Some(pty) = &mut app.pty
             && pty.pending_write_bytes() > 0
         {
-            pty.flush_write().map_err(|_| "PTY write failed")?;
+            let result = pty.flush_write().map_err(|_| "PTY write failed")?;
+            if let crate::pty::PtyWriteStatus::Written(count) = result.status
+                && let Some(trace) = &mut app.input_trace
+            {
+                trace.add(4, count);
+            }
+        }
+        if let Some(trace) = &mut app.input_trace {
+            trace.report(&app.terminal);
         }
         app.draw(&qh)?;
         let writable = match connection.flush() {
@@ -256,6 +304,9 @@ impl Runtime {
         {
             pty.enqueue_write(&bytes)
                 .map_err(|_| "PTY input queue full or closed")?;
+            if let Some(trace) = &mut self.input_trace {
+                trace.add(3, bytes.len());
+            }
         }
         Ok(())
     }

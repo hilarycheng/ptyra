@@ -32,10 +32,10 @@ pub fn shell_command(program: &OsStr, args: &[OsString]) -> Result<Command, AppE
     Ok(command)
 }
 
-/// Until terminfo installation and native GUI integration are complete, advertise only dumb output.
+/// Advertise the bundled conservative entry supplied by the PTY adapter.
 /// These overrides affect the child Command, never the application's environment.
 pub fn apply_terminal_environment(command: &mut Command) {
-    command.env("TERM", "dumb").env_remove("COLORTERM");
+    command.env("TERM", "ptyra").env_remove("COLORTERM");
 }
 
 #[cfg(test)]
@@ -60,7 +60,7 @@ mod tests {
                 .unwrap()
                 .1
         };
-        assert_eq!(get("TERM"), Some(OsStr::new("dumb")));
+        assert_eq!(get("TERM"), Some(OsStr::new("ptyra")));
         assert_eq!(get("COLORTERM"), None);
         assert_eq!(get("LANG"), Some(OsStr::new("zh_HK.UTF-8")));
         assert_eq!(command.get_envs().count(), 3);

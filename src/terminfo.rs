@@ -1,4 +1,4 @@
-/// Conservative source for packaging with tic; runtime activation requires an installed entry and GUI integration.
+/// Conservative source; assets/ptyra.terminfo.bin is generated with tic for the PTY adapter.
 pub const SOURCE: &str = include_str!("../assets/ptyra.terminfo");
 
 #[cfg(test)]

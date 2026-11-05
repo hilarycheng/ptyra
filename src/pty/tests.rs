@@ -552,7 +552,7 @@ impl SpawnBackend for FakeBackend {
         assert!(
             command
                 .get_envs()
-                .any(|(k, v)| k == "TERM" && v == Some(OsStr::new("dumb")))
+                .any(|(k, v)| k == "TERM" && v == Some(OsStr::new("ptyra")))
         );
         assert!(
             command

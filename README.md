@@ -18,7 +18,7 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前可開單視窗
 - 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize、單次 child exit → Tab event mapping，以及保留跨 chunk parser state 嘅 terminal core adapter 同 renderer 資料接口。
 - `src/main.rs` 會載入 config，再連接 Wayland compositor。Runtime 用有界 SHM buffers、software glyph rasterization、真 PTY 同阻塞 poll event loop；keyboard 經現有 focus/keymap/encoder/repeat 模組送到 Shell。
 - 已驗證 Enter、Backspace、arrows、Ctrl+C、focus/repeat、PTY resize 同 close cleanup。Clipboard、Selection、IME、GUI Tabs、Kitty graphics 仍未接入 runtime；唔代表日常 Terminal 已完成。
-- Child 仍用 `TERM=dumb`；未安裝或啟用 Ptyra terminfo，未驗收完整 TUI。Cursor 跟 focus 同 Block/Beam/Underline shape；暫時冇 blink，使用 regular font face 同基本顏色；HiDPI、shaping 同效能仍待校準。
+- Child 用 `TERM=ptyra` 同私有 `TERMINFO` directory，載入 bundled conservative entry；未驗收完整 TUI。Cursor 跟 focus 同 Block/Beam/Underline shape；暫時冇 blink，使用 regular font face 同基本顏色；HiDPI、shaping 同效能仍待校準。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
 
@@ -34,7 +34,7 @@ cargo build --release --locked
 程式用 `SHELL` 指定嘅 absolute executable，未設定時用 `/bin/sh`。`exit` 或 compositor close 會關閉視窗及回收 child。
 可用 `--config /absolute/path/config.toml`；冇 compositor、無法載入字型或啟動 Shell 時會顯示 metadata error 同非零 exit code。
 
-原生整合測試（需要 Sway、grim、xkbcomp；只建立獨立 headless session）：
+原生整合測試（需要 Sway、grim、xkbcomp、tic；只建立獨立 headless session）：
 
 ```sh
 python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-native.png
@@ -58,12 +58,18 @@ python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-native.png
 ## Runtime regression fixes（TASK-126 / TASK-128）
 
 - Keymap FD 改用 positional read，由 offset 0 讀取而唔改共享 file offset；包含 dup FD、非零 offset、短檔案 regression tests。
-- Keyboard 記錄有界 held-key set；同一按鍵 release 前嘅 duplicate press 唔會再次輸入。Focus/keyboard/keymap 變更會清理相關 state；正常 hold repeat 仍由 RepeatScheduler 處理。
+- 已移除 held-key 去重。一次 press/release 只編碼一次；正常 hold repeat 仍由 RepeatScheduler 處理。
 - Focus 中依 terminal cursor shape 畫 Block、Beam 或 Underline；失焦畫空心框；Hidden 保持隱藏。Focus events 會觸發 redraw。
 - 192 unit tests、13 integration tests、2 doctests、Format/Clippy 同 release build PASS。Bash 同 fish（no-config）各自通過原生互動及同 compositor 連續三次啟動測試。
 - Fish 原生測試：`PTYRA_TEST_FISH=1 python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-fish.png`。
 - 另以 `PTYRA_TEST_FISH=configured` 跑現有 fish 設定（private mode）原生測試：指令內容、互動輸入及重新啟動均 PASS。呢個模式會載入使用者 fish startup files。
-- 使用者實體 keyboard 嘅 double key 尚未獨立重現；已驗證 duplicate press 防護，仍需現場重試確認。
+- 使用者診斷顯示每次 press 只寫入一個 byte，冇額外 repeat；cursor 卻隨 Shell output 向下移動。
+- 已用 fish 固定兩行 prompt 重現：`TERM=dumb` 令重畫留喺新行，畫面出現多份同一個字。改用既有 Ptyra terminfo 後，cursor 留喺原行，grid 只保留一個字。
+- `fish_multiline_prompt_redraw_keeps_one_character` 先 FAIL，再 PASS；屬需要 `/usr/bin/fish` 嘅 integration test，明確以 `cargo test --test pty_spawn fish_multiline_prompt_redraw_keeps_one_character -- --ignored` 執行。
+- Terminfo compiled entry 隨 binary 內嵌，執行時只寫入每個 session 嘅 0700 暫存 directory；正常退出會清理。唔需要先安裝 terminfo，亦冇改全域設定。
+- 診斷可用 `PTYRA_TRACE_INPUT=1 ./target/release/ptyra`；只印 press/release/repeat、queued/written byte 數量同 cursor 位置，預設關閉。唔記錄 keycodes、文字或 PTY payload。
+- 本次檢查：193 unit tests、13 一般 integration tests、2 doctests PASS；fish regression 額外明確執行並 PASS。Format、Clippy、release build、Bash／configured fish 原生互動及連續三次啟動 PASS。
+- 使用者重開新版後，實體 keyboard 輕按一次 `a`，確認「正常，只出一個 a」。Fcitx5／完整 TUI 驗收不在本次結果內。
 
 ## 2026-10-29 Audit
 

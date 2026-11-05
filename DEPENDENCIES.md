@@ -393,3 +393,11 @@ Core ring buffer 負責淘汰最舊可讀行，並重用已配置空間。Cached
 釋放 allocator memory。Cell slots cap 唔係 RSS／byte limit；row metadata、Vec capacity、
 combining marks、hyperlinks、title stack 同 parser storage 仍有各自開銷及既有上限。
 本次冇量度 PSS／RSS，亦未驗收整體 RAM budget。
+
+## Runtime prompt redraw fix（2026-11-05）
+
+重用 `nix =0.31.3` 嘅 `feature` feature，使用 `mkdtemp` 建立 0700 私有 terminfo directory；冇新增 package 或 app unsafe。
+`assets/ptyra.terminfo.bin` 由現有 source 用 `tic` 生成，native test 會重新編譯並逐 byte 比較。
+Runtime 唔需要 `tic`；每個 PTY session 寫入 embedded entry，只替 child 設 `TERM=ptyra` 同 `TERMINFO`。
+Session drop 會刪除自己嘅 entry 同空 directory；異常強制終止可能留下幾百 bytes 暫存檔。
+冇改全域環境、現有 terminfo database、Shell config 或 Sway 設定。

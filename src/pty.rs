@@ -26,6 +26,7 @@ use std::{
     process::{Child, Command, ExitStatus, Stdio},
 };
 
+mod terminfo;
 mod write;
 use write::WriteQueue;
 pub use write::{
@@ -296,12 +297,23 @@ pub struct PtySession {
     write_queue: WriteQueue,
     resize_state: ResizeState,
     exit_state: ExitState,
+    _terminfo: terminfo::Terminfo,
 }
 
 impl PtySession {
     pub fn spawn(request: PtySpawnRequest<'_>) -> Result<Self, PtySpawnError> {
         let size = request.size;
-        let spawned = spawn_with_backend(request, &mut LinuxBackend)?;
+        let terminfo = terminfo::Terminfo::new().map_err(|error| PtySpawnError {
+            tab: request.tab,
+            stage: SpawnStage::Open,
+            error: AppError::from_io(Component::Pty, error),
+        })?;
+        let spawned = spawn_with_backend(
+            request,
+            &mut LinuxBackend {
+                terminfo: terminfo.path(),
+            },
+        )?;
         Ok(Self {
             tab: spawned.tab,
             master: Some(spawned.master),
@@ -309,6 +321,7 @@ impl PtySession {
             read_state: ReadState::default(),
             write_queue: WriteQueue::default(),
             resize_state: ResizeState { size },
+            _terminfo: terminfo,
             exit_state: ExitState::default(),
         })
     }
@@ -462,8 +475,10 @@ fn set_pty_size(fd: BorrowedFd<'_>, size: PtySize) -> io::Result<()> {
     Ok(())
 }
 
-struct LinuxBackend;
-impl SpawnBackend for LinuxBackend {
+struct LinuxBackend<'a> {
+    terminfo: &'a Path,
+}
+impl SpawnBackend for LinuxBackend<'_> {
     type Master = File;
     type Slave = OwnedFd;
     type Child = OwnedChild;
@@ -486,6 +501,7 @@ impl SpawnBackend for LinuxBackend {
     }
 
     fn spawn(&mut self, command: &mut Command, slave: OwnedFd) -> io::Result<OwnedChild> {
+        command.env("TERMINFO", self.terminfo);
         command.stdin(Stdio::from(slave.try_clone()?));
         command.stdout(Stdio::from(slave.try_clone()?));
         command.stderr(Stdio::from(slave));

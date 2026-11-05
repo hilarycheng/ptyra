@@ -8,7 +8,7 @@ use crate::{
     kitty::{KeyboardFlags, encode::KeyEncoder},
     repeat::RepeatScheduler,
 };
-use std::{collections::BTreeSet, fs::File, os::unix::fs::FileExt};
+use std::{fs::File, os::unix::fs::FileExt};
 use wayland_client::{
     Connection, Dispatch, QueueHandle, WEnum,
     protocol::{wl_keyboard, wl_seat},
@@ -19,12 +19,10 @@ pub(super) struct KeyboardInput {
     pub focus: KeyboardFocus,
     pub map: Option<Keymap>,
     pub repeat: RepeatScheduler,
-    pressed: BTreeSet<u32>,
 }
 impl KeyboardInput {
     pub fn clear_focus(&mut self) {
         self.focus.clear();
-        self.pressed.clear();
         self.repeat.cancel();
     }
     pub fn key(
@@ -40,17 +38,6 @@ impl KeyboardInput {
         let Some(map) = &self.map else {
             return Ok(None);
         };
-        if pressed {
-            if self.pressed.contains(&code) {
-                return Ok(None);
-            }
-            if self.pressed.len() >= 4096 {
-                return Err("too many held keys");
-            }
-            self.pressed.insert(code);
-        } else if !self.pressed.remove(&code) {
-            return Ok(None);
-        }
         let Some(key) = map
             .translate(route, false)
             .map_err(|_| "key translation failed")?
@@ -133,20 +120,12 @@ impl Runtime {
                 {
                     return Err("unsupported Wayland keymap");
                 }
-                self.input.pressed.clear();
                 self.input.map = Some(read_keymap(&File::from(fd), size as usize)?);
             }
-            wl_keyboard::Event::Enter { surface, keys, .. }
+            wl_keyboard::Event::Enter { surface, .. }
                 if self.surface.as_ref() == Some(&surface) =>
             {
                 self.input.clear_focus();
-                if keys.len() > 4096 * 4 || keys.len() % 4 != 0 {
-                    return Err("too many held keys");
-                }
-                self.input.pressed.extend(
-                    keys.chunks_exact(4)
-                        .map(|key| u32::from_ne_bytes(key.try_into().unwrap())),
-                );
                 self.paint.dirty = true;
                 self.input.focus.enter(WindowId(1), TabId(1));
             }
@@ -181,6 +160,9 @@ impl Runtime {
                     WEnum::Value(wl_keyboard::KeyState::Released) => false,
                     _ => return Ok(()),
                 };
+                if let Some(trace) = &mut self.input_trace {
+                    trace.add(usize::from(!pressed), 1);
+                }
                 let bytes = self
                     .input
                     .key(key, pressed, self.application_cursor(), &self.clock)?;
@@ -262,16 +244,24 @@ mod tests {
         assert!(read_keymap(&file, data.len() + 1).is_err());
     }
     #[test]
-    fn runtime_duplicate_press_is_not_replayed() {
+    fn runtime_tap_emits_once_and_cancels_repeat() {
         let mut input = KeyboardInput::default();
         let clock = FakeClock::default();
         input.map =
             Some(Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap());
         input.focus.enter(WindowId(1), TabId(1));
-        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
-        assert!(input.key(30, true, false, &clock).unwrap().is_none());
-        assert!(input.key(30, false, false, &clock).unwrap().is_none());
-        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
+        input.repeat.configure(25, 600).unwrap();
+        let mut bytes = Vec::new();
+        for _ in 0..2 {
+            bytes.extend(input.key(30, true, false, &clock).unwrap().unwrap());
+            clock.advance(std::time::Duration::from_millis(50)).unwrap();
+            assert!(input.key(30, false, false, &clock).unwrap().is_none());
+            clock
+                .advance(std::time::Duration::from_millis(700))
+                .unwrap();
+            assert!(input.tick(false, &clock).unwrap().is_none());
+        }
+        assert_eq!(bytes, b"aa", "two real taps produce exactly two bytes");
     }
     #[test]
     fn runtime_keyboard_routes_to_shell() {

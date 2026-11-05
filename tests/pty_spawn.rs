@@ -166,7 +166,8 @@ fn linux_pty_preserves_spawn_contract() {
     let script = r#"set -eu
         [ -t 0 ] && [ -t 1 ] && [ -t 2 ]
         : </dev/tty
-        [ "$TERM" = dumb ] && [ "${COLORTERM+x}" != x ]
+        [ "$TERM" = ptyra ]
+        [ -f "$TERMINFO/p/ptyra" ] && [ "${COLORTERM+x}" != x ]
         [ "$PWD" = /tmp ] && [ "$#" = 3 ]
         [ "$(/usr/bin/stty size)" = '31 97' ]
         /usr/bin/stty -onlcr
@@ -588,4 +589,60 @@ fn linux_pty_resize_updates_size_and_signals_owned_session() {
     drop(first);
     drop(second);
     assert_eq!(pty_fd_count(), baseline);
+}
+
+#[test]
+#[ignore = "requires /usr/bin/fish; run explicitly for native prompt regression"]
+fn fish_multiline_prompt_redraw_keeps_one_character() {
+    use alacritty_terminal::grid::Dimensions;
+    let _lock = FIXTURE_LOCK.lock().unwrap();
+    let args = ["--no-config", "--private", "--interactive", "--init-command",
+        "function fish_prompt; printf 'top\\n> '; end; function fish_right_prompt; end; set -g fish_greeting; set -g fish_autosuggestion_enabled 0"]
+        .map(OsString::from);
+    let mut req = request(&args);
+    req.program = OsStr::new("/usr/bin/fish");
+    let mut session = PtySession::spawn(req).unwrap();
+    let mut terminal = ptyra::terminal::Terminal::new(TabId(42), 31, 97).unwrap();
+    let drain = |session: &mut PtySession, terminal: &mut ptyra::terminal::Terminal| {
+        let start = Instant::now();
+        let mut last = start;
+        loop {
+            let mut bytes = [0; 1024];
+            match session.read_chunk(&mut bytes).unwrap().status {
+                PtyReadStatus::Data(n) => {
+                    terminal.feed(TabId(42), &bytes[..n]).unwrap();
+                    last = Instant::now();
+                }
+                PtyReadStatus::WouldBlock | PtyReadStatus::Interrupted => {
+                    if last.elapsed() > Duration::from_millis(200) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                _ => panic!("fish exited before input"),
+            }
+            assert!(start.elapsed() < DEADLINE);
+        }
+    };
+    drain(&mut session, &mut terminal);
+    let before = terminal.grid().unwrap().cursor.point;
+    assert_eq!(before.line.0, 1, "two-line prompt is ready");
+    session.enqueue_write(b"Q").unwrap();
+    while session.pending_write_bytes() > 0 {
+        session.flush_write().unwrap();
+    }
+    drain(&mut session, &mut terminal);
+    let grid = terminal.grid().unwrap();
+    assert_eq!(
+        grid.cursor.point.line, before.line,
+        "redraw must not create new prompt lines"
+    );
+    assert_eq!(grid.cursor.point.column.0, before.column.0 + 1);
+    assert_eq!(
+        grid.display_iter()
+            .filter(|cell| cell.cell.c == 'Q')
+            .count(),
+        1
+    );
+    assert_eq!(grid.screen_lines(), 31);
 }
