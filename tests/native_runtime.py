@@ -161,9 +161,15 @@ def main():
             ipc_path = wait_until(lambda: next(root.glob("sway-ipc*"), None))
             display = wait_until(lambda: next((p for p in root.glob("wayland-*") if not p.name.endswith(".lock")), None))
             env.update(WAYLAND_DISPLAY=display.name, SHELL="/bin/bash", PS1="ptyra$ ", HISTFILE="/dev/null")
-            # An owned wrapper avoids user shell startup files in this test only.
+            # User startup files are used only with the explicit configured-fish option.
             wrapper = root / "test-shell"
-            wrapper.write_text("#!/bin/sh\nexec /usr/bin/fish --no-config --interactive\n" if os.environ.get("PTYRA_TEST_FISH") else "#!/bin/sh\nexec /bin/bash --noprofile --norc\n")
+            fish_mode = os.environ.get("PTYRA_TEST_FISH")
+            if fish_mode == "configured":
+                wrapper.write_text("#!/bin/sh\nexec /usr/bin/fish --private --interactive\n")
+            elif fish_mode:
+                wrapper.write_text("#!/bin/sh\nexec /usr/bin/fish --no-config --interactive\n")
+            else:
+                wrapper.write_text("#!/bin/sh\nexec /bin/bash --noprofile --norc\n")
             wrapper.chmod(0o700)
             env["SHELL"] = str(wrapper)
             keyboard = Keyboard(display, keymap.read_bytes())

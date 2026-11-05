@@ -62,6 +62,7 @@ python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-native.png
 - Focus 中依 terminal cursor shape 畫 Block、Beam 或 Underline；失焦畫空心框；Hidden 保持隱藏。Focus events 會觸發 redraw。
 - 192 unit tests、13 integration tests、2 doctests、Format/Clippy 同 release build PASS。Bash 同 fish（no-config）各自通過原生互動及同 compositor 連續三次啟動測試。
 - Fish 原生測試：`PTYRA_TEST_FISH=1 python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-fish.png`。
+- 另以 `PTYRA_TEST_FISH=configured` 跑現有 fish 設定（private mode）原生測試：指令內容、互動輸入及重新啟動均 PASS。呢個模式會載入使用者 fish startup files。
 - 使用者實體 keyboard 嘅 double key 尚未獨立重現；已驗證 duplicate press 防護，仍需現場重試確認。
 
 ## 2026-10-29 Audit
