@@ -9,6 +9,13 @@ use std::io::ErrorKind;
 
 pub const MAX_TABS: usize = 64;
 
+/// A single spawn effect; the adapter consumes it and attaches its result by TabId.
+pub struct SpawnTab {
+    pub tab: TabId,
+    pub rows: u16,
+    pub columns: u16,
+}
+
 pub trait TabPty {
     fn tab(&self) -> TabId;
 }
@@ -63,6 +70,20 @@ impl<P> Default for TabRegistry<P> {
 }
 
 impl<P: TabPty> TabRegistry<P> {
+    /// One New Tab event reserves one state and emits one effect, without spawning in the reducer.
+    pub fn new_tab(&mut self, rows: u16, columns: u16) -> Result<SpawnTab, AppError> {
+        let id = TabId(
+            self.next_id
+                .ok_or_else(|| AppError::new(Component::Terminal, ErrorKind::InvalidInput))?,
+        );
+        self.insert(id, rows, columns)?;
+        Ok(SpawnTab {
+            tab: id,
+            rows,
+            columns,
+        })
+    }
+
     /// IDs are monotonic and never reused, including after a Tab closes.
     pub fn insert(&mut self, id: TabId, rows: u16, columns: u16) -> Result<(), AppError> {
         if self.next_id.is_none_or(|next| id.0 < next) || self.entries.len() >= MAX_TABS {

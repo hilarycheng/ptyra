@@ -9,6 +9,29 @@ impl TabPty for FakePty {
 }
 
 #[test]
+fn new_tab_emits_single_spawn() {
+    let mut tabs = TabRegistry::<FakePty>::default();
+    assert!(tabs.new_tab(0, 8).is_err());
+    assert_eq!(tabs.ids().count(), 0);
+    let effect = tabs.new_tab(2, 8).unwrap();
+    assert_eq!(effect.tab, TabId(1));
+    assert_eq!((effect.rows, effect.columns), (2, 8));
+    let mut spawns = Vec::new();
+    let mut spawn = |effect: SpawnTab| {
+        spawns.push(effect.tab);
+        FakePty(effect.tab)
+    };
+    tabs.attach_pty(spawn(effect)).unwrap();
+    assert_eq!(tabs.ids().count(), 1);
+    assert_eq!(spawns, [TabId(1)]);
+    assert_eq!(tabs.new_tab(2, 8).unwrap().tab, TabId(2));
+    let mut exhausted = TabRegistry::<FakePty>::default();
+    exhausted.insert(TabId(u64::MAX), 2, 8).unwrap();
+    assert!(exhausted.new_tab(2, 8).is_err());
+    assert_eq!(exhausted.ids().count(), 1);
+}
+
+#[test]
 fn tab_registry_keeps_unique_entries() {
     use crate::selection::Screen;
     use alacritty_terminal::index::{Column, Line, Point};

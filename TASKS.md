@@ -363,7 +363,7 @@
   - **Dependencies:** `TASK-002`  |  **Unit Test:** `tab_registry_keeps_unique_entries`
   - **Done:** 每 Tab 有獨立 Terminal/PTY/Selection state
 
-- [ ] **TASK-084 — New Tab event 建立唯一 state + spawn effect**
+- [x] **TASK-084 — New Tab event 建立唯一 state + spawn effect**
   - **Dependencies:** `TASK-083`, `TASK-021`  |  **Unit Test:** `new_tab_emits_single_spawn`
   - **Done:** 按一次只開一個 Tab
 
