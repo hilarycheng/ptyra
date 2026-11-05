@@ -4,7 +4,7 @@ pub mod preedit;
 
 use crate::{
     WindowId,
-    clipboard::SeatId,
+    clipboard::{PasteSink, SeatId},
     error::{AppError, Component},
     input::{FocusTarget, KeyboardFocus},
     wayland::{Binding, Capabilities, Protocol},
@@ -59,6 +59,19 @@ pub struct ImeUpdate {
     pub state_is_current: bool,
     pub preedit: ImePreedit,
     pub commit: String,
+}
+
+impl ImeUpdate {
+    /// Queue literal UTF-8 once; retain this update on error and retry when the sink can accept it.
+    /// False means empty/already queued or wrong Tab. PTY flushing owns partial-write retries.
+    pub fn enqueue_commit<S: PasteSink>(&mut self, sink: &mut S) -> Result<bool, S::Error> {
+        if self.commit.is_empty() || sink.tab() != self.target.tab {
+            return Ok(false);
+        }
+        sink.enqueue(self.commit.as_bytes())?;
+        self.commit.clear();
+        Ok(true)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

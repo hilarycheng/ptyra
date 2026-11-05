@@ -321,7 +321,7 @@
   - **Dependencies:** `TASK-072`, `TASK-037`  |  **Unit Test:** `preedit_never_writes_to_pty`
   - **Done:** 候選字前文字只畫 overlay
 
-- [ ] **TASK-074 — commit_string UTF-8 寫入 PTY 一次**
+- [x] **TASK-074 — commit_string UTF-8 寫入 PTY 一次**
   - **Dependencies:** `TASK-072`, `TASK-023`  |  **Unit Test:** `ime_commit_is_written_once`
   - **Done:** 同一 commit 不重複、不漏寫
 

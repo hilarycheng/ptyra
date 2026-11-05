@@ -45,6 +45,144 @@ fn blocked() -> Step {
 }
 
 #[test]
+fn ime_commit_is_written_once() {
+    use crate::{
+        WindowId,
+        clipboard::{PasteSink, SeatId},
+        ime::{ImeEvent, ImeState},
+        input::KeyboardFocus,
+        wayland::{Capabilities, Global},
+    };
+
+    struct Sink {
+        tab: TabId,
+        open: bool,
+        queue: WriteQueue,
+    }
+    impl PasteSink for Sink {
+        type Error = PtyWriteError;
+
+        fn tab(&self) -> TabId {
+            self.tab
+        }
+
+        fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.queue.enqueue(self.tab, self.open, bytes).map(|_| ())
+        }
+    }
+
+    let seat = SeatId(1);
+    let window = WindowId(1);
+    let tab = TabId(7);
+    let capabilities = Capabilities::from_globals(&[Global {
+        name: 3,
+        interface: "zwp_text_input_manager_v3",
+        version: 1,
+    }]);
+    let mut keyboard = KeyboardFocus::default();
+    keyboard.enter(window, tab);
+    let mut ime = ImeState::new(seat, &capabilities);
+    ime.enter(seat, window);
+    ime.sync_enabled(seat, &keyboard, true);
+    let serial = ime.commit_serial();
+    let text = " 繁體中文 e\u{301}🙂\t\n ";
+    let mut sink = Sink {
+        tab,
+        open: true,
+        queue: WriteQueue::default(),
+    };
+    for value in ["replaced", text] {
+        ime.stage(
+            seat,
+            window,
+            &keyboard,
+            ImeEvent::Commit { text: Some(value) },
+        )
+        .unwrap();
+    }
+    ime.stage(
+        seat,
+        window,
+        &keyboard,
+        ImeEvent::Preedit {
+            text: Some("候選"),
+            cursor_begin: 0,
+            cursor_end: 6,
+        },
+    )
+    .unwrap();
+    assert_eq!(sink.queue.pending(), 0, "nothing is queued before done");
+    let mut update = ime.done(seat, window, &keyboard, serial).unwrap();
+
+    sink.tab = TabId(8);
+    assert!(!update.enqueue_commit(&mut sink).unwrap());
+    assert_eq!(sink.queue.pending(), 0);
+    assert_eq!(update.commit, text);
+    sink.tab = tab;
+    sink.open = false;
+    assert_eq!(
+        update.enqueue_commit(&mut sink).unwrap_err().reason,
+        PtyWriteFailure::Closed
+    );
+    assert_eq!(update.commit, text);
+    sink.open = true;
+    sink.enqueue(&vec![b'x'; MAX_PTY_PENDING_BYTES]).unwrap();
+    assert_eq!(
+        update.enqueue_commit(&mut sink).unwrap_err().reason,
+        PtyWriteFailure::QueueFull
+    );
+    assert_eq!(update.commit, text);
+    let mut discard = io::sink();
+    for _ in 0..8 {
+        sink.queue.flush(tab, Some(&mut discard)).unwrap();
+    }
+    assert_eq!(sink.queue.pending(), 0);
+    assert!(update.enqueue_commit(&mut sink).unwrap());
+    assert!(update.commit.is_empty());
+    assert_eq!(update.preedit.text, "候選");
+    assert!(!update.enqueue_commit(&mut sink).unwrap());
+    assert_eq!(sink.queue.pending(), text.len());
+
+    let mut writer = FakeWriter::new(
+        [Step::Accept(2), interrupted(), blocked()]
+            .into_iter()
+            .chain((0..text.len()).map(|_| Step::Accept(1))),
+    );
+    for _ in 0..text.len() + 3 {
+        sink.queue.flush(tab, Some(&mut writer)).unwrap();
+        assert!(!update.enqueue_commit(&mut sink).unwrap());
+    }
+    assert_eq!(sink.queue.pending(), 0);
+    assert_eq!(writer.output, text.as_bytes());
+
+    // The serial identifies client state, not unique Commit events.
+    let mut output = Vec::new();
+    for _ in 0..2 {
+        ime.stage(
+            seat,
+            window,
+            &keyboard,
+            ImeEvent::Commit { text: Some(text) },
+        )
+        .unwrap();
+        let mut next = ime.done(seat, window, &keyboard, serial).unwrap();
+        assert!(next.enqueue_commit(&mut sink).unwrap());
+        assert!(!next.enqueue_commit(&mut sink).unwrap());
+        sink.queue.flush(tab, Some(&mut output)).unwrap();
+    }
+    assert_eq!(output, text.repeat(2).as_bytes());
+    for text in [Some(""), None] {
+        ime.stage(seat, window, &keyboard, ImeEvent::Commit { text })
+            .unwrap();
+        let mut empty = ime.done(seat, window, &keyboard, serial).unwrap();
+        assert!(!empty.enqueue_commit(&mut sink).unwrap());
+    }
+    let mut empty = ime.done(seat, window, &keyboard, serial).unwrap();
+    assert!(!empty.enqueue_commit(&mut sink).unwrap());
+    assert_eq!(sink.queue.pending(), 0);
+}
+
+#[test]
 fn pty_write_handles_partial_writes() {
     let tab = TabId(9);
     let payload = b"\xe7\xb9\x81\x1b[31m\0\xff\n  tail";

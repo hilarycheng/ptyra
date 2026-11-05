@@ -153,6 +153,7 @@ pub trait PasteSink {
     type Error;
 
     fn tab(&self) -> TabId;
+    /// Accept all bytes atomically; an error must leave the queue unchanged.
     fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error>;
 }
 
