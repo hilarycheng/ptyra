@@ -3,9 +3,43 @@
 use crate::{
     WindowId,
     clipboard::SeatId,
+    error::{AppError, Component},
     input::{FocusTarget, KeyboardFocus},
     wayland::{Binding, Capabilities, Protocol},
 };
+use std::io::ErrorKind;
+
+/// Per Preedit or Commit value; repeated events replace, rather than append, pending text.
+pub const MAX_IME_TEXT_BYTES: usize = 4096;
+
+/// Sensitive event payloads deliberately have no Debug implementation.
+pub enum ImeEvent<'a> {
+    Preedit {
+        text: Option<&'a str>,
+        cursor_begin: i32,
+        cursor_end: i32,
+    },
+    Commit {
+        text: Option<&'a str>,
+    },
+}
+
+#[derive(Default)]
+pub struct ImePreedit {
+    pub text: String,
+    pub cursor_begin: i32,
+    pub cursor_end: i32,
+}
+
+/// One complete done batch, consumed by later overlay/PTY adapters. No payload Debug or I/O.
+pub struct ImeUpdate {
+    pub target: FocusTarget,
+    pub serial: u32,
+    /// False still permits applying text, but not updating the compositor-facing state.
+    pub state_is_current: bool,
+    pub preedit: ImePreedit,
+    pub commit: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImeRequest {
@@ -21,6 +55,10 @@ pub struct ImeState {
     manager: Option<Binding>,
     surface: Option<WindowId>,
     enabled_target: Option<FocusTarget>,
+    commit_serial: u32,
+    pending_preedit: ImePreedit,
+    pending_commit: String,
+    invalid_batch: bool,
 }
 
 impl ImeState {
@@ -30,6 +68,10 @@ impl ImeState {
             manager: capabilities.binding(Protocol::TextInput, 1, 1),
             surface: None,
             enabled_target: None,
+            commit_serial: 0,
+            pending_preedit: ImePreedit::default(),
+            pending_commit: String::new(),
+            invalid_batch: false,
         }
     }
 
@@ -50,6 +92,7 @@ impl ImeState {
         self.surface = Some(surface);
         // Every enter invalidates the compositor's text-input state.
         self.enabled_target = None;
+        self.clear_pending();
         true
     }
 
@@ -59,6 +102,7 @@ impl ImeState {
         }
         self.surface = None;
         self.enabled_target = None;
+        self.clear_pending();
         true
     }
 
@@ -105,8 +149,109 @@ impl ImeState {
             (None, None) => &[],
         };
         self.enabled_target = target;
+        self.clear_pending();
+        self.commit_serial = self.commit_serial.wrapping_add(
+            requests
+                .iter()
+                .filter(|request| matches!(request, ImeRequest::Commit))
+                .count() as u32,
+        );
         requests
     }
+
+    pub fn commit_serial(&self) -> u32 {
+        self.commit_serial
+    }
+
+    /// Only stage text for the enabled target; no partial batch is exposed to consumers.
+    /// Invalid data discards the entire batch until done, without recording its contents.
+    pub fn stage(
+        &mut self,
+        seat: SeatId,
+        surface: WindowId,
+        keyboard: &KeyboardFocus,
+        event: ImeEvent<'_>,
+    ) -> Result<bool, AppError> {
+        let Some(target) = self.target_for(seat, surface, keyboard) else {
+            return Ok(false);
+        };
+        if self.enabled_target != Some(target) || self.invalid_batch {
+            return Ok(false);
+        }
+        let result = match event {
+            ImeEvent::Commit { text } => copy_ime_text(text).map(|text| self.pending_commit = text),
+            ImeEvent::Preedit {
+                text,
+                cursor_begin,
+                cursor_end,
+            } => copy_ime_text(text).and_then(|text| {
+                let valid_cursor = (cursor_begin == -1 && cursor_end == -1)
+                    || [cursor_begin, cursor_end].into_iter().all(|index| {
+                        usize::try_from(index).is_ok_and(|index| text.is_char_boundary(index))
+                    });
+                if !valid_cursor {
+                    return Err(AppError::new(Component::Ime, ErrorKind::InvalidData));
+                }
+                self.pending_preedit = ImePreedit {
+                    text,
+                    cursor_begin,
+                    cursor_end,
+                };
+                Ok(())
+            }),
+        };
+        if let Err(error) = result {
+            self.clear_pending();
+            self.invalid_batch = true;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    /// All values reset after done; absent text events mean empty values, including clearing Preedit.
+    /// A done serial can repeat across batches and is not a text-event deduplication key.
+    pub fn done(
+        &mut self,
+        seat: SeatId,
+        surface: WindowId,
+        keyboard: &KeyboardFocus,
+        serial: u32,
+    ) -> Option<ImeUpdate> {
+        let target = self.target_for(seat, surface, keyboard)?;
+        if self.enabled_target != Some(target) {
+            return None;
+        }
+        if self.invalid_batch {
+            self.clear_pending();
+            return None;
+        }
+        Some(ImeUpdate {
+            target,
+            serial,
+            state_is_current: serial == self.commit_serial,
+            preedit: std::mem::take(&mut self.pending_preedit),
+            commit: std::mem::take(&mut self.pending_commit),
+        })
+    }
+
+    fn clear_pending(&mut self) {
+        self.pending_preedit = ImePreedit::default();
+        self.pending_commit = String::new();
+        self.invalid_batch = false;
+    }
+}
+
+fn copy_ime_text(text: Option<&str>) -> Result<String, AppError> {
+    let text = text.unwrap_or_default();
+    if text.len() > MAX_IME_TEXT_BYTES {
+        return Err(AppError::new(Component::Ime, ErrorKind::FileTooLarge));
+    }
+    let mut owned = String::new();
+    owned
+        .try_reserve_exact(text.len())
+        .map_err(|_| AppError::new(Component::Ime, ErrorKind::OutOfMemory))?;
+    owned.push_str(text);
+    Ok(owned)
 }
 
 #[cfg(test)]
@@ -118,6 +263,210 @@ mod tests {
         input::KeyboardFocus,
         wayland::{Binding, Capabilities, Global},
     };
+
+    #[test]
+    fn ime_done_applies_staged_events() {
+        use super::{ImeEvent, MAX_IME_TEXT_BYTES};
+        use crate::error::{AppError, Component};
+        use std::io::ErrorKind;
+
+        let capabilities = Capabilities::from_globals(&[Global {
+            name: 3,
+            interface: "zwp_text_input_manager_v3",
+            version: 1,
+        }]);
+        let seat = SeatId(1);
+        let window = WindowId(1);
+        let mut keyboard = KeyboardFocus::default();
+        keyboard.enter(window, TabId(7));
+        let mut ime = ImeState::new(seat, &capabilities);
+        let commit = |text| ImeEvent::Commit { text };
+        assert!(
+            !ime.stage(seat, window, &keyboard, commit(Some("ignored")))
+                .unwrap()
+        );
+        assert!(ime.done(seat, window, &keyboard, 0).is_none());
+        ime.enter(seat, window);
+        ime.sync_enabled(seat, &keyboard, true);
+        assert_eq!(ime.commit_serial(), 1);
+        assert!(
+            ime.stage(seat, window, &keyboard, commit(Some("舊")))
+                .unwrap()
+        );
+        assert!(
+            ime.stage(
+                seat,
+                window,
+                &keyboard,
+                ImeEvent::Preedit {
+                    text: Some("組字"),
+                    cursor_begin: 0,
+                    cursor_end: 6,
+                }
+            )
+            .unwrap()
+        );
+        assert!(
+            ime.stage(seat, window, &keyboard, commit(Some("中文\n")))
+                .unwrap()
+        );
+        assert!(
+            !ime.stage(SeatId(2), window, &keyboard, commit(Some("wrong seat")))
+                .unwrap()
+        );
+        assert!(
+            !ime.stage(seat, WindowId(2), &keyboard, commit(Some("wrong surface")))
+                .unwrap()
+        );
+        assert!(ime.done(SeatId(2), window, &keyboard, 1).is_none());
+        let update = ime.done(seat, window, &keyboard, 1).unwrap();
+        assert_eq!(update.target, keyboard.target().unwrap());
+        assert_eq!(update.serial, 1);
+        assert!(update.state_is_current);
+        assert_eq!(update.commit, "中文\n");
+        assert_eq!(update.preedit.text, "組字");
+        assert_eq!(
+            (update.preedit.cursor_begin, update.preedit.cursor_end),
+            (0, 6)
+        );
+        let empty = ime.done(seat, window, &keyboard, 1).unwrap();
+        assert!(empty.commit.is_empty());
+        assert!(empty.preedit.text.is_empty());
+        assert!(
+            ime.stage(seat, window, &keyboard, commit(Some("下一批")))
+                .unwrap()
+        );
+        let older_serial = ime.done(seat, window, &keyboard, 0).unwrap();
+        assert_eq!(older_serial.commit, "下一批");
+        assert!(!older_serial.state_is_current);
+        assert_eq!(ime.commit_serial(), 1);
+
+        ime.stage(
+            seat,
+            window,
+            &keyboard,
+            ImeEvent::Preedit {
+                text: None,
+                cursor_begin: -1,
+                cursor_end: -1,
+            },
+        )
+        .unwrap();
+        ime.stage(seat, window, &keyboard, commit(None)).unwrap();
+        let cleared = ime.done(seat, window, &keyboard, 1).unwrap();
+        assert!(cleared.preedit.text.is_empty());
+        assert!(cleared.commit.is_empty());
+        assert_eq!(cleared.preedit.cursor_begin, -1);
+
+        let limit = "a".repeat(MAX_IME_TEXT_BYTES);
+        ime.stage(seat, window, &keyboard, commit(Some(&limit)))
+            .unwrap();
+        ime.stage(
+            seat,
+            window,
+            &keyboard,
+            ImeEvent::Preedit {
+                text: Some(&limit),
+                cursor_begin: 0,
+                cursor_end: MAX_IME_TEXT_BYTES as i32,
+            },
+        )
+        .unwrap();
+        let bounded = ime.done(seat, window, &keyboard, 1).unwrap();
+        assert_eq!(bounded.commit, limit);
+        assert_eq!(bounded.preedit.text, limit);
+        for (begin, end) in [(1, 3), (0, 4), (-1, 0), (-2, -2)] {
+            ime.stage(seat, window, &keyboard, commit(Some("must not escape")))
+                .unwrap();
+            assert_eq!(
+                ime.stage(
+                    seat,
+                    window,
+                    &keyboard,
+                    ImeEvent::Preedit {
+                        text: Some("中"),
+                        cursor_begin: begin,
+                        cursor_end: end,
+                    }
+                ),
+                Err(AppError::new(Component::Ime, ErrorKind::InvalidData))
+            );
+            assert!(
+                !ime.stage(seat, window, &keyboard, commit(Some("still invalid")))
+                    .unwrap()
+            );
+            assert!(ime.done(seat, window, &keyboard, 1).is_none());
+        }
+        let oversized = "a".repeat(MAX_IME_TEXT_BYTES + 1);
+        for event in [
+            commit(Some(&oversized)),
+            ImeEvent::Preedit {
+                text: Some(&oversized),
+                cursor_begin: 0,
+                cursor_end: 0,
+            },
+        ] {
+            assert_eq!(
+                ime.stage(seat, window, &keyboard, event),
+                Err(AppError::new(Component::Ime, ErrorKind::FileTooLarge))
+            );
+            assert!(ime.done(seat, window, &keyboard, 1).is_none());
+        }
+        ime.stage(seat, window, &keyboard, commit(Some("cancelled")))
+            .unwrap();
+        keyboard.enter(window, TabId(8));
+        assert!(ime.done(seat, window, &keyboard, 1).is_none());
+        ime.sync_enabled(seat, &keyboard, true);
+        assert_eq!(ime.commit_serial(), 3);
+        assert!(
+            ime.done(seat, window, &keyboard, 3)
+                .unwrap()
+                .commit
+                .is_empty()
+        );
+        ime.stage(seat, window, &keyboard, commit(Some("cancelled")))
+            .unwrap();
+        ime.leave(seat, window);
+        assert!(ime.done(seat, window, &keyboard, 3).is_none());
+        ime.enter(seat, window);
+        ime.sync_enabled(seat, &keyboard, true);
+        assert!(
+            ime.done(seat, window, &keyboard, 4)
+                .unwrap()
+                .commit
+                .is_empty()
+        );
+        ime.stage(seat, window, &keyboard, commit(Some("disabled")))
+            .unwrap();
+        ime.sync_enabled(seat, &keyboard, false);
+        assert!(ime.done(seat, window, &keyboard, 5).is_none());
+        ime.sync_enabled(seat, &keyboard, true);
+        assert!(
+            ime.done(seat, window, &keyboard, 6)
+                .unwrap()
+                .commit
+                .is_empty()
+        );
+        let mut other = ImeState::new(SeatId(2), &capabilities);
+        other.enter(SeatId(2), window);
+        other.sync_enabled(SeatId(2), &keyboard, true);
+        other
+            .stage(SeatId(2), window, &keyboard, commit(Some("other seat")))
+            .unwrap();
+        ime.stage(seat, window, &keyboard, commit(Some("first seat")))
+            .unwrap();
+        assert_eq!(
+            ime.done(seat, window, &keyboard, 6).unwrap().commit,
+            "first seat"
+        );
+        assert_eq!(
+            other.done(SeatId(2), window, &keyboard, 1).unwrap().commit,
+            "other seat"
+        );
+        ime.commit_serial = u32::MAX;
+        ime.sync_enabled(seat, &keyboard, false);
+        assert_eq!(ime.commit_serial(), 0);
+    }
 
     #[test]
     fn ime_enable_disable_requests_ordered() {

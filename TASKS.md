@@ -313,7 +313,7 @@
   - **Dependencies:** `TASK-070`  |  **Unit Test:** `ime_enable_disable_requests_ordered`
   - **Done:** 正確發出 Wayland text-input state changes
 
-- [ ] **TASK-072 — 累積 Preedit/Commit，`done` 時原子套用**
+- [x] **TASK-072 — 累積 Preedit/Commit，`done` 時原子套用**
   - **Dependencies:** `TASK-071`  |  **Unit Test:** `ime_done_applies_staged_events`
   - **Done:** `done` 前唔送半套更新入 PTY
 
