@@ -547,7 +547,7 @@
   - **Dependencies:** `TASK-125`, `TASK-028`, `TASK-032`, `TASK-033` | **Unit Test:** `runtime_raster_draws_terminal_cells`
   - **Done:** 載入實際字型，bounded rasterization 呈現 grid、顏色及 cursor；真 compositor screenshot 驗證可見文字。
 
-- [ ] **TASK-127 — Shell PTY output 接入 runtime 畫面**
+- [x] **TASK-127 — Shell PTY output 接入 runtime 畫面**
   - **Dependencies:** `TASK-126`, `TASK-021`, `TASK-022`, `TASK-024`, `TASK-025`, `TASK-026` | **Unit Test:** `runtime_pty_output_updates_grid`
   - **Done:** 啟動 Shell；event-driven PTY read 更新畫面；resize 同步 grid/PTY；退出時回收 child；真 PTY 與 compositor 驗證。
 

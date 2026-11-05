@@ -14,7 +14,7 @@ fn reviewed_dependencies(manifest: &toml::Table) -> bool {
                     "kbvm" => ("=0.2.0", &[]),
                     "log" => ("=0.4.34", &["max_level_off", "release_max_level_off"]),
                     "toml" => ("=1.1.6", &["std", "parse", "serde"]),
-                    "nix" => ("=0.31.3", &["fs", "process", "signal", "term"]),
+                    "nix" => ("=0.31.3", &["fs", "poll", "process", "signal", "term"]),
                     _ => return false,
                 };
                 let Some(spec) = spec.as_table() else {

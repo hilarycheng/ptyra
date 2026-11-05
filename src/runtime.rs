@@ -1,5 +1,7 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod raster;
+use crate::pty::{PtyReadStatus, PtySession, PtySize, PtySpawnRequest};
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::memfd::{MFdFlags, memfd_create};
 use std::{
     fs::File,
@@ -82,6 +84,7 @@ struct Runtime {
     failure: Option<&'static str>,
     raster: raster::Raster,
     terminal: crate::terminal::Terminal,
+    pty: Option<PtySession>,
 }
 
 pub fn run(config: crate::config::Config) -> Result<()> {
@@ -90,20 +93,13 @@ pub fn run(config: crate::config::Config) -> Result<()> {
     let mut queue = connection.new_event_queue();
     let qh = queue.handle();
     let raster = raster::Raster::load(&config)?;
-    let mut terminal = crate::terminal::Terminal::with_scrollback(
+    let terminal = crate::terminal::Terminal::with_scrollback(
         crate::TabId(1),
         24,
         80,
         config.scrollback_lines,
     )
     .map_err(|_| "terminal allocation failed")?;
-    terminal
-        .feed(
-            crate::TabId(1),
-            "Ptyra — Native Wayland\r\n\x1b[32mTerminal grid rendering\x1b[0m\r\n繁體中文\r\n"
-                .as_bytes(),
-        )
-        .map_err(|_| "terminal initialization failed")?;
     let mut app = Runtime {
         compositor: None,
         shm: None,
@@ -117,6 +113,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         failure: None,
         raster,
         terminal,
+        pty: None,
     };
     connection.display().get_registry(&qh, ());
     queue
@@ -139,10 +136,60 @@ pub fn run(config: crate::config::Config) -> Result<()> {
     surface.commit();
     app.surface = Some(surface);
     while app.running {
-        app.draw(&qh)?;
         queue
-            .blocking_dispatch(&mut app)
-            .map_err(|_| "Wayland connection lost")?;
+            .dispatch_pending(&mut app)
+            .map_err(|_| "Wayland dispatch failed")?;
+        if !app.running {
+            break;
+        }
+        app.sync_terminal()?;
+        app.read_output()?;
+        if !app.running {
+            break;
+        }
+        app.draw(&qh)?;
+        let writable = match connection.flush() {
+            Ok(()) => false,
+            Err(wayland_client::backend::WaylandError::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                true
+            }
+            Err(_) => return Err("Wayland flush failed"),
+        };
+        let Some(guard) = queue.prepare_read() else {
+            continue;
+        };
+        let mut fds = vec![PollFd::new(
+            guard.connection_fd(),
+            PollFlags::POLLIN
+                | if writable {
+                    PollFlags::POLLOUT
+                } else {
+                    PollFlags::empty()
+                },
+        )];
+        if let Some(fd) = app.pty.as_ref().and_then(PtySession::master_fd) {
+            fds.push(PollFd::new(fd, PollFlags::POLLIN));
+        }
+        match poll(&mut fds, PollTimeout::NONE) {
+            Ok(_) => {}
+            Err(nix::errno::Errno::EINTR) => continue,
+            Err(_) => return Err("runtime poll failed"),
+        }
+        let wayland_ready = fds[0]
+            .revents()
+            .unwrap_or(PollFlags::empty())
+            .intersects(PollFlags::POLLIN | PollFlags::POLLERR | PollFlags::POLLHUP);
+        drop(fds);
+        if wayland_ready {
+            match guard.read() {
+                Ok(_) => {}
+                Err(wayland_client::backend::WaylandError::Io(error))
+                    if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => return Err("Wayland connection lost"),
+            }
+        }
     }
     top.destroy();
     xdg.destroy();
@@ -154,6 +201,64 @@ pub fn run(config: crate::config::Config) -> Result<()> {
 }
 
 impl Runtime {
+    fn sync_terminal(&mut self) -> Result<()> {
+        if !self.paint.configured {
+            return Ok(());
+        }
+        let rows = (self.paint.size.1 / self.raster.cell_height).max(1);
+        let columns = (self.paint.size.0 / self.raster.cell_width).max(2);
+        let size = PtySize {
+            rows: rows.try_into().map_err(|_| "too many rows")?,
+            columns: columns.try_into().map_err(|_| "too many columns")?,
+        };
+        let snapshot = self.terminal.snapshot().ok_or("terminal unavailable")?;
+        if snapshot.rows != rows as usize || snapshot.columns != columns as usize {
+            self.terminal
+                .resize(size.rows, size.columns)
+                .map_err(|_| "terminal size exceeds allocation budget")?;
+            self.paint.dirty = true;
+        }
+        if let Some(pty) = &mut self.pty {
+            pty.resize(size).map_err(|_| "PTY resize failed")?;
+        } else {
+            let program = std::env::var_os("SHELL")
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "/bin/sh".into());
+            let cwd = std::env::current_dir().map_err(|_| "working directory unavailable")?;
+            self.pty = Some(
+                PtySession::spawn(PtySpawnRequest {
+                    tab: crate::TabId(1),
+                    program: &program,
+                    args: &[],
+                    cwd: &cwd,
+                    size,
+                })
+                .map_err(|_| "cannot start Shell PTY")?,
+            );
+        }
+        Ok(())
+    }
+    fn read_output(&mut self) -> Result<()> {
+        let Some(pty) = &mut self.pty else {
+            return Ok(());
+        };
+        let mut bytes = [0; crate::pty::MAX_PTY_READ_BYTES];
+        for _ in 0..4 {
+            let status = pty
+                .read_chunk(&mut bytes)
+                .map_err(|_| "PTY read failed")?
+                .status;
+            if !apply_output(&mut self.terminal, &mut self.paint, status, &bytes)? {
+                self.running = false;
+                break;
+            }
+            if !matches!(status, PtyReadStatus::Data(_)) {
+                break;
+            }
+        }
+        // EOF drains output before shutdown; Drop reaps the child and closes the master.
+        Ok(())
+    }
     fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
         if !self.paint.ready() {
             return Ok(());
@@ -223,6 +328,26 @@ impl Runtime {
         self.failure = Some(error);
         self.running = false;
     }
+}
+
+fn apply_output(
+    terminal: &mut crate::terminal::Terminal,
+    paint: &mut PaintState,
+    status: PtyReadStatus,
+    bytes: &[u8],
+) -> Result<bool> {
+    match status {
+        PtyReadStatus::Data(length) => {
+            let bytes = bytes.get(..length).ok_or("invalid PTY read length")?;
+            terminal
+                .feed(terminal.tab(), bytes)
+                .map_err(|_| "terminal rejected PTY output")?;
+            paint.dirty = true;
+        }
+        PtyReadStatus::Eof => return Ok(false),
+        _ => {}
+    }
+    Ok(true)
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
@@ -345,6 +470,36 @@ delegate_noop!(Runtime: ignore wl_shm_pool::WlShmPool);
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runtime_pty_output_updates_grid() {
+        use crate::pty::PtyReadStatus;
+        use alacritty_terminal::index::{Column, Line};
+        let mut terminal = crate::terminal::Terminal::new(crate::TabId(1), 4, 16).unwrap();
+        let mut paint = PaintState::default();
+        for chunk in [b"\xe7\xb9".as_slice(), b"\x81\x1b[31mA"] {
+            assert!(
+                apply_output(
+                    &mut terminal,
+                    &mut paint,
+                    PtyReadStatus::Data(chunk.len()),
+                    chunk
+                )
+                .unwrap()
+            );
+        }
+        assert!(paint.dirty);
+        assert_eq!(terminal.grid().unwrap()[Line(0)][Column(0)].c, '繁');
+        assert_eq!(terminal.grid().unwrap()[Line(0)][Column(2)].c, 'A');
+        terminal.resize(6, 20).unwrap();
+        assert_eq!(terminal.grid().unwrap()[Line(0)][Column(0)].c, '繁');
+        assert_eq!(terminal.snapshot().unwrap().columns, 20);
+        assert!(terminal.resize(0, 20).is_err());
+        assert_eq!(terminal.snapshot().unwrap().rows, 6);
+        paint.dirty = false;
+        assert!(apply_output(&mut terminal, &mut paint, PtyReadStatus::WouldBlock, &[]).unwrap());
+        assert!(!paint.dirty);
+        assert!(!apply_output(&mut terminal, &mut paint, PtyReadStatus::Eof, &[]).unwrap());
+    }
     #[test]
     fn runtime_window_waits_for_configure() {
         let mut state = PaintState::default();

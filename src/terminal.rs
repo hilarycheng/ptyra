@@ -191,6 +191,25 @@ impl Terminal {
         self.core.as_ref().map(|core| core.term.grid())
     }
 
+    /// Resize both screens while preserving content, subject to the original allocation budget.
+    pub fn resize(&mut self, rows: u16, columns: u16) -> Result<(), TerminalError> {
+        let error = |kind| TerminalError {
+            tab: self.tab,
+            error: AppError::new(Component::Terminal, kind),
+        };
+        let core = self
+            .core
+            .as_mut()
+            .ok_or_else(|| error(ErrorKind::NotConnected))?;
+        cell_reservation(rows, columns, core.scrollback_lines)
+            .ok_or_else(|| error(ErrorKind::InvalidInput))?;
+        core.term.resize(Size {
+            rows: rows as usize,
+            columns: columns as usize,
+        });
+        Ok(())
+    }
+
     /// Current core flags, including ALT_SCREEN and BRACKETED_PASTE.
     /// These describe terminal state, not implemented application capabilities.
     /// None means a stream resource violation stopped this adapter.

@@ -1,5 +1,11 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Runtime PTY polling — TASK-127 (2026-11-05)
+
+- 重用 `nix =0.31.3`，新增 poll feature；冇新 package 或 app unsafe。Wayland FD 同 PTY master 喺同一個阻塞 poll 等待，處理 EINTR、Wayland write backpressure；每輪最多四個 16 KiB output chunks。
+- Shell 用既有 PtySession spawn/drop，argv 唔經字串 Shell evaluation。`SHELL` 必須符合既有 absolute-path validation；冇設定時用 `/bin/sh`。沿用 `TERM=dumb`，未宣稱完整 terminal capabilities。
+- Resize 重用 Terminal allocation caps，再同步 PTY ioctl。Headless Sway + 真 `/bin/sh` 已驗證 output、中文、40×113 → 34×91 resize、close exit 0 同 child reaped。未做長時間 soak 或完整 TUI acceptance。
+
 ## Software text raster — TASK-126 (2026-11-05)
 
 - `ab_glyph =0.2.32`（std only，Apache-2.0）提供 software glyph coverage；ab_glyph_rasterizer 0.1.10、owned_ttf_parser 0.25.1（Apache-2.0）、ttf-parser 0.25.1（MIT OR Apache-2.0）。Source/maintenance：https://github.com/alexheretic/ab-glyph 。
