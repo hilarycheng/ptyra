@@ -533,7 +533,7 @@
   - **Dependencies:** `TASK-027`  |  **Unit Test:** `terminfo_does_not_claim_unsupported_features`
   - **Done:** Kitty 未完成前不宣稱 Kitty 全功能
 
-- [ ] **TASK-124 — Desktop entry schema/command 檢查**
+- [x] **TASK-124 — Desktop entry schema/command 檢查**
   - **Dependencies:** `TASK-122`  |  **Unit Test:** `desktop_entry_points_to_ptyra`
   - **Done:** Desktop launcher 無任意 Shell evaluation
 

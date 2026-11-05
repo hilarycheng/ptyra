@@ -15,7 +15,7 @@ pub enum EntryKind {
 }
 
 pub struct InstallPlan {
-    files: [PathBuf; 2],
+    files: [PathBuf; 3],
 }
 impl InstallPlan {
     pub fn user_local(home: &Path) -> Result<Self, AppError> {
@@ -40,10 +40,11 @@ impl InstallPlan {
             files: [
                 prefix.join("bin/ptyra"),
                 prefix.join("share/terminfo/p/ptyra"),
+                prefix.join("share/applications/ptyra.desktop"),
             ],
         }
     }
-    pub fn files(&self) -> &[PathBuf; 2] {
+    pub fn files(&self) -> &[PathBuf; 3] {
         &self.files
     }
     /// This snapshot authorizes no writes and never treats an existing destination as replaceable.
@@ -83,6 +84,71 @@ impl InstallPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_entry_points_to_ptyra() {
+        let mut lines = include_str!("../assets/ptyra.desktop")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(lines.next(), Some("[Desktop Entry]"));
+        let mut fields = std::collections::BTreeMap::new();
+        for line in lines {
+            let (key, value) = line.split_once('=').expect("desktop entry key/value");
+            assert!(fields.insert(key, value).is_none(), "duplicate key: {key}");
+        }
+        // Exact fields exclude shell wrappers, field expansion, actions and D-Bus activation.
+        assert_eq!(
+            fields,
+            std::collections::BTreeMap::from([
+                ("Type", "Application"),
+                ("Name", crate::APP_NAME),
+                ("Exec", env!("CARGO_PKG_NAME")),
+                ("TryExec", env!("CARGO_PKG_NAME")),
+                ("Terminal", "false"),
+                ("Categories", "System;TerminalEmulator;"),
+            ])
+        );
+        let local = InstallPlan::user_local(Path::new("/home/test user")).unwrap();
+        let system = InstallPlan::system_local();
+        for (plan, desktop) in [
+            (
+                &local,
+                "/home/test user/.local/share/applications/ptyra.desktop",
+            ),
+            (&system, "/usr/local/share/applications/ptyra.desktop"),
+        ] {
+            let desktop = PathBuf::from(desktop);
+            assert!(plan.files().contains(&desktop));
+            assert_eq!(
+                plan.uninstall_paths(std::slice::from_ref(&desktop))
+                    .unwrap(),
+                std::slice::from_ref(&desktop)
+            );
+            for occupied in [EntryKind::File, EntryKind::Symlink, EntryKind::Directory] {
+                assert!(
+                    plan.preflight(|path| if path == desktop {
+                        occupied
+                    } else {
+                        EntryKind::Missing
+                    })
+                    .is_err()
+                );
+            }
+            assert!(
+                plan.preflight(|path| if path == desktop.parent().unwrap() {
+                    EntryKind::Symlink
+                } else {
+                    EntryKind::Missing
+                })
+                .is_err()
+            );
+            assert!(
+                plan.uninstall_paths(&[desktop.with_file_name("other.desktop")])
+                    .is_err()
+            );
+        }
+    }
+
     #[test]
     fn install_paths_do_not_overwrite_system_files() {
         let local = InstallPlan::user_local(Path::new("/home/test user")).unwrap();

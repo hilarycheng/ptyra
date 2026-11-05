@@ -1,0 +1,8 @@
+# Packaging asset; native GUI integration and desktop launch acceptance remain pending.
+[Desktop Entry]
+Type=Application
+Name=Ptyra
+Exec=ptyra
+TryExec=ptyra
+Terminal=false
+Categories=System;TerminalEmulator;
