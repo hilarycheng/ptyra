@@ -163,7 +163,7 @@ def main():
             env.update(WAYLAND_DISPLAY=display.name, SHELL="/bin/bash", PS1="ptyra$ ", HISTFILE="/dev/null")
             # An owned wrapper avoids user shell startup files in this test only.
             wrapper = root / "test-shell"
-            wrapper.write_text("#!/bin/sh\nexec /bin/bash --noprofile --norc\n")
+            wrapper.write_text("#!/bin/sh\nexec /usr/bin/fish --no-config --interactive\n" if os.environ.get("PTYRA_TEST_FISH") else "#!/bin/sh\nexec /bin/bash --noprofile --norc\n")
             wrapper.chmod(0o700)
             env["SHELL"] = str(wrapper)
             keyboard = Keyboard(display, keymap.read_bytes())
@@ -233,7 +233,18 @@ def main():
             keyboard.tap(28)
             keyboard.sync()
             assert app.wait(timeout=5) == 0, (root / "app.log").read_text()
-            print("PASS: real Wayland keyboard, Enter, Backspace, arrows, Ctrl+C, repeat/focus, rendered PTY output and exit")
+            # Reconnect against the same compositor/keymap, catching shared FD offset regressions.
+            for _ in range(2):
+                with open(root / "app.log", "w") as log:
+                    app = subprocess.Popen([binary, "--config", str(root / "missing.toml")], env=env, stdout=log, stderr=log)
+                wait_until(lambda: any(n.get("pid") == app.pid for n in nodes(json.loads(ipc("-t", "get_tree")))))
+                time.sleep(0.2)
+                assert app.poll() is None, (root / "app.log").read_text()
+                keyboard.text("exit")
+                keyboard.tap(28)
+                keyboard.sync()
+                assert app.wait(timeout=5) == 0, (root / "app.log").read_text()
+            print("PASS: reconnect twice; real Wayland keyboard, Enter, Backspace, arrows, Ctrl+C, repeat/focus, rendered PTY output and exit")
         except Exception:
             if (root / "app.log").exists():
                 print((root / "app.log").read_text(), file=sys.stderr)

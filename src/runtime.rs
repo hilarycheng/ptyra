@@ -367,8 +367,12 @@ impl Runtime {
             .try_reserve(bytes)
             .map_err(|_| "frame allocation failed")?;
         self.pixels.resize(bytes, 0);
-        self.raster
-            .draw(&self.terminal, self.paint.size, &mut self.pixels)?;
+        self.raster.draw(
+            &self.terminal,
+            self.paint.size,
+            &mut self.pixels,
+            self.input.focus.target().is_some(),
+        )?;
         let slot = self.slots[index].as_mut().ok_or("frame slot unavailable")?;
         slot.file
             .write_all_at(&self.pixels, 0)

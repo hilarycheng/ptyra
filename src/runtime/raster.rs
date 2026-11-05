@@ -59,7 +59,13 @@ impl Raster {
                 .map_err(|_| "glyph cache allocation failed")?,
         })
     }
-    pub fn draw(&mut self, terminal: &Terminal, size: (u32, u32), pixels: &mut [u8]) -> Result<()> {
+    pub fn draw(
+        &mut self,
+        terminal: &Terminal,
+        size: (u32, u32),
+        pixels: &mut [u8],
+        focused: bool,
+    ) -> Result<()> {
         let (width, height) = size;
         if pixels.len() != width as usize * height as usize * 4 {
             return Err("invalid raster buffer");
@@ -198,25 +204,53 @@ impl Raster {
         if cursor.shape != CursorShape::Hidden && cursor.point.line.0 >= 0 {
             let x = cursor.point.column.0 as u32 * self.cell_width;
             let y = cursor.point.line.0 as u32 * self.cell_height;
-            // shortcut: steady outline cursor avoids hiding text; shape/blink scheduling needs separate runtime work.
-            fill(pixels, size, (x, y, self.cell_width, 1), 0xeeeeec);
-            fill(
+            paint_cursor(
                 pixels,
                 size,
-                (x, y + self.cell_height - 1, self.cell_width, 1),
-                0xeeeeec,
-            );
-            fill(pixels, size, (x, y, 1, self.cell_height), 0xeeeeec);
-            fill(
-                pixels,
-                size,
-                (x + self.cell_width - 1, y, 1, self.cell_height),
-                0xeeeeec,
+                (x, y, self.cell_width, self.cell_height),
+                cursor.shape,
+                focused,
             );
         }
         Ok(())
     }
 }
+fn paint_cursor(
+    pixels: &mut [u8],
+    size: (u32, u32),
+    rect: (u32, u32, u32, u32),
+    shape: CursorShape,
+    focused: bool,
+) {
+    let (x, y, w, h) = rect;
+    if shape == CursorShape::Hidden {
+        return;
+    }
+    if !focused || shape == CursorShape::HollowBlock {
+        for rect in [
+            (x, y, w, 1),
+            (x, y + h - 1, w, 1),
+            (x, y, 1, h),
+            (x + w - 1, y, 1, h),
+        ] {
+            fill(pixels, size, rect, 0xeeeeec);
+        }
+    } else if shape == CursorShape::Block {
+        for row in y..y.saturating_add(h).min(size.1) {
+            for col in x..x.saturating_add(w).min(size.0) {
+                let offset = (row * size.0 + col) as usize * 4;
+                let pixel =
+                    u32::from_ne_bytes(pixels[offset..offset + 4].try_into().unwrap()) ^ 0x00ffffff;
+                pixels[offset..offset + 4].copy_from_slice(&pixel.to_ne_bytes());
+            }
+        }
+    } else if shape == CursorShape::Beam {
+        fill(pixels, size, (x, y, 1, h), 0xeeeeec);
+    } else if shape == CursorShape::Underline {
+        fill(pixels, size, (x, y + h - 1, w, 1), 0xeeeeec);
+    }
+}
+
 fn load_font(pattern: &str) -> Result<FontVec> {
     let output = Command::new("fc-match")
         .args(["-f", "%{file}\n%{index}\n", "--", pattern])
@@ -284,6 +318,19 @@ fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: 
 mod tests {
     use super::*;
     #[test]
+    fn runtime_cursor_matches_focus_and_shape() {
+        let mut pixels = vec![0; 8 * 8 * 4];
+        paint_cursor(&mut pixels, (8, 8), (1, 1, 6, 6), CursorShape::Block, true);
+        assert_ne!(&pixels[(3 * 8 + 3) * 4..(3 * 8 + 3) * 4 + 4], &[0; 4]);
+        pixels.fill(0);
+        paint_cursor(&mut pixels, (8, 8), (1, 1, 6, 6), CursorShape::Block, false);
+        assert_eq!(&pixels[(3 * 8 + 3) * 4..(3 * 8 + 3) * 4 + 4], &[0; 4]);
+        assert_ne!(&pixels[(8 + 1) * 4..(8 + 1) * 4 + 4], &[0; 4]);
+        pixels.fill(0);
+        paint_cursor(&mut pixels, (8, 8), (1, 1, 6, 6), CursorShape::Hidden, true);
+        assert!(pixels.iter().all(|b| *b == 0));
+    }
+    #[test]
     fn runtime_raster_draws_terminal_cells() {
         let config = crate::config::Config::default();
         let font = FontVec::try_from_vec(include_bytes!("../../tests/fixtures/demo.ttf").to_vec())
@@ -294,7 +341,9 @@ mod tests {
             .feed(crate::TabId(1), b"\x1b[31;44mA\x1b[0m\x1b[?25l")
             .unwrap();
         let mut pixels = vec![0; 128 * 64 * 4];
-        raster.draw(&terminal, (128, 64), &mut pixels).unwrap();
+        raster
+            .draw(&terminal, (128, 64), &mut pixels, true)
+            .unwrap();
         let colors: std::collections::BTreeSet<_> = pixels
             .chunks_exact(4)
             .map(|p| u32::from_ne_bytes(p.try_into().unwrap()))
@@ -307,7 +356,7 @@ mod tests {
         assert!(!raster.cache.is_empty());
         assert!(
             raster
-                .draw(&terminal, (128, 64), &mut pixels[..16])
+                .draw(&terminal, (128, 64), &mut pixels[..16], true)
                 .is_err()
         );
     }

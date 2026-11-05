@@ -8,7 +8,7 @@ use crate::{
     kitty::{KeyboardFlags, encode::KeyEncoder},
     repeat::RepeatScheduler,
 };
-use std::{fs::File, io::Read};
+use std::{collections::BTreeSet, fs::File, os::unix::fs::FileExt};
 use wayland_client::{
     Connection, Dispatch, QueueHandle, WEnum,
     protocol::{wl_keyboard, wl_seat},
@@ -19,10 +19,12 @@ pub(super) struct KeyboardInput {
     pub focus: KeyboardFocus,
     pub map: Option<Keymap>,
     pub repeat: RepeatScheduler,
+    pressed: BTreeSet<u32>,
 }
 impl KeyboardInput {
     pub fn clear_focus(&mut self) {
         self.focus.clear();
+        self.pressed.clear();
         self.repeat.cancel();
     }
     pub fn key(
@@ -38,6 +40,17 @@ impl KeyboardInput {
         let Some(map) = &self.map else {
             return Ok(None);
         };
+        if pressed {
+            if self.pressed.contains(&code) {
+                return Ok(None);
+            }
+            if self.pressed.len() >= 4096 {
+                return Err("too many held keys");
+            }
+            self.pressed.insert(code);
+        } else if !self.pressed.remove(&code) {
+            return Ok(None);
+        }
         let Some(key) = map
             .translate(route, false)
             .map_err(|_| "key translation failed")?
@@ -89,6 +102,17 @@ impl KeyboardInput {
     }
 }
 
+fn read_keymap(file: &File, size: usize) -> Result<Keymap> {
+    if size == 0 || size > crate::keymap::MAX_KEYMAP_BYTES {
+        return Err("unsupported Wayland keymap");
+    }
+    let mut bytes = vec![0; size];
+    // SCM_RIGHTS descriptors can share an offset across clients; never advance it.
+    file.read_exact_at(&mut bytes, 0)
+        .map_err(|_| "keymap FD read failed")?;
+    Keymap::from_bytes(&bytes).map_err(|_| "invalid Wayland keymap")
+}
+
 impl Runtime {
     pub(super) fn remove_keyboard(&mut self) {
         if let Some(keyboard) = self.keyboard.take() {
@@ -96,6 +120,7 @@ impl Runtime {
         }
         self.input.clear_focus();
         self.input.map = None;
+        self.paint.dirty = true;
     }
     fn keyboard_event(&mut self, event: wl_keyboard::Event) -> Result<()> {
         match event {
@@ -108,20 +133,27 @@ impl Runtime {
                 {
                     return Err("unsupported Wayland keymap");
                 }
-                let mut bytes = vec![0; size as usize];
-                File::from(fd)
-                    .read_exact(&mut bytes)
-                    .map_err(|_| "keymap FD read failed")?;
-                self.input.map =
-                    Some(Keymap::from_bytes(&bytes).map_err(|_| "invalid Wayland keymap")?);
+                self.input.pressed.clear();
+                self.input.map = Some(read_keymap(&File::from(fd), size as usize)?);
             }
-            wl_keyboard::Event::Enter { surface, .. }
+            wl_keyboard::Event::Enter { surface, keys, .. }
                 if self.surface.as_ref() == Some(&surface) =>
             {
-                self.input.repeat.cancel();
+                self.input.clear_focus();
+                if keys.len() > 4096 * 4 || keys.len() % 4 != 0 {
+                    return Err("too many held keys");
+                }
+                self.input.pressed.extend(
+                    keys.chunks_exact(4)
+                        .map(|key| u32::from_ne_bytes(key.try_into().unwrap())),
+                );
+                self.paint.dirty = true;
                 self.input.focus.enter(WindowId(1), TabId(1));
             }
-            wl_keyboard::Event::Leave { .. } => self.input.clear_focus(),
+            wl_keyboard::Event::Leave { .. } => {
+                self.input.clear_focus();
+                self.paint.dirty = true;
+            }
             wl_keyboard::Event::Modifiers {
                 mods_depressed,
                 mods_latched,
@@ -212,6 +244,36 @@ mod tests {
         keymap::{Keymap, Modifiers},
     };
     #[test]
+    fn runtime_keymap_reads_shared_fd_from_zero() {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut file = File::from(
+            nix::sys::memfd::memfd_create(c"keymap-test", nix::sys::memfd::MFdFlags::MFD_CLOEXEC)
+                .unwrap(),
+        );
+        let data = include_bytes!("../../tests/fixtures/keyboard.xkb");
+        file.write_all(data).unwrap();
+        let duplicate = file.try_clone().unwrap();
+        assert!(read_keymap(&file, data.len()).is_ok());
+        assert!(read_keymap(&duplicate, data.len()).is_ok());
+        assert_eq!(file.stream_position().unwrap(), data.len() as u64);
+        file.seek(SeekFrom::Start(7)).unwrap();
+        assert!(read_keymap(&duplicate, data.len()).is_ok());
+        assert_eq!(file.stream_position().unwrap(), 7);
+        assert!(read_keymap(&file, data.len() + 1).is_err());
+    }
+    #[test]
+    fn runtime_duplicate_press_is_not_replayed() {
+        let mut input = KeyboardInput::default();
+        let clock = FakeClock::default();
+        input.map =
+            Some(Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap());
+        input.focus.enter(WindowId(1), TabId(1));
+        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
+        assert!(input.key(30, true, false, &clock).unwrap().is_none());
+        assert!(input.key(30, false, false, &clock).unwrap().is_none());
+        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
+    }
+    #[test]
     fn runtime_keyboard_routes_to_shell() {
         let mut input = KeyboardInput::default();
         let clock = FakeClock::default();
@@ -221,11 +283,13 @@ mod tests {
         input.focus.enter(WindowId(1), TabId(1));
         input.repeat.configure(25, 200).unwrap();
         assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
+        input.key(30, false, false, &clock).unwrap();
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
             depressed: kbvm::ModifierMask::SHIFT.0,
             ..Default::default()
         });
         assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"A");
+        input.key(30, false, false, &clock).unwrap();
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
             depressed: kbvm::ModifierMask::CONTROL.0,
             ..Default::default()
@@ -244,6 +308,7 @@ mod tests {
             input.key(103, true, false, &clock).unwrap().unwrap(),
             b"\x1b[A"
         );
+        input.key(103, false, false, &clock).unwrap();
         assert_eq!(
             input.key(103, true, true, &clock).unwrap().unwrap(),
             b"\x1bOA"

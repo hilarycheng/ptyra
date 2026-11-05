@@ -18,7 +18,7 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前可開單視窗
 - 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize、單次 child exit → Tab event mapping，以及保留跨 chunk parser state 嘅 terminal core adapter 同 renderer 資料接口。
 - `src/main.rs` 會載入 config，再連接 Wayland compositor。Runtime 用有界 SHM buffers、software glyph rasterization、真 PTY 同阻塞 poll event loop；keyboard 經現有 focus/keymap/encoder/repeat 模組送到 Shell。
 - 已驗證 Enter、Backspace、arrows、Ctrl+C、focus/repeat、PTY resize 同 close cleanup。Clipboard、Selection、IME、GUI Tabs、Kitty graphics 仍未接入 runtime；唔代表日常 Terminal 已完成。
-- Child 仍用 `TERM=dumb`；未安裝或啟用 Ptyra terminfo，未驗收完整 TUI。暫時 steady outline cursor、regular font face、基本顏色；HiDPI、shaping 同效能仍待校準。
+- Child 仍用 `TERM=dumb`；未安裝或啟用 Ptyra terminfo，未驗收完整 TUI。Cursor 跟 focus 同 Block/Beam/Underline shape；暫時冇 blink，使用 regular font face 同基本顏色；HiDPI、shaping 同效能仍待校準。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
 
@@ -54,6 +54,15 @@ python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-native.png
 - 額外 headless Sway checks：視窗 mapped、idle 阻塞、ASCII/CJK screenshot、PTY resize、close child cleanup：PASS。
 - Security / Privacy：冇新增 app unsafe、Shell command 拼接或 payload logs；有界 buffer/font/keymap/cache，重用現有 PTY ownership。字型 parser 維護風險見 DEPENDENCIES.md。
 - Manual / Acceptance：使用者實際 Sway/Fcitx5、Firefox Clipboard、多 Tabs、GPU/HiDPI、soak/benchmark：NOT RUN。Ready for `[x]`：YES，只限四項列明範圍。
+
+## Runtime regression fixes（TASK-126 / TASK-128）
+
+- Keymap FD 改用 positional read，由 offset 0 讀取而唔改共享 file offset；包含 dup FD、非零 offset、短檔案 regression tests。
+- Keyboard 記錄有界 held-key set；同一按鍵 release 前嘅 duplicate press 唔會再次輸入。Focus/keyboard/keymap 變更會清理相關 state；正常 hold repeat 仍由 RepeatScheduler 處理。
+- Focus 中依 terminal cursor shape 畫 Block、Beam 或 Underline；失焦畫空心框；Hidden 保持隱藏。Focus events 會觸發 redraw。
+- 192 unit tests、13 integration tests、2 doctests、Format/Clippy 同 release build PASS。Bash 同 fish（no-config）各自通過原生互動及同 compositor 連續三次啟動測試。
+- Fish 原生測試：`PTYRA_TEST_FISH=1 python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-fish.png`。
+- 使用者實體 keyboard 嘅 double key 尚未獨立重現；已驗證 duplicate press 防護，仍需現場重試確認。
 
 ## 2026-10-29 Audit
 
