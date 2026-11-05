@@ -359,7 +359,7 @@
 
 ## H. Native GUI Tabs
 
-- [ ] **TASK-083 — Tab registry 保存不同 `TabId` 狀態**
+- [x] **TASK-083 — Tab registry 保存不同 `TabId` 狀態**
   - **Dependencies:** `TASK-002`  |  **Unit Test:** `tab_registry_keeps_unique_entries`
   - **Done:** 每 Tab 有獨立 Terminal/PTY/Selection state
 
