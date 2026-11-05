@@ -477,7 +477,7 @@
   - **Dependencies:** `TASK-108`, `TASK-012`  |  **Unit Test:** `kitty_encoder_handles_modified_enter`
   - **Done:** 不破壞 legacy keyboard 兼容
 
-- [ ] **TASK-111 — 編碼 press/repeat/release**
+- [x] **TASK-111 — 編碼 press/repeat/release**
   - **Dependencies:** `TASK-110`  |  **Unit Test:** `kitty_key_event_types_are_distinct`
   - **Done:** Mode 開啟時分清 press/repeat/release
 

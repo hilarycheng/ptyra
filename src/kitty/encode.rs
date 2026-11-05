@@ -13,12 +13,20 @@ pub fn encode_key(
     application_cursor: bool,
 ) -> Result<Vec<u8>, AppError> {
     let unsupported = || AppError::new(Component::Terminal, std::io::ErrorKind::Unsupported);
-    if !(flags - KeyboardFlags::DISAMBIGUATE_ESC_CODES).is_empty() {
+    if !(flags - (KeyboardFlags::DISAMBIGUATE_ESC_CODES | KeyboardFlags::REPORT_EVENT_TYPES))
+        .is_empty()
+    {
         return Err(unsupported());
     }
-    if key.state == KeyState::Released || key.keysyms.is_empty() {
+    let report_events = flags.contains(KeyboardFlags::REPORT_EVENT_TYPES);
+    if key.state == KeyState::Released && !report_events || key.keysyms.is_empty() {
         return Ok(Vec::new());
     }
+    let event = match (report_events, key.state) {
+        (true, KeyState::Repeated) => Some(2),
+        (true, KeyState::Released) => Some(3),
+        _ => None,
+    };
     let ([symbol], [base]) = (key.keysyms.as_slice(), key.unshifted_keysyms.as_slice()) else {
         return Err(unsupported());
     };
@@ -38,8 +46,11 @@ pub fn encode_key(
         _ => None,
     };
     if let Some(code) = control {
-        if enhanced && (code == 27 || mods != 1) || super_key {
-            return Ok(csi(code, mods, 'u'));
+        if key.state == KeyState::Released && code != 27 {
+            return Ok(Vec::new());
+        }
+        if enhanced && (code == 27 || mods != 1) || super_key || code == 27 && event.is_some() {
+            return Ok(csi(code, mods, event, 'u'));
         }
         let mut bytes = if code == 9 && modifiers.shift() {
             b"\x1b[Z".to_vec()
@@ -55,16 +66,17 @@ pub fn encode_key(
         }
         return Ok(bytes);
     }
-    if let Some((number, suffix, ss3)) = functional(*symbol, enhanced) {
+    if let Some((number, suffix, ss3)) = functional(*symbol, enhanced || report_events) {
         return Ok(
             if !enhanced
+                && event.is_none()
                 && mods == 1
                 && ss3
                 && (application_cursor || (0xffbe..=0xffc1).contains(symbol))
             {
                 format!("\x1bO{suffix}").into_bytes()
             } else {
-                csi(number, mods, suffix)
+                csi(number, mods, event, suffix)
             },
         );
     }
@@ -84,7 +96,10 @@ pub fn encode_key(
         || modifiers.ctrl() && modifiers.shift()
         || enhanced && (modifiers.ctrl() || modifiers.alt())
     {
-        return Ok(csi(base as u32, mods, 'u'));
+        return Ok(csi(base as u32, mods, event, 'u'));
+    }
+    if key.state == KeyState::Released {
+        return Ok(Vec::new());
     }
     let text = if modifiers.ctrl() {
         match base {
@@ -108,7 +123,10 @@ pub fn encode_key(
     Ok(bytes)
 }
 
-fn csi(number: u32, mods: u8, suffix: char) -> Vec<u8> {
+fn csi(number: u32, mods: u8, event: Option<u8>, suffix: char) -> Vec<u8> {
+    if let Some(event) = event {
+        return format!("\x1b[{number};{mods}:{event}{suffix}").into_bytes();
+    }
     if mods != 1 {
         return format!("\x1b[{number};{mods}{suffix}").into_bytes();
     }
@@ -151,6 +169,48 @@ mod tests {
         keymap::{Keymap, Modifiers},
     };
     use kbvm::ModifierMask;
+
+    #[test]
+    fn kitty_key_event_types_are_distinct() {
+        let map = Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap();
+        let mut focus = KeyboardFocus::default();
+        focus.enter(WindowId(1), TabId(1));
+        let mut key = map
+            .translate(focus.route_key(103, true).unwrap(), false)
+            .unwrap()
+            .unwrap();
+        let flags = KeyboardFlags::DISAMBIGUATE_ESC_CODES | KeyboardFlags::REPORT_EVENT_TYPES;
+        for (state, expected) in [
+            (KeyState::Pressed, "\x1b[A"),
+            (KeyState::Repeated, "\x1b[1;1:2A"),
+            (KeyState::Released, "\x1b[1;1:3A"),
+        ] {
+            key.state = state;
+            assert_eq!(encode_key(&key, flags, true).unwrap(), expected.as_bytes());
+        }
+        for symbol in [0xff0d, 0xff09, 0xff08, u32::from(b'a')] {
+            key.keysyms = vec![symbol];
+            key.unshifted_keysyms = vec![symbol];
+            assert!(encode_key(&key, flags, false).unwrap().is_empty());
+        }
+        key.keysyms = vec![0xff1b];
+        key.unshifted_keysyms = vec![0xff1b];
+        assert_eq!(encode_key(&key, flags, false).unwrap(), b"\x1b[27;1:3u");
+        assert!(
+            encode_key(&key, KeyboardFlags::DISAMBIGUATE_ESC_CODES, false)
+                .unwrap()
+                .is_empty()
+        );
+        key.state = KeyState::Repeated;
+        assert_eq!(encode_key(&key, flags, false).unwrap(), b"\x1b[27;1:2u");
+        assert_eq!(
+            encode_key(&key, KeyboardFlags::empty(), false).unwrap(),
+            b"\x1b"
+        );
+        key.keysyms = vec![u32::from(b'a')];
+        key.unshifted_keysyms = key.keysyms.clone();
+        assert_eq!(encode_key(&key, flags, false).unwrap(), b"a");
+    }
 
     #[test]
     fn kitty_encoder_handles_modified_enter() {
