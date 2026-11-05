@@ -1,6 +1,6 @@
 # Ptyra — TASKS.md
 
-> **Draft v0.2 · 2026-10-27 · 未 APPROVE；只係規劃文件，未開始實作。**
+> **原始規劃 v0.2 · 2026-10-27。** Checkbox 只代表列出嘅 TASK 範圍；整體產品狀態見 README 同下方 Acceptance Matrix。
 
 ## Rules / 使用方法
 
@@ -551,7 +551,7 @@
   - **Dependencies:** `TASK-126`, `TASK-021`, `TASK-022`, `TASK-024`, `TASK-025`, `TASK-026` | **Unit Test:** `runtime_pty_output_updates_grid`
   - **Done:** 啟動 Shell；event-driven PTY read 更新畫面；resize 同步 grid/PTY；退出時回收 child；真 PTY 與 compositor 驗證。
 
-- [ ] **TASK-128 — Keyboard 輸入接入互動 Shell**
+- [x] **TASK-128 — Keyboard 輸入接入互動 Shell**
   - **Dependencies:** `TASK-127`, `TASK-011`, `TASK-012`, `TASK-013`, `TASK-023`, `TASK-110` | **Unit Test:** `runtime_keyboard_routes_to_shell`
   - **Done:** 真 Wayland keymap/focus/modifiers/repeat 接駁現有 encoder 同 PTY queue；失焦停止輸入；Enter、Backspace、arrows、Ctrl+C 可用；真 compositor/PTY 驗證互動指令。
 

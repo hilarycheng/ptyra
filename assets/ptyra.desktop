@@ -1,4 +1,4 @@
-# Packaging asset; native GUI integration and desktop launch acceptance remain pending.
+# Packaging asset; desktop launcher acceptance remains pending. See README for runtime capabilities.
 [Desktop Entry]
 Type=Application
 Name=Ptyra

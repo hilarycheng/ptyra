@@ -1,5 +1,12 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Runtime keyboard — TASK-128 (2026-11-05)
+
+- 冇新增 dependency、app unsafe 或 FFI。Wayland seat/keyboard adapter 讀取有界 keymap FD，重用 kbvm、focus epoch、KeyEncoder 同 RepeatScheduler；只接受 compositor-forwarded keyboard events，未開 text-input-v3。
+- Legacy keyboard flags 固定為零；冇完整 Kitty capability 宣告。Key release/focus leave/keymap replacement 取消 repeat；poll timeout 只喺持有 repeat key 時設定，PTY write queue 只喺有 pending bytes 時監聽 writable readiness。
+- `tests/native_runtime.py` 用 Python standard library 建立獨立 headless Sway，同 virtual-keyboard-v1 送固定測試按鍵。測試唔連接現有 user compositor；xkbcomp 只讀取系統 XKB definitions，寫入自己嘅 temporary directory。
+- 原生測試核對 Enter、Backspace、arrows、Ctrl+C、repeat/focus、Shell 指令 side effect、compositor framebuffer 顏色同 exit。Unit regression 亦涵蓋未 focus、Shift、Ctrl、application cursor mode。未宣稱 IME、Clipboard 或完整 keyboard layout/Compose 驗收。
+
 ## Runtime PTY polling — TASK-127 (2026-11-05)
 
 - 重用 `nix =0.31.3`，新增 poll feature；冇新 package 或 app unsafe。Wayland FD 同 PTY master 喺同一個阻塞 poll 等待，處理 EINTR、Wayland write backpressure；每輪最多四個 16 KiB output chunks。

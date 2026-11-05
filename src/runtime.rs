@@ -1,4 +1,5 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
+mod keyboard;
 mod raster;
 use crate::pty::{PtyReadStatus, PtySession, PtySize, PtySpawnRequest};
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
@@ -10,7 +11,8 @@ use std::{
 use wayland_client::{
     Connection, Dispatch, QueueHandle, delegate_noop,
     protocol::{
-        wl_buffer, wl_callback, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface,
+        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm,
+        wl_shm_pool, wl_surface,
     },
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -85,6 +87,11 @@ struct Runtime {
     raster: raster::Raster,
     terminal: crate::terminal::Terminal,
     pty: Option<PtySession>,
+    seat: Option<wl_seat::WlSeat>,
+    seat_name: Option<u32>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
+    input: keyboard::KeyboardInput,
+    clock: crate::clock::MonotonicClock,
 }
 
 pub fn run(config: crate::config::Config) -> Result<()> {
@@ -114,6 +121,11 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         raster,
         terminal,
         pty: None,
+        seat: None,
+        seat_name: None,
+        keyboard: None,
+        input: keyboard::KeyboardInput::default(),
+        clock: crate::clock::MonotonicClock::default(),
     };
     connection.display().get_registry(&qh, ());
     queue
@@ -147,6 +159,13 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         if !app.running {
             break;
         }
+        let bytes = app.input.tick(app.application_cursor(), &app.clock)?;
+        app.enqueue_input(bytes)?;
+        if let Some(pty) = &mut app.pty
+            && pty.pending_write_bytes() > 0
+        {
+            pty.flush_write().map_err(|_| "PTY write failed")?;
+        }
         app.draw(&qh)?;
         let writable = match connection.flush() {
             Ok(()) => false,
@@ -169,10 +188,35 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                     PollFlags::empty()
                 },
         )];
-        if let Some(fd) = app.pty.as_ref().and_then(PtySession::master_fd) {
-            fds.push(PollFd::new(fd, PollFlags::POLLIN));
+        if let Some(pty) = &app.pty
+            && let Some(fd) = pty.master_fd()
+        {
+            fds.push(PollFd::new(
+                fd,
+                PollFlags::POLLIN
+                    | if pty.pending_write_bytes() > 0 {
+                        PollFlags::POLLOUT
+                    } else {
+                        PollFlags::empty()
+                    },
+            ));
         }
-        match poll(&mut fds, PollTimeout::NONE) {
+        let timeout = app
+            .input
+            .map
+            .as_ref()
+            .and_then(|map| app.input.repeat.deadline(&app.input.focus, map))
+            .map(|deadline| {
+                let remaining = deadline.remaining(&app.clock);
+                PollTimeout::try_from(
+                    remaining
+                        .as_millis()
+                        .saturating_add(u128::from(remaining.subsec_nanos() % 1_000_000 != 0)),
+                )
+                .unwrap_or(PollTimeout::MAX)
+            })
+            .unwrap_or(PollTimeout::NONE);
+        match poll(&mut fds, timeout) {
             Ok(_) => {}
             Err(nix::errno::Errno::EINTR) => continue,
             Err(_) => return Err("runtime poll failed"),
@@ -201,6 +245,20 @@ pub fn run(config: crate::config::Config) -> Result<()> {
 }
 
 impl Runtime {
+    fn application_cursor(&self) -> bool {
+        self.terminal
+            .mode()
+            .is_some_and(|mode| mode.contains(alacritty_terminal::term::TermMode::APP_CURSOR))
+    }
+    fn enqueue_input(&mut self, bytes: Option<Vec<u8>>) -> Result<()> {
+        if let Some(bytes) = bytes
+            && let Some(pty) = &mut self.pty
+        {
+            pty.enqueue_write(&bytes)
+                .map_err(|_| "PTY input queue full or closed")?;
+        }
+        Ok(())
+    }
     fn sync_terminal(&mut self) -> Result<()> {
         if !self.paint.configured {
             return Ok(());
@@ -377,10 +435,21 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
                     state.wm = Some(registry.bind(name, 1, qh, ()));
                     state.globals[2] = name;
                 }
+                "wl_seat" if version >= 5 && state.seat.is_none() => {
+                    state.seat = Some(registry.bind(name, version.min(7), qh, ()));
+                    state.seat_name = Some(name);
+                }
                 _ => {}
             },
             wl_registry::Event::GlobalRemove { name } if state.globals.contains(&name) => {
                 state.fail("required Wayland global removed")
+            }
+            wl_registry::Event::GlobalRemove { name } if state.seat_name == Some(name) => {
+                state.remove_keyboard();
+                if let Some(seat) = state.seat.take() {
+                    seat.release();
+                }
+                state.seat_name = None;
             }
             _ => {}
         }

@@ -1,24 +1,59 @@
 # Ptyra
 
-> **開發中 · 狀態核對：2026-10-29**
+> **開發中 · 狀態核對：2026-11-05**
 
-Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前只有基礎 library，未有可用 GUI Terminal。
+Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前可開單視窗、顯示 Shell output，同接受基本 keyboard 輸入。
 
 目標：低 RAM、低 Idle CPU、可靠 Copy & Paste、Fcitx5 中文輸入、GUI Tabs。Kitty Keyboard / Graphics 放喺後續獨立 TASK。
 
 ## Planning Files
 
 - [`SCOPE.md`](SCOPE.md) — 定義產品、架構、安全、性能與驗收邊界。
-- [`TASKS.md`](TASKS.md) — **124 個 Atomic TASK**，用 Checkbox 記錄狀態，設有 Dependencies、Unit Test、Done Criteria。
+- [`TASKS.md`](TASKS.md) — **128 個 Atomic TASK**，用 Checkbox 記錄狀態，設有 Dependencies、Unit Test、Done Criteria。
 - [`AGENTS.md`](AGENTS.md) — Coding Agent 必須遵守嘅執行、測試、安全同批准規則。
 
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
 - 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize、單次 child exit → Tab event mapping，以及保留跨 chunk parser state 嘅 terminal core adapter 同 renderer 資料接口。
-- `src/main.rs` 只印出應用程式名稱。PTY spawn/read/write/resize、terminal core 同 renderer 接口仍係 library API；尚未有 Wayland 連線/dispatch、keyboard/paste/IME 輸入接線、實際 renderer backend、Clipboard、IME 或 GUI Tabs 接線。
+- `src/main.rs` 會載入 config，再連接 Wayland compositor。Runtime 用有界 SHM buffers、software glyph rasterization、真 PTY 同阻塞 poll event loop；keyboard 經現有 focus/keymap/encoder/repeat 模組送到 Shell。
+- 已驗證 Enter、Backspace、arrows、Ctrl+C、focus/repeat、PTY resize 同 close cleanup。Clipboard、Selection、IME、GUI Tabs、Kitty graphics 仍未接入 runtime；唔代表日常 Terminal 已完成。
+- Child 仍用 `TERM=dumb`；未安裝或啟用 Ptyra terminfo，未驗收完整 TUI。暫時 steady outline cursor、regular font face、基本顏色；HiDPI、shaping 同效能仍待校準。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
+
+## Build / Run
+
+需要 Linux Wayland session、Rust toolchain、Fontconfig `fc-match` 同本機字型。
+
+```sh
+cargo build --release --locked
+./target/release/ptyra
+```
+
+程式用 `SHELL` 指定嘅 absolute executable，未設定時用 `/bin/sh`。`exit` 或 compositor close 會關閉視窗及回收 child。
+可用 `--config /absolute/path/config.toml`；冇 compositor、無法載入字型或啟動 Shell 時會顯示 metadata error 同非零 exit code。
+
+原生整合測試（需要 Sway、grim、xkbcomp；只建立獨立 headless session）：
+
+```sh
+python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-native.png
+```
+
+測試透過 virtual-keyboard protocol 輸入固定指令，核對真 Shell 執行、編輯鍵、Ctrl+C、repeat/focus、實際 compositor pixels 同退出。
+呢個測試唔會修改使用者 desktop 設定，亦唔代替 Fcitx5/Clipboard/多 Tabs 或 AMD GPU 真機驗收。
+字型 dependency 有已知維護風險，見 [dependency review](DEPENDENCIES.md)；只應使用可信本機字型。
+
+### TASK-125–128 Verification（2026-11-05）
+
+- Status：DONE；Dependencies satisfied；使用者已批准實作、`[x]` 同逐項 git commit。
+- 每個指定 unit test 都先記錄失敗，再實作：`runtime_window_waits_for_configure`、`runtime_raster_draws_terminal_cells`、`runtime_pty_output_updates_grid`、`runtime_keyboard_routes_to_shell`。
+- `cargo test --workspace <test_name>`：四項 PASS。最終 workspace：189 unit tests、13 integration tests、2 doctests PASS。
+- `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`git diff --check`、desktop-file-validate：PASS。
+- `cargo build --release --locked --offline`：PASS。Debug 同 release executables 都通過 `tests/native_runtime.py` 原生互動測試。
+- 額外 headless Sway checks：視窗 mapped、idle 阻塞、ASCII/CJK screenshot、PTY resize、close child cleanup：PASS。
+- Security / Privacy：冇新增 app unsafe、Shell command 拼接或 payload logs；有界 buffer/font/keymap/cache，重用現有 PTY ownership。字型 parser 維護風險見 DEPENDENCIES.md。
+- Manual / Acceptance：使用者實際 Sway/Fcitx5、Firefox Clipboard、多 Tabs、GPU/HiDPI、soak/benchmark：NOT RUN。Ready for `[x]`：YES，只限四項列明範圍。
 
 ## 2026-10-29 Audit
 
