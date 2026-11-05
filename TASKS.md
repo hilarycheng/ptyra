@@ -409,7 +409,7 @@
   - **Dependencies:** `TASK-001`  |  **Unit Test:** `config_defaults_are_valid`
   - **Done:** 無 config file 仍能啟動
 
-- [ ] **TASK-095 — Font family/size config 驗證**
+- [x] **TASK-095 — Font family/size config 驗證**
   - **Dependencies:** `TASK-094`  |  **Unit Test:** `config_rejects_invalid_font_size`
   - **Done:** 無效數值明確報錯
 

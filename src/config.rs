@@ -38,6 +38,25 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !self.font_size.is_finite() || !(1.0..=256.0).contains(&self.font_size) {
+            return Err(error(
+                "font_size",
+                "expected finite logical pixel size in 1..=256",
+            ));
+        }
+        if self.font_family.trim().is_empty()
+            || self.font_family.len() > 256
+            || self.font_family.chars().any(char::is_control)
+        {
+            return Err(error(
+                "font_family",
+                "expected nonempty family, at most 256 bytes, without controls",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn from_toml(source: Option<&str>) -> Result<Self, ConfigError> {
         let source = source.unwrap_or_default();
         if source.len() > MAX_CONFIG_BYTES {
@@ -73,6 +92,7 @@ impl Config {
                 _ => return Err(error("config", "unknown field")),
             }
         }
+        config.validate()?;
         Ok(config)
     }
 }
@@ -87,6 +107,36 @@ fn integer(value: &toml::Value, field: &'static str) -> Result<usize, ConfigErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn config_rejects_invalid_font_size() {
+        for size in ["0", "-1", "nan", "inf", "-inf", "1e300", "257", "'large'"] {
+            let err = Config::from_toml(Some(&format!("font_size = {size}"))).unwrap_err();
+            assert_eq!(err.field, "font_size");
+        }
+        for size in ["1", "14.5", "256"] {
+            assert!(Config::from_toml(Some(&format!("font_size = {size}"))).is_ok());
+        }
+        for family in ["''", "'   '", "\"bad\\nname\"", "123"] {
+            assert_eq!(
+                Config::from_toml(Some(&format!("font_family = {family}")))
+                    .unwrap_err()
+                    .field,
+                "font_family"
+            );
+        }
+        let config = Config {
+            font_family: "字".repeat(100),
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+        assert_eq!(
+            Config::from_toml(Some("font_family = '思源等寬'\nfont_size=18.5"))
+                .unwrap()
+                .font_family,
+            "思源等寬"
+        );
+    }
+
     #[test]
     fn config_defaults_are_valid() {
         let defaults = Config::default();
