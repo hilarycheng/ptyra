@@ -481,7 +481,7 @@
   - **Dependencies:** `TASK-110`  |  **Unit Test:** `kitty_key_event_types_are_distinct`
   - **Done:** Mode 開啟時分清 press/repeat/release
 
-- [ ] **TASK-112 — push/pop keyboard mode stack + cap**
+- [x] **TASK-112 — push/pop keyboard mode stack + cap**
   - **Dependencies:** `TASK-108`  |  **Unit Test:** `kitty_stack_is_bounded`
   - **Done:** 不能用 Escape 無限增長
 

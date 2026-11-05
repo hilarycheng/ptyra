@@ -8,6 +8,14 @@ Defining flags does not advertise encoder or runtime support.
 The pinned alacritty_terminal keyboard-stack overflow branch removes from `title_stack`, risking panic or unbounded growth.
 Its built-in Kitty handling therefore remains disabled; Ptyra must own the bounded keyboard state before enabling capabilities.
 
+TASK-109–112 use a secondary VTE observer behind the existing OSC/feed limits.
+It handles keyboard queries and mode operations, with at most 32 queued replies and 32 stack entries.
+Reply overflow stops that terminal stream; no untrusted text is executed or logged.
+The encoder covers Unicode text, common functional keys and disambiguated modified keys, including repeat/release reporting.
+Alternate-key, all-key and associated-text enhancements, multi-symbol XKB keys and unlisted functional keys return Unsupported.
+Runtime query capabilities remain zero until screen-scoped stacks and input ownership integration are complete.
+No full Kitty compatibility, native GUI input acceptance or protocol probe result is claimed.
+
 ## Network capability invariant — TASK-107 (2026-11-05)
 
 The application exposes only Wayland, PTY, IME and Clipboard event sources.
