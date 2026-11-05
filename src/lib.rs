@@ -20,6 +20,7 @@ pub mod selection;
 pub mod shell;
 pub mod tabs;
 pub mod terminal;
+pub mod terminfo;
 pub mod wayland;
 pub mod window;
 

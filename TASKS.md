@@ -529,7 +529,7 @@
   - **Dependencies:** `TASK-094`  |  **Unit Test:** `install_paths_do_not_overwrite_system_files`
   - **Done:** 安裝/移除範圍限 Ptyra 自己檔案
 
-- [ ] **TASK-123 — 生成與已實作能力一致嘅 terminfo**
+- [x] **TASK-123 — 生成與已實作能力一致嘅 terminfo**
   - **Dependencies:** `TASK-027`  |  **Unit Test:** `terminfo_does_not_claim_unsupported_features`
   - **Done:** Kitty 未完成前不宣稱 Kitty 全功能
 

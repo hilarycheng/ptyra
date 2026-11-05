@@ -32,7 +32,7 @@ pub fn shell_command(program: &OsStr, args: &[OsString]) -> Result<Command, AppE
     Ok(command)
 }
 
-/// Until the terminal core and terminfo are implemented, advertise only dumb output.
+/// Until terminfo installation and native GUI integration are complete, advertise only dumb output.
 /// These overrides affect the child Command, never the application's environment.
 pub fn apply_terminal_environment(command: &mut Command) {
     command.env("TERM", "dumb").env_remove("COLORTERM");

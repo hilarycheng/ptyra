@@ -13,7 +13,7 @@ pub(crate) struct KeyboardProtocol {
 
 #[derive(Default)]
 struct KeyboardState {
-    // shortcut: advertise no modes until screen-scoped state and input ownership are wired.
+    // shortcut: advertise no modes until complete key coverage and native input integration are verified.
     supported: KeyboardFlags,
     active: ModeStack,
     inactive: ModeStack,
