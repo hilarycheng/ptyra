@@ -1,5 +1,30 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## TOML parser — TASK-094 (2026-11-05)
+
+`toml = 1.1.6+spec-1.1.0` parses config syntax instead of implementing a partial TOML parser.
+Only `std`, `parse`, and `serde` are enabled; no serialization/display feature or unbounded parser mode.
+Config input is capped at 64 KiB. Parser errors are reduced to static reason/field and byte offset.
+Raw values and parser diagnostic excerpts are not logged.
+
+The [upstream release](https://github.com/toml-rs/toml/releases/tag/toml-v1.1.6) was tagged on 2026-09-10;
+the upstream repository is active, not archived. This pinned version was already cached locally.
+Cargo.lock adds these packages; manifest licenses were checked:
+
+| Package | Version | License |
+|---|---|---|
+| toml | 1.1.6+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_parser | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_datetime | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 |
+| serde_spanned | 1.1.2 | MIT OR Apache-2.0 |
+| toml_writer (lockfile only) | 1.2.0+spec-1.1.0 | MIT OR Apache-2.0 |
+| winnow | 1.0.4 | MIT |
+
+The complete official [RustSec tree at 26fd2d4](https://github.com/RustSec/advisory-db/tree/26fd2d43f7280a1fb925a3743ec463017afe7119)
+was checked for all six added package names. No matching advisory records were found.
+This is a manual advisory check, not a cargo-audit run or a guarantee of vulnerability-free code.
+
+
 `kbvm = 0.2.0`, with default features disabled, implements XKB parsing and client-side keysym lookup. A real parser is needed for compositor-supplied layouts; a hard-coded US key table cannot meet TASK-012. No GUI framework, X11 connection, Compose engine, or logging feature is enabled. `pkg-config` is a build helper; no new system package is installed.
 
 ## Maintenance and licensing

@@ -405,7 +405,7 @@
 
 ## I. Configuration / Resource Policy
 
-- [ ] **TASK-094 — TOML Config default values**
+- [x] **TASK-094 — TOML Config default values**
   - **Dependencies:** `TASK-001`  |  **Unit Test:** `config_defaults_are_valid`
   - **Done:** 無 config file 仍能啟動
 

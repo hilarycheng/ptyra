@@ -1,5 +1,6 @@
 pub mod clipboard;
 pub mod clock;
+pub mod config;
 pub mod damage;
 pub mod error;
 pub mod font;
