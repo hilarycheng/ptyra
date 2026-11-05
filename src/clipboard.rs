@@ -121,6 +121,15 @@ impl PendingPaste {
         self.sent == self.payload.bytes.len()
     }
 
+    /// Call when the target Tab closes or loses keyboard focus.
+    /// Discards undelivered bytes; bytes already accepted by the sink stay queued.
+    pub fn cancel_for_tab(&mut self, tab: TabId) {
+        if self.target.tab == tab {
+            self.payload.bytes = Vec::new();
+            self.sent = 0;
+        }
+    }
+
     /// A different Tab never receives a chunk, even after a focus switch.
     /// Errors leave this chunk pending for a later retry.
     pub fn enqueue_next<S: PasteSink>(&mut self, sink: &mut S) -> Result<bool, S::Error> {

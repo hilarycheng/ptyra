@@ -375,3 +375,81 @@ fn paste_never_switches_target_mid_transfer() {
     assert_eq!(original.received, text.as_bytes());
     assert!(switched.received.is_empty());
 }
+
+#[test]
+fn paste_to_closed_tab_is_cancelled() {
+    struct Sink {
+        tab: TabId,
+        received: Vec<u8>,
+        blocked: bool,
+        calls: usize,
+    }
+
+    impl PasteSink for Sink {
+        type Error = ();
+
+        fn tab(&self) -> TabId {
+            self.tab
+        }
+
+        fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.calls += 1;
+            if self.blocked {
+                return Err(());
+            }
+            self.received.extend_from_slice(bytes);
+            Ok(())
+        }
+    }
+
+    // Close or focus loss can arrive before delivery, between chunks, or on retry.
+    for delivered_chunk in [false, true] {
+        for focus_lost in [false, true] {
+            let mut focus = KeyboardFocus::default();
+            focus.enter(WindowId(1), TabId(7));
+            let route = focus.route_key(47, true).unwrap();
+            let modifiers = Modifiers {
+                depressed: ModifierMask::CONTROL.0 | ModifierMask::SHIFT.0,
+                ..Modifiers::default()
+            };
+            let PasteKeyAction::Paste(intent) =
+                paste_shortcut(&focus, &route, modifiers, b'V' as u32, KeyState::Pressed)
+            else {
+                panic!("expected paste intent");
+            };
+            let mut transfer = intent.with_payload(PastePayload::new("繁".repeat(6000)).unwrap());
+            let mut sink = Sink {
+                tab: TabId(7),
+                received: Vec::new(),
+                blocked: false,
+                calls: 0,
+            };
+            transfer.cancel_for_tab(TabId(8));
+            assert!(!transfer.is_complete());
+            if delivered_chunk {
+                assert!(transfer.enqueue_next(&mut sink).unwrap());
+            }
+            sink.blocked = true;
+            assert_eq!(transfer.enqueue_next(&mut sink), Err(()));
+            let sent = sink.received.clone();
+            let calls = sink.calls;
+
+            if focus_lost {
+                focus.leave(WindowId(1));
+            }
+            transfer.cancel_for_tab(TabId(7));
+            transfer.cancel_for_tab(TabId(7));
+            assert!(transfer.is_complete());
+            assert!(transfer.payload.bytes.is_empty());
+            assert_eq!(transfer.payload.bytes.capacity(), 0);
+            sink.blocked = false;
+            for tab in [TabId(8), TabId(7)] {
+                focus.enter(WindowId(1), tab);
+                sink.tab = tab;
+                assert!(!transfer.enqueue_next(&mut sink).unwrap());
+            }
+            assert_eq!(sink.received, sent);
+            assert_eq!(sink.calls, calls);
+        }
+    }
+}
