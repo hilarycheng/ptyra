@@ -465,7 +465,7 @@
 
 ## K. Kitty Keyboard Protocol（基本功能完成後）
 
-- [ ] **TASK-108 — 定義 Kitty keyboard enhancement flags**
+- [x] **TASK-108 — 定義 Kitty keyboard enhancement flags**
   - **Dependencies:** `TASK-027`  |  **Unit Test:** `kitty_flags_roundtrip`
   - **Done:** flags 可解析與序列化
 

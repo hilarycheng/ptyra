@@ -1,5 +1,13 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Kitty keyboard primitives — TASK-108 (2026-11-05)
+
+Flags reuse the pinned VTE `KeyboardModes` definition; no dependency changes.
+Protocol reference: [Kitty keyboard specification](https://sw.kovidgoyal.net/kitty/keyboard-protocol/).
+Defining flags does not advertise encoder or runtime support.
+The pinned alacritty_terminal keyboard-stack overflow branch removes from `title_stack`, risking panic or unbounded growth.
+Its built-in Kitty handling therefore remains disabled; Ptyra must own the bounded keyboard state before enabling capabilities.
+
 ## Network capability invariant — TASK-107 (2026-11-05)
 
 The application exposes only Wayland, PTY, IME and Clipboard event sources.
