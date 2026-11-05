@@ -435,7 +435,7 @@
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `hyperlink_does_not_auto_execute`
   - **Done:** PTY 輸出唔可直接執行指令或開網址
 
-- [ ] **TASK-101 — Logs 對 Keyboard/Clipboard/PTY text 進行 redaction**
+- [x] **TASK-101 — Logs 對 Keyboard/Clipboard/PTY text 進行 redaction**
   - **Dependencies:** `TASK-007`  |  **Unit Test:** `logs_do_not_include_sensitive_content`
   - **Done:** 預設日誌不洩漏輸入字串
 

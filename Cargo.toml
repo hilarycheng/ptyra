@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 alacritty_terminal = { version = "=0.26.0", default-features = false }
 kbvm = { version = "=0.2.0", default-features = false }
+# Dependency log statements may contain terminal or input payloads.
+log = { version = "=0.4.34", default-features = false, features = ["max_level_off", "release_max_level_off"] }
 toml = { version = "=1.1.6", default-features = false, features = ["std", "parse", "serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

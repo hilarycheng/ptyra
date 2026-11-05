@@ -1,5 +1,16 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Sensitive logs — TASK-101 (2026-11-05)
+
+`log = 0.4.34` was already locked and reviewed under TASK-026 (MIT OR Apache-2.0).
+It is now a direct dependency to enforce `max_level_off` and `release_max_level_off` across the dependency graph.
+No package or version is added. The cached manifest and macro implementation were checked.
+Both build profiles compile out all `log` levels, including dependency statements that may contain sensitive payloads.
+Runtime logger settings cannot enable them. No logger or payload-formatting API is introduced.
+Safe diagnostics still use existing `AppError` metadata and config diagnostics on stderr.
+The regression test checks the static level and metadata-only keyboard, clipboard and PTY errors.
+Any future diagnostic output must keep raw payloads out of formatting and error sources.
+
 ## TOML parser — TASK-094 (2026-11-05)
 
 `toml = 1.1.6+spec-1.1.0` parses config syntax instead of implementing a partial TOML parser.
@@ -261,7 +272,7 @@ T026 加入最小防護，並維持 T099 未完成。
   VTE 仍預先配置約 2 MiB sync buffer；未宣稱支援 synchronized rendering。
 - 新 adapter 冇 unsafe、FFI、thread、network、payload log 或系統設定改動。
   Upstream 仍有 native／unsafe code，同可能包含 payload 嘅 debug/trace statements。
-  目前程式冇安裝 logger；將來啟用 logger 前必須過濾呢啲 dependency logs。
+  TASK-101 已透過 compile-time level 關閉呢啲 dependency logs；安全 metadata diagnostics 仍然保留。
 
 Limits 係本次固定 guardrails，唔係已完成 config、performance budget 或 fuzz task。
 Feed byte cap 唔係 CPU deadline：ANSI REP 等 sequence 會放大 parser 工作量。
