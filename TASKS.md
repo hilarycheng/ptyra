@@ -301,7 +301,7 @@
 
 ## G. Fcitx5 / Wayland `text-input-v3`
 
-- [ ] **TASK-069 — 偵測 text-input-v3，建立 seat-scoped state**
+- [x] **TASK-069 — 偵測 text-input-v3，建立 seat-scoped state**
   - **Dependencies:** `TASK-008`  |  **Unit Test:** `ime_capability_does_not_require_gtk`
   - **Done:** 冇 protocol 時仍可普通英文輸入
 

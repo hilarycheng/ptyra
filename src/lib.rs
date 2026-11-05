@@ -5,6 +5,7 @@ pub mod error;
 pub mod font;
 pub mod frame;
 pub mod geometry;
+pub mod ime;
 pub mod input;
 pub mod keymap;
 #[cfg(target_os = "linux")]
