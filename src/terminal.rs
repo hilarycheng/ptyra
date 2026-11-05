@@ -1,19 +1,20 @@
 //! Stateful byte-to-grid adapter. No PTY, Wayland, clipboard or renderer I/O.
 use crate::{
     TabId,
+    clipboard::SelectionKind,
     error::{AppError, Component},
 };
 use alacritty_terminal::{
     Term,
-    event::VoidListener,
+    event::{Event, EventListener},
     grid::{Dimensions, Grid},
     term::{
-        Config, Osc52, RenderableContent, TermMode,
+        ClipboardType, Config, Osc52, RenderableContent, TermMode,
         cell::{Cell, Flags},
     },
     vte::ansi::{Processor, Timeout},
 };
-use std::{io::ErrorKind, time::Duration};
+use std::{cell::RefCell, io::ErrorKind, rc::Rc, time::Duration};
 
 pub const MAX_FEED_BYTES: usize = 16 * 1024;
 pub const MAX_GRID_CELLS: usize = 32 * 1024;
@@ -31,6 +32,13 @@ pub const MAX_COMBINING_MARKS: usize = 64;
 pub struct TerminalError {
     pub tab: TabId,
     pub error: AppError,
+}
+
+/// An authorized Clipboard Write request; sensitive text deliberately has no Debug.
+pub struct Osc52Write {
+    pub tab: TabId,
+    pub selection: SelectionKind,
+    pub text: String,
 }
 
 /// One Tab's parser and grid. Payload-bearing state deliberately has no Debug.
@@ -88,18 +96,47 @@ impl Terminal {
         if total_cells > MAX_TERMINAL_CELLS {
             return Err(invalid());
         }
+        let events = ClipboardEvents {
+            tab,
+            pending: Rc::new(RefCell::new([None, None])),
+        };
         Ok(Self {
             tab,
             core: Some(Core {
-                term: Term::new(terminal_config(scrollback_lines), &size, VoidListener),
+                term: Term::new(terminal_config(scrollback_lines), &size, events.clone()),
                 parser: Processor::new(),
                 osc: OscLimit::Ground,
+                events,
+                scrollback_lines,
             }),
         })
     }
 
     pub fn tab(&self) -> TabId {
         self.tab
+    }
+
+    /// Call only for an explicit user policy change; PTY output cannot grant permission.
+    /// Read stays disabled. Revoking permission discards undelivered Write requests.
+    pub fn set_osc52_write_enabled(&mut self, enabled: bool) -> Result<(), TerminalError> {
+        let core = self.core.as_mut().ok_or_else(|| TerminalError {
+            tab: self.tab,
+            error: AppError::new(Component::Terminal, ErrorKind::NotConnected),
+        })?;
+        let mut config = terminal_config(core.scrollback_lines);
+        if enabled {
+            config.osc52 = Osc52::OnlyCopy;
+        } else {
+            *core.events.pending.borrow_mut() = [None, None];
+        }
+        core.term.set_options(config);
+        Ok(())
+    }
+
+    /// Take the latest value per selection; repeated writes replace that selection's pending value.
+    /// The adapter must still obtain a valid seat serial before publishing it.
+    pub fn take_osc52_write(&mut self, selection: SelectionKind) -> Option<Osc52Write> {
+        self.core.as_mut()?.events.pending.borrow_mut()[selection as usize].take()
     }
 
     /// Feed only the valid prefix from a PTY Data(n) result, using its TabId.
@@ -168,10 +205,34 @@ fn terminal_config(scrollback_lines: usize) -> Config {
     }
 }
 
+#[derive(Clone)]
+struct ClipboardEvents {
+    tab: TabId,
+    pending: Rc<RefCell<[Option<Osc52Write>; 2]>>,
+}
+
+impl EventListener for ClipboardEvents {
+    fn send_event(&self, event: Event) {
+        if let Event::ClipboardStore(kind, text) = event {
+            let selection = match kind {
+                ClipboardType::Clipboard => SelectionKind::Clipboard,
+                ClipboardType::Selection => SelectionKind::Primary,
+            };
+            self.pending.borrow_mut()[selection as usize] = Some(Osc52Write {
+                tab: self.tab,
+                selection,
+                text,
+            });
+        }
+    }
+}
+
 struct Core {
-    term: Term<VoidListener>,
+    term: Term<ClipboardEvents>,
     parser: Processor<NoSync>,
     osc: OscLimit,
+    events: ClipboardEvents,
+    scrollback_lines: usize,
 }
 
 impl Core {

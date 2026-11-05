@@ -291,7 +291,7 @@
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `osc52_read_is_denied_by_default`
   - **Done:** PTY 輸出唔可偷偷讀系統 Clipboard
 
-- [ ] **TASK-067 — OSC 52 Write 經 opt-in policy**
+- [x] **TASK-067 — OSC 52 Write 經 opt-in policy**
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `osc52_write_needs_explicit_opt_in`
   - **Done:** 未 opt-in 時不覆寫 Clipboard
 

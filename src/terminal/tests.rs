@@ -390,6 +390,80 @@ fn terminal_osc_bound_tracks_escape_controls_and_terminators() {
 }
 
 #[test]
+fn osc52_write_needs_explicit_opt_in() {
+    use crate::clipboard::SelectionKind;
+
+    let mut first = terminal(1);
+    let mut second = terminal(2);
+    for selection in ["c", "p", "s", ""] {
+        let sequence = format!("\x1b]52;{selection};5Lit5paH\x07");
+        feed(&mut first, sequence.as_bytes());
+        assert!(first.take_osc52_write(SelectionKind::Clipboard).is_none());
+        assert!(first.take_osc52_write(SelectionKind::Primary).is_none());
+    }
+
+    first.set_osc52_write_enabled(true).unwrap();
+    for (selection, kind) in [
+        ("c", SelectionKind::Clipboard),
+        ("", SelectionKind::Clipboard),
+        ("p", SelectionKind::Primary),
+        ("s", SelectionKind::Primary),
+    ] {
+        for terminator in ["\x07", "\x1b\\"] {
+            let sequence = format!("\x1b]52;{selection};5Lit5paH{terminator}");
+            for byte in sequence.as_bytes() {
+                feed(&mut first, std::slice::from_ref(byte));
+            }
+            let request = first.take_osc52_write(kind).unwrap();
+            assert_eq!(request.tab, TabId(1));
+            assert_eq!(request.selection, kind);
+            assert_eq!(request.text, "中文");
+            assert!(first.take_osc52_write(kind).is_none());
+            feed(&mut second, sequence.as_bytes());
+            assert!(second.take_osc52_write(kind).is_none());
+        }
+    }
+    feed(
+        &mut first,
+        b"\x1b]52;c;YQ==\x07\x1b]52;p;Yg==\x07\x1b]52;c;Yw==\x07",
+    );
+    assert_eq!(
+        first
+            .take_osc52_write(SelectionKind::Clipboard)
+            .unwrap()
+            .text,
+        "c"
+    );
+    assert_eq!(
+        first.take_osc52_write(SelectionKind::Primary).unwrap().text,
+        "b"
+    );
+    feed(&mut first, b"\x1b]52;c;?\x07\x1b]52;p;?\x07");
+    assert!(first.take_osc52_write(SelectionKind::Clipboard).is_none());
+    assert!(first.take_osc52_write(SelectionKind::Primary).is_none());
+    feed(&mut first, b"\x1bc\x1b]52;c;\x07");
+    assert_eq!(
+        first
+            .take_osc52_write(SelectionKind::Clipboard)
+            .unwrap()
+            .text,
+        ""
+    );
+    feed(&mut first, b"\x1b]52;c;YQ==\x07\x1b]52;p;Yg==\x07");
+    first.set_osc52_write_enabled(false).unwrap();
+    assert!(first.take_osc52_write(SelectionKind::Clipboard).is_none());
+    assert!(first.take_osc52_write(SelectionKind::Primary).is_none());
+    feed(&mut first, b"\x1bc\x1b]52;c;YQ==\x07");
+    assert!(first.take_osc52_write(SelectionKind::Clipboard).is_none());
+    first.set_osc52_write_enabled(true).unwrap();
+    feed(&mut first, b"\x1b]52;c;YQ==\x07");
+    let oversized = format!("\x1b]{}", "x".repeat(MAX_OSC_BYTES + 1));
+    assert!(first.feed(TabId(1), oversized.as_bytes()).is_err());
+    assert!(first.take_osc52_write(SelectionKind::Clipboard).is_none());
+    assert!(first.set_osc52_write_enabled(true).is_err());
+}
+
+#[test]
 fn osc52_read_is_denied_by_default() {
     use alacritty_terminal::event::{Event, EventListener};
     use std::{cell::Cell as Counter, rc::Rc};
@@ -445,7 +519,7 @@ fn osc52_read_is_denied_by_default() {
 #[test]
 fn terminal_external_events_are_inert_and_kitty_stays_disabled() {
     let mut term = terminal(1);
-    // Clipboard requests, title, device query, and hyperlink have no I/O listener.
+    // Clipboard requests are denied; title, device query, and hyperlink have no I/O effects.
     feed(&mut term, b"\x1b]52;c;cHJpdmF0ZQ==\x07\x1b]52;c;?\x07\x1b]2;private\x07\x1b[5n\x1b]8;;https://example.invalid\x1b\\");
     for _ in 0..128 {
         feed(&mut term, b"\x1b[>31u");
