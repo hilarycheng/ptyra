@@ -58,6 +58,7 @@ impl<P> Tab<P> {
 pub struct TabRegistry<P> {
     entries: Vec<Tab<P>>,
     next_id: Option<u64>,
+    active: Option<TabId>,
 }
 
 impl<P> Default for TabRegistry<P> {
@@ -65,6 +66,7 @@ impl<P> Default for TabRegistry<P> {
         Self {
             entries: Vec::new(),
             next_id: Some(1),
+            active: None,
         }
     }
 }
@@ -100,6 +102,9 @@ impl<P: TabPty> TabRegistry<P> {
             selections: TabSelections::new(id),
         });
         self.next_id = id.0.checked_add(1);
+        if self.active.is_none() {
+            self.active = Some(id);
+        }
         Ok(())
     }
 
@@ -114,6 +119,19 @@ impl<P: TabPty> TabRegistry<P> {
 
     pub fn ids(&self) -> impl Iterator<Item = TabId> + '_ {
         self.entries.iter().map(|tab| tab.id)
+    }
+
+    pub fn active(&self) -> Option<TabId> {
+        self.active
+    }
+
+    /// False means no change, including unknown IDs; other Tab state is untouched.
+    pub fn activate(&mut self, id: TabId) -> bool {
+        if self.active == Some(id) || self.get(id).is_none() {
+            return false;
+        }
+        self.active = Some(id);
+        true
     }
     pub fn get(&self, id: TabId) -> Option<&Tab<P>> {
         self.entries.iter().find(|tab| tab.id == id)

@@ -367,7 +367,7 @@
   - **Dependencies:** `TASK-083`, `TASK-021`  |  **Unit Test:** `new_tab_emits_single_spawn`
   - **Done:** 按一次只開一個 Tab
 
-- [ ] **TASK-085 — Active Tab 變更 reducer**
+- [x] **TASK-085 — Active Tab 變更 reducer**
   - **Dependencies:** `TASK-083`  |  **Unit Test:** `tab_switch_updates_active_id`
   - **Done:** 只更改目標 Tab，其他 state 原樣保留
 

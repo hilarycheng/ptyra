@@ -9,6 +9,50 @@ impl TabPty for FakePty {
 }
 
 #[test]
+fn tab_switch_updates_active_id() {
+    let mut tabs = TabRegistry::<FakePty>::default();
+    assert_eq!(tabs.active(), None);
+    assert!(!tabs.activate(TabId(1)));
+    tabs.insert(TabId(1), 2, 8).unwrap();
+    tabs.insert(TabId(2), 2, 8).unwrap();
+    assert_eq!(tabs.active(), Some(TabId(1)));
+    tabs.get_mut(TabId(1))
+        .unwrap()
+        .terminal_mut()
+        .feed(TabId(1), b"first")
+        .unwrap();
+    assert!(tabs.activate(TabId(2)));
+    assert!(!tabs.activate(TabId(2)));
+    assert!(!tabs.activate(TabId(99)));
+    assert_eq!(tabs.active(), Some(TabId(2)));
+    assert!(tabs.activate(TabId(1)));
+    assert_eq!(
+        tabs.get(TabId(1))
+            .unwrap()
+            .terminal()
+            .grid()
+            .unwrap()
+            .cursor
+            .point
+            .column
+            .0,
+        5
+    );
+    assert_eq!(
+        tabs.get(TabId(2))
+            .unwrap()
+            .terminal()
+            .grid()
+            .unwrap()
+            .cursor
+            .point
+            .column
+            .0,
+        0
+    );
+}
+
+#[test]
 fn new_tab_emits_single_spawn() {
     let mut tabs = TabRegistry::<FakePty>::default();
     assert!(tabs.new_tab(0, 8).is_err());
