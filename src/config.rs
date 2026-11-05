@@ -1,8 +1,10 @@
 //! Bounded TOML configuration; diagnostics contain metadata, never source text or values.
+pub mod bindings;
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, PartialEq)]
 pub struct Config {
+    pub bindings: bindings::Bindings,
     pub font_family: String,
     pub font_size: f64,
     pub scrollback_lines: usize,
@@ -28,6 +30,7 @@ fn error(field: &'static str, reason: &'static str) -> ConfigError {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            bindings: bindings::Bindings::default(),
             font_family: "monospace".into(),
             font_size: 14.0,
             scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
@@ -39,6 +42,7 @@ impl Default for Config {
 
 impl Config {
     pub fn validate(&self) -> Result<(), ConfigError> {
+        self.bindings.validate()?;
         if !self.font_size.is_finite() || !(1.0..=256.0).contains(&self.font_size) {
             return Err(error(
                 "font_size",
@@ -70,6 +74,7 @@ impl Config {
         let mut config = Self::default();
         for (key, value) in table {
             match key.as_str() {
+                "bindings" => config.bindings = bindings::Bindings::from_value(&value)?,
                 "font_family" => {
                     config.font_family = value
                         .as_str()

@@ -413,7 +413,7 @@
   - **Dependencies:** `TASK-094`  |  **Unit Test:** `config_rejects_invalid_font_size`
   - **Done:** 無效數值明確報錯
 
-- [ ] **TASK-096 — Keyboard bindings conflict 驗證**
+- [x] **TASK-096 — Keyboard bindings conflict 驗證**
   - **Dependencies:** `TASK-094`  |  **Unit Test:** `config_detects_duplicate_shortcuts`
   - **Done:** Paste、IME、Tab shortcut 不意外重疊
 
