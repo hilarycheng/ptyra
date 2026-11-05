@@ -354,7 +354,10 @@ fn paste_never_switches_target_mid_transfer() {
         panic!("expected paste intent");
     };
     let text = "繁".repeat(6000);
-    let mut transfer = intent.with_payload(PastePayload::new(text.clone()).unwrap());
+    let terminal = crate::terminal::Terminal::new(TabId(7), 2, 4).unwrap();
+    let mut transfer = intent
+        .with_payload(PastePayload::new(text.clone()).unwrap(), &terminal)
+        .unwrap();
     let mut original = Sink {
         tab: TabId(7),
         received: Vec::new(),
@@ -374,6 +377,98 @@ fn paste_never_switches_target_mid_transfer() {
     assert!(transfer.is_complete());
     assert_eq!(original.received, text.as_bytes());
     assert!(switched.received.is_empty());
+}
+
+#[test]
+fn bracketed_paste_wraps_exactly_once() {
+    struct Sink {
+        tab: TabId,
+        bytes: Vec<u8>,
+        blocked: bool,
+    }
+    impl PasteSink for Sink {
+        type Error = ();
+        fn tab(&self) -> TabId {
+            self.tab
+        }
+        fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+            assert!(bytes.len() <= 16 * 1024);
+            if self.blocked {
+                return Err(());
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(())
+        }
+    }
+
+    let tab = TabId(7);
+    let intent = super::PasteIntent {
+        target: FocusTarget {
+            window: WindowId(1),
+            tab,
+        },
+    };
+    for enabled in [false, true] {
+        for text in [
+            String::new(),
+            " 繁體\t中文\r\n e\u{301} ".into(),
+            "繁".repeat(6000),
+            "x".repeat(super::read::MAX_PASTE_BYTES),
+        ] {
+            let mut terminal = Terminal::new(tab, 2, 4).unwrap();
+            if enabled {
+                terminal.feed(tab, b"\x1b[?2004h").unwrap();
+            }
+            let mut transfer = intent
+                .with_payload(PastePayload::new(text.clone()).unwrap(), &terminal)
+                .unwrap();
+            // Later mode changes must not alter an already prepared transfer.
+            terminal
+                .feed(
+                    tab,
+                    if enabled {
+                        b"\x1b[?2004l"
+                    } else {
+                        b"\x1b[?2004h"
+                    },
+                )
+                .unwrap();
+            let mut sink = Sink {
+                tab: TabId(8),
+                bytes: Vec::new(),
+                blocked: false,
+            };
+            assert!(!transfer.enqueue_next(&mut sink).unwrap());
+            assert!(sink.bytes.is_empty());
+            sink.tab = tab;
+            while !transfer.is_complete() {
+                sink.blocked = true;
+                assert_eq!(transfer.enqueue_next(&mut sink), Err(()));
+                sink.blocked = false;
+                assert!(transfer.enqueue_next(&mut sink).unwrap());
+            }
+            let expected = if enabled {
+                format!("\x1b[200~{text}\x1b[201~").into_bytes()
+            } else {
+                text.into_bytes()
+            };
+            assert_eq!(sink.bytes, expected);
+            assert!(!transfer.enqueue_next(&mut sink).unwrap());
+        }
+    }
+
+    let mut terminal = Terminal::new(TabId(8), 2, 4).unwrap();
+    assert!(matches!(
+        intent.with_payload(PastePayload::new("text".into()).unwrap(), &terminal),
+        Err(error) if error == crate::error::AppError::new(crate::error::Component::Clipboard, std::io::ErrorKind::InvalidInput)
+    ));
+    terminal = Terminal::new(tab, 2, 4).unwrap();
+    let oversized_osc = format!("\x1b]{}", "x".repeat(crate::terminal::MAX_OSC_BYTES + 1));
+    assert!(terminal.feed(tab, oversized_osc.as_bytes()).is_err());
+    assert!(matches!(
+        intent.with_payload(PastePayload::new("text".into()).unwrap(), &terminal),
+        Err(error) if error == crate::error::AppError::new(crate::error::Component::Clipboard, std::io::ErrorKind::NotConnected)
+    ));
 }
 
 #[test]
@@ -404,7 +499,8 @@ fn paste_to_closed_tab_is_cancelled() {
 
     // Close or focus loss can arrive before delivery, between chunks, or on retry.
     for delivered_chunk in [false, true] {
-        for focus_lost in [false, true] {
+        for (focus_lost, bracketed) in [(false, false), (true, false), (false, true), (true, true)]
+        {
             let mut focus = KeyboardFocus::default();
             focus.enter(WindowId(1), TabId(7));
             let route = focus.route_key(47, true).unwrap();
@@ -417,7 +513,13 @@ fn paste_to_closed_tab_is_cancelled() {
             else {
                 panic!("expected paste intent");
             };
-            let mut transfer = intent.with_payload(PastePayload::new("繁".repeat(6000)).unwrap());
+            let mut terminal = Terminal::new(TabId(7), 2, 4).unwrap();
+            if bracketed {
+                terminal.feed(TabId(7), b"\x1b[?2004h").unwrap();
+            }
+            let mut transfer = intent
+                .with_payload(PastePayload::new("繁".repeat(6000)).unwrap(), &terminal)
+                .unwrap();
             let mut sink = Sink {
                 tab: TabId(7),
                 received: Vec::new(),

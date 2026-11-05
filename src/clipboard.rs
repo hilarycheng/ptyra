@@ -6,8 +6,13 @@ use crate::{
     input::{FocusTarget, KeyRoute, KeyboardFocus},
     keymap::{KeyState, Modifiers},
     selection::copy_text,
+    terminal::Terminal,
 };
-use alacritty_terminal::{grid::Grid, selection::SelectionRange, term::cell::Cell};
+use alacritty_terminal::{
+    grid::Grid,
+    selection::SelectionRange,
+    term::{TermMode, cell::Cell},
+};
 use std::io::ErrorKind;
 
 pub mod read;
@@ -87,12 +92,37 @@ impl PasteIntent {
     }
 
     /// Bind completed Clipboard data to the Tab that initiated Paste.
-    pub fn with_payload(self, payload: PastePayload) -> PendingPaste {
-        PendingPaste {
+    /// Snapshot that Tab's mode once; framing adds at most 12 bytes to the limit.
+    pub fn with_payload(
+        self,
+        mut payload: PastePayload,
+        terminal: &Terminal,
+    ) -> Result<PendingPaste, AppError> {
+        if terminal.tab() != self.target.tab {
+            return Err(AppError::new(Component::Clipboard, ErrorKind::InvalidInput));
+        }
+        let mode = terminal
+            .mode()
+            .ok_or_else(|| AppError::new(Component::Clipboard, ErrorKind::NotConnected))?;
+        if mode.contains(TermMode::BRACKETED_PASTE) {
+            let start = b"\x1b[200~";
+            let end = b"\x1b[201~";
+            let length = payload.bytes.len();
+            let framed_length = length + start.len() + end.len();
+            payload
+                .bytes
+                .try_reserve_exact(start.len() + end.len())
+                .map_err(|_| AppError::new(Component::Clipboard, ErrorKind::OutOfMemory))?;
+            payload.bytes.resize(framed_length, 0);
+            payload.bytes.copy_within(..length, start.len());
+            payload.bytes[..start.len()].copy_from_slice(start);
+            payload.bytes[start.len() + length..].copy_from_slice(end);
+        }
+        Ok(PendingPaste {
             target: self.target,
             payload,
             sent: 0,
-        }
+        })
     }
 }
 
@@ -123,6 +153,7 @@ impl PendingPaste {
 
     /// Call when the target Tab closes or loses keyboard focus.
     /// Discards undelivered bytes; bytes already accepted by the sink stay queued.
+    /// shortcut: partial cancellation leaves framing incomplete; revisit when lifecycle routing separates focus loss from Tab closure.
     pub fn cancel_for_tab(&mut self, tab: TabId) {
         if self.target.tab == tab {
             self.payload.bytes = Vec::new();

@@ -267,7 +267,7 @@
   - **Dependencies:** `TASK-059`  |  **Unit Test:** `paste_to_closed_tab_is_cancelled`
   - **Done:** 不向已關閉 Tab 或新 Tab 發送殘留輸入
 
-- [ ] **TASK-061 — 只在 terminal mode 開啟時包 bracketed paste**
+- [x] **TASK-061 — 只在 terminal mode 開啟時包 bracketed paste**
   - **Dependencies:** `TASK-027`, `TASK-058`  |  **Unit Test:** `bracketed_paste_wraps_exactly_once`
   - **Done:** 啟用輸出前後 delimiter；無啟用時不亂加
 
