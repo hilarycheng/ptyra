@@ -7,12 +7,20 @@ use crate::{
     wayland::{Binding, Capabilities, Protocol},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImeRequest {
+    Enable,
+    Disable,
+    Commit,
+}
+
 /// One capability snapshot per bound wl_seat; the adapter owns its lifetime.
 /// Manager availability does not guarantee a running input method.
 pub struct ImeState {
     seat: SeatId,
     manager: Option<Binding>,
     surface: Option<WindowId>,
+    enabled_target: Option<FocusTarget>,
 }
 
 impl ImeState {
@@ -21,6 +29,7 @@ impl ImeState {
             seat,
             manager: capabilities.binding(Protocol::TextInput, 1, 1),
             surface: None,
+            enabled_target: None,
         }
     }
 
@@ -39,6 +48,8 @@ impl ImeState {
             return false;
         }
         self.surface = Some(surface);
+        // Every enter invalidates the compositor's text-input state.
+        self.enabled_target = None;
         true
     }
 
@@ -47,6 +58,7 @@ impl ImeState {
             return false;
         }
         self.surface = None;
+        self.enabled_target = None;
         true
     }
 
@@ -63,6 +75,38 @@ impl ImeState {
         }
         keyboard.target().filter(|target| target.window == surface)
     }
+
+    /// Send the complete returned sequence on this seat's text-input object before processing more events.
+    /// Call after focus changes; enabled=false also covers focus on non-editable UI.
+    pub fn sync_enabled(
+        &mut self,
+        seat: SeatId,
+        keyboard: &KeyboardFocus,
+        enabled: bool,
+    ) -> &'static [ImeRequest] {
+        use ImeRequest::{Commit, Disable, Enable};
+
+        if seat != self.seat || self.manager.is_none() {
+            return &[];
+        }
+        let target = if enabled {
+            self.surface
+                .and_then(|surface| self.target_for(seat, surface, keyboard))
+        } else {
+            None
+        };
+        if target == self.enabled_target {
+            return &[];
+        }
+        let requests: &'static [ImeRequest] = match (self.enabled_target, target) {
+            (None, Some(_)) => &[Enable, Commit],
+            (Some(_), None) => &[Disable, Commit],
+            (Some(_), Some(_)) => &[Disable, Commit, Enable, Commit],
+            (None, None) => &[],
+        };
+        self.enabled_target = target;
+        requests
+    }
 }
 
 #[cfg(test)]
@@ -74,6 +118,74 @@ mod tests {
         input::KeyboardFocus,
         wayland::{Binding, Capabilities, Global},
     };
+
+    #[test]
+    fn ime_enable_disable_requests_ordered() {
+        use super::ImeRequest::{Commit, Disable, Enable};
+
+        let capabilities = Capabilities::from_globals(&[Global {
+            name: 3,
+            interface: "zwp_text_input_manager_v3",
+            version: 1,
+        }]);
+        let seat = SeatId(1);
+        let window = WindowId(1);
+        let mut keyboard = KeyboardFocus::default();
+        let mut ime = ImeState::new(seat, &capabilities);
+        let mut unavailable = ImeState::new(seat, &Capabilities::default());
+        assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
+        keyboard.enter(window, TabId(7));
+        assert!(unavailable.sync_enabled(seat, &keyboard, true).is_empty());
+        assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
+        assert!(ime.enter(seat, window));
+        assert_eq!(ime.sync_enabled(seat, &keyboard, true), [Enable, Commit]);
+        assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
+        assert!(ime.sync_enabled(SeatId(2), &keyboard, false).is_empty());
+        assert!(!ime.leave(seat, WindowId(2)));
+        assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
+
+        let mut other = ImeState::new(SeatId(2), &capabilities);
+        assert!(other.enter(SeatId(2), window));
+        assert_eq!(
+            other.sync_enabled(SeatId(2), &keyboard, true),
+            [Enable, Commit]
+        );
+        keyboard.enter(window, TabId(8));
+        assert_eq!(
+            ime.sync_enabled(seat, &keyboard, true),
+            [Disable, Commit, Enable, Commit]
+        );
+        assert_eq!(ime.sync_enabled(seat, &keyboard, false), [Disable, Commit]);
+        assert!(ime.sync_enabled(seat, &keyboard, false).is_empty());
+        assert_eq!(ime.sync_enabled(seat, &keyboard, true), [Enable, Commit]);
+
+        // Keyboard leave can precede IME leave; disable while the surface is still entered.
+        keyboard.leave(window);
+        assert_eq!(ime.sync_enabled(seat, &keyboard, true), [Disable, Commit]);
+        assert!(ime.leave(seat, window));
+        assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
+        assert!(ime.enter(seat, window));
+        assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
+        keyboard.enter(window, TabId(7));
+        assert_eq!(ime.sync_enabled(seat, &keyboard, true), [Enable, Commit]);
+        assert!(other.sync_enabled(SeatId(2), &keyboard, true).is_empty());
+
+        // After IME leave, requests are ignored by the compositor until the next enter.
+        assert!(ime.leave(seat, window));
+        assert!(ime.sync_enabled(seat, &keyboard, false).is_empty());
+        assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
+        assert!(ime.enter(seat, window));
+        assert_eq!(ime.sync_enabled(seat, &keyboard, true), [Enable, Commit]);
+        // Each enter invalidates state, even when the WindowId is unchanged.
+        assert!(ime.enter(seat, window));
+        assert_eq!(ime.sync_enabled(seat, &keyboard, true), [Enable, Commit]);
+        keyboard.enter(WindowId(2), TabId(9));
+        assert_eq!(ime.sync_enabled(seat, &keyboard, true), [Disable, Commit]);
+        assert!(ime.enter(seat, WindowId(2)));
+        assert_eq!(ime.sync_enabled(seat, &keyboard, true), [Enable, Commit]);
+        assert!(!ime.leave(seat, window));
+        assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
+    }
 
     #[test]
     fn ime_focus_matches_surface() {

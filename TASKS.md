@@ -309,7 +309,7 @@
   - **Dependencies:** `TASK-069`, `TASK-011`  |  **Unit Test:** `ime_focus_matches_surface`
   - **Done:** 只接受持有 focus 嘅 Surface IME events
 
-- [ ] **TASK-071 — `enable/disable` 與 commit request 排序**
+- [x] **TASK-071 — `enable/disable` 與 commit request 排序**
   - **Dependencies:** `TASK-070`  |  **Unit Test:** `ime_enable_disable_requests_ordered`
   - **Done:** 正確發出 Wayland text-input state changes
 
