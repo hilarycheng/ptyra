@@ -383,7 +383,7 @@
   - **Dependencies:** `TASK-031`, `TASK-083`  |  **Unit Test:** `tab_bar_hit_test_selects_correct_tab`
   - **Done:** Mouse click 可正確識別 Tab
 
-- [ ] **TASK-089 — Tab Title 顯示與安全長度截斷**
+- [x] **TASK-089 — Tab Title 顯示與安全長度截斷**
   - **Dependencies:** `TASK-083`  |  **Unit Test:** `tab_title_is_sanitized`
   - **Done:** 不可信 Escape/控制字元不直接顯示
 

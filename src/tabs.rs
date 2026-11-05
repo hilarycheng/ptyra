@@ -1,5 +1,6 @@
 //! Ordered, bounded ownership of independent Tab state. No platform I/O in registry operations.
 pub mod bar;
+mod title;
 use crate::{
     TabId,
     error::{AppError, Component},
@@ -44,6 +45,7 @@ pub struct Tab<P> {
     terminal: Terminal,
     pty: Option<P>,
     selections: TabSelections,
+    title: String,
 }
 
 impl<P> Tab<P> {
@@ -112,6 +114,7 @@ impl<P: TabPty> TabRegistry<P> {
             terminal,
             pty: None,
             selections: TabSelections::new(id),
+            title: "Terminal".into(),
         });
         self.next_id = id.0.checked_add(1);
         if self.active.is_none() {

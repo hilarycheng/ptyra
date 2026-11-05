@@ -100,6 +100,7 @@ impl Terminal {
         let events = ClipboardEvents {
             tab,
             pending: Rc::new(RefCell::new([None, None])),
+            title: Rc::new(RefCell::new(None)),
         };
         Ok(Self {
             tab,
@@ -115,6 +116,11 @@ impl Terminal {
 
     pub fn tab(&self) -> TabId {
         self.tab
+    }
+
+    /// Untrusted OSC title, bounded by MAX_OSC_BYTES. Tab::refresh_title sanitizes it before display.
+    pub fn take_title(&mut self) -> Option<String> {
+        self.core.as_mut()?.events.title.borrow_mut().take()
     }
 
     /// Call only for an explicit user policy change; PTY output cannot grant permission.
@@ -210,10 +216,22 @@ fn terminal_config(scrollback_lines: usize) -> Config {
 struct ClipboardEvents {
     tab: TabId,
     pending: Rc<RefCell<[Option<Osc52Write>; 2]>>,
+    title: Rc<RefCell<Option<String>>>,
 }
 
 impl EventListener for ClipboardEvents {
     fn send_event(&self, event: Event) {
+        match event {
+            Event::Title(title) => {
+                *self.title.borrow_mut() = Some(title);
+                return;
+            }
+            Event::ResetTitle => {
+                *self.title.borrow_mut() = Some("Terminal".into());
+                return;
+            }
+            _ => {}
+        }
         if let Event::ClipboardStore(kind, text) = event {
             let selection = match kind {
                 ClipboardType::Clipboard => SelectionKind::Clipboard,

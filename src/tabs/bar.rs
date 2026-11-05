@@ -1,10 +1,11 @@
 use super::{TabPty, TabRegistry};
 use crate::{TabId, damage::Rect, input::Point, renderer::CellLayout};
 
-pub struct TabBarItem {
+pub struct TabBarItem<'a> {
     pub tab: TabId,
     pub rect: Rect,
     pub active: bool,
+    pub title: &'a str,
 }
 
 impl<P: TabPty> TabRegistry<P> {
@@ -12,12 +13,13 @@ impl<P: TabPty> TabRegistry<P> {
     pub fn bar_items<'a>(
         &'a self,
         layout: &'a CellLayout,
-    ) -> impl Iterator<Item = TabBarItem> + 'a {
-        self.ids().enumerate().filter_map(|(column, tab)| {
+    ) -> impl Iterator<Item = TabBarItem<'a>> + 'a {
+        self.entries.iter().enumerate().filter_map(|(column, tab)| {
             Some(TabBarItem {
-                tab,
+                tab: tab.id,
                 rect: layout.cell_rect(0, column)?,
-                active: self.active == Some(tab),
+                active: self.active == Some(tab.id),
+                title: tab.title(),
             })
         })
     }
