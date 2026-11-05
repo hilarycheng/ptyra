@@ -1,5 +1,6 @@
 //! Kitty keyboard protocol primitives; capabilities are enabled only by a complete input pipeline.
 use crate::error::{AppError, Component};
+pub(crate) mod protocol;
 pub use alacritty_terminal::vte::ansi::KeyboardModes as KeyboardFlags;
 
 /// Parse a decimal flag value, rejecting unknown bits and non-decimal input.

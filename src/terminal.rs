@@ -56,6 +56,12 @@ pub struct Osc52Write {
     pub text: String,
 }
 
+/// An inert protocol response bound to its source Tab; the PTY adapter owns enqueueing.
+pub struct KeyboardReply {
+    pub tab: TabId,
+    pub bytes: Vec<u8>,
+}
+
 /// One Tab's parser and grid. Payload-bearing state deliberately has no Debug.
 pub struct Terminal {
     tab: TabId,
@@ -108,12 +114,24 @@ impl Terminal {
                 osc: OscLimit::Ground,
                 events,
                 scrollback_lines,
+                keyboard: crate::kitty::protocol::KeyboardProtocol::default(),
             }),
         })
     }
 
     pub fn tab(&self) -> TabId {
         self.tab
+    }
+
+    pub fn take_keyboard_reply(&mut self) -> Option<KeyboardReply> {
+        self.core
+            .as_mut()?
+            .keyboard
+            .take_reply()
+            .map(|bytes| KeyboardReply {
+                tab: self.tab,
+                bytes,
+            })
     }
 
     /// Untrusted OSC title, bounded by MAX_OSC_BYTES. Tab::refresh_title sanitizes it before display.
@@ -250,12 +268,16 @@ struct Core {
     osc: OscLimit,
     events: ClipboardEvents,
     scrollback_lines: usize,
+    keyboard: crate::kitty::protocol::KeyboardProtocol,
 }
 
 impl Core {
     fn feed(&mut self, bytes: &[u8]) -> bool {
         for byte in bytes {
             if !self.osc.accept(*byte) {
+                return false;
+            }
+            if !self.keyboard.advance(std::slice::from_ref(byte)) {
                 return false;
             }
             // Check after each parser step: REP can append up to u16::MAX marks.

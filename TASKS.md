@@ -469,7 +469,7 @@
   - **Dependencies:** `TASK-027`  |  **Unit Test:** `kitty_flags_roundtrip`
   - **Done:** flags 可解析與序列化
 
-- [ ] **TASK-109 — 處理 Kitty keyboard query/response**
+- [x] **TASK-109 — 處理 Kitty keyboard query/response**
   - **Dependencies:** `TASK-108`  |  **Unit Test:** `kitty_query_reports_current_flags`
   - **Done:** query 只回報已支援 modes
 
