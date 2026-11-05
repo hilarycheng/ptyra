@@ -390,6 +390,59 @@ fn terminal_osc_bound_tracks_escape_controls_and_terminators() {
 }
 
 #[test]
+fn osc52_read_is_denied_by_default() {
+    use alacritty_terminal::event::{Event, EventListener};
+    use std::{cell::Cell as Counter, rc::Rc};
+
+    struct Probe(Rc<Counter<(usize, usize)>>);
+    impl EventListener for Probe {
+        fn send_event(&self, event: Event) {
+            let (reads, writes) = self.0.get();
+            match event {
+                Event::ClipboardLoad(..) => self.0.set((reads + 1, writes)),
+                Event::PtyWrite(_) => self.0.set((reads, writes + 1)),
+                _ => (),
+            }
+        }
+    }
+
+    assert_eq!(terminal_config(0).osc52, Osc52::Disabled);
+    for selection in ["", "c", "p", "s", "cp"] {
+        for terminator in ["\x07", "\x1b\\"] {
+            let query = format!("\x1b]52;{selection};?{terminator}");
+            for chunk_size in [1, query.len()] {
+                // The enabled control proves these inputs reach the core's Clipboard Read handler.
+                for enabled_control in [false, true] {
+                    let events = Rc::new(Counter::new((0, 0)));
+                    let mut config = terminal_config(0);
+                    if enabled_control {
+                        config.osc52 = Osc52::OnlyPaste;
+                    }
+                    let mut core = Term::new(
+                        config,
+                        &Size {
+                            rows: 2,
+                            columns: 4,
+                        },
+                        Probe(events.clone()),
+                    );
+                    let mut parser = Processor::<NoSync>::new();
+                    for round in 1..=2 {
+                        for chunk in query.as_bytes().chunks(chunk_size) {
+                            parser.advance(&mut core, chunk);
+                        }
+                        assert_eq!(events.get(), (if enabled_control { round } else { 0 }, 0));
+                        parser.advance(&mut core, b"\x1bc");
+                    }
+                    parser.advance(&mut core, b"Q");
+                    assert_eq!(core.grid()[Line(0)][Column(0)].c, 'Q');
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn terminal_external_events_are_inert_and_kitty_stays_disabled() {
     let mut term = terminal(1);
     // Clipboard requests, title, device query, and hyperlink have no I/O listener.

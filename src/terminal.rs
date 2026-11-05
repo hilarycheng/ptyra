@@ -88,16 +88,10 @@ impl Terminal {
         if total_cells > MAX_TERMINAL_CELLS {
             return Err(invalid());
         }
-        let config = Config {
-            scrolling_history: scrollback_lines,
-            kitty_keyboard: false,
-            osc52: Osc52::Disabled,
-            ..Config::default()
-        };
         Ok(Self {
             tab,
             core: Some(Core {
-                term: Term::new(config, &size, VoidListener),
+                term: Term::new(terminal_config(scrollback_lines), &size, VoidListener),
                 parser: Processor::new(),
                 osc: OscLimit::Ground,
             }),
@@ -162,6 +156,15 @@ impl Terminal {
             columns: core.term.grid().columns(),
             content: core.term.renderable_content(),
         })
+    }
+}
+
+fn terminal_config(scrollback_lines: usize) -> Config {
+    Config {
+        scrolling_history: scrollback_lines,
+        kitty_keyboard: false,
+        osc52: Osc52::Disabled,
+        ..Config::default()
     }
 }
 

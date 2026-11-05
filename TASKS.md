@@ -287,7 +287,7 @@
   - **Dependencies:** `TASK-064`, `TASK-014`  |  **Unit Test:** `middle_click_reads_primary_only`
   - **Done:** Middle-click 唔讀錯一般 Clipboard
 
-- [ ] **TASK-066 — 拒絕預設 OSC 52 Clipboard Read**
+- [x] **TASK-066 — 拒絕預設 OSC 52 Clipboard Read**
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `osc52_read_is_denied_by_default`
   - **Done:** PTY 輸出唔可偷偷讀系統 Clipboard
 
