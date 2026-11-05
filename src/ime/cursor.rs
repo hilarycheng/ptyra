@@ -1,5 +1,32 @@
 //! IME anchors use surface-local units, independently of cursor painting or blinking.
+use super::{ImeRequest, ImeState};
+use crate::{clipboard::SeatId, input::KeyboardFocus};
 use crate::{damage::Rect, renderer::CellLayout, terminal::TerminalSnapshot};
+
+impl ImeState {
+    /// Call with the rebuilt layout after resize/scale changes and after cursor/focus changes.
+    /// Send both returned requests in order before processing more events.
+    pub fn update_cursor_rectangle(
+        &mut self,
+        seat: SeatId,
+        keyboard: &KeyboardFocus,
+        snapshot: TerminalSnapshot<'_>,
+        layout: &CellLayout,
+    ) -> Option<[ImeRequest; 2]> {
+        let target = self.target_for(seat, self.surface?, keyboard)?;
+        if self.enabled_target != Some(target) || snapshot.tab != target.tab {
+            return None;
+        }
+        let rect = cursor_rectangle(snapshot, layout);
+        if rect == self.cursor_rectangle {
+            return None;
+        }
+        self.cursor_rectangle = rect;
+        let rect = rect?;
+        self.commit_serial = self.commit_serial.wrapping_add(1);
+        Some([ImeRequest::SetCursorRectangle(rect), ImeRequest::Commit])
+    }
+}
 
 /// Full cursor cell at the current grid origin (surface top-left), including while the cursor is hidden.
 pub fn cursor_rectangle(snapshot: TerminalSnapshot<'_>, layout: &CellLayout) -> Option<Rect> {
@@ -18,6 +45,88 @@ pub fn cursor_rectangle(snapshot: TerminalSnapshot<'_>, layout: &CellLayout) -> 
 mod tests {
     use super::*;
     use crate::{TabId, geometry::Scale, terminal::Terminal, window::WindowSize};
+
+    #[test]
+    fn ime_cursor_rect_recomputes_after_resize() {
+        use crate::{
+            WindowId,
+            clipboard::SeatId,
+            ime::{ImeRequest, ImeState},
+            input::KeyboardFocus,
+            wayland::{Capabilities, Global},
+        };
+        let seat = SeatId(1);
+        let window = WindowId(1);
+        let tab = TabId(7);
+        let caps = Capabilities::from_globals(&[Global {
+            name: 3,
+            interface: "zwp_text_input_manager_v3",
+            version: 1,
+        }]);
+        let mut focus = KeyboardFocus::default();
+        focus.enter(window, tab);
+        let mut ime = ImeState::new(seat, &caps);
+        let mut terminal = Terminal::new(tab, 4, 10).unwrap();
+        terminal.feed(tab, b"\x1b[2;4H").unwrap();
+        let layout = |width, height, scale| {
+            CellLayout::new(
+                WindowSize::new(width, height).unwrap(),
+                Scale::new(scale).unwrap(),
+                10.25,
+                20.25,
+            )
+            .unwrap()
+        };
+        let first = layout(100, 80, 1);
+        assert!(
+            ime.update_cursor_rectangle(seat, &focus, terminal.snapshot().unwrap(), &first)
+                .is_none()
+        );
+        ime.enter(seat, window);
+        ime.sync_enabled(seat, &focus, true);
+        let mut previous = None;
+        for current in [
+            first,
+            layout(100, 80, 3),
+            layout(35, 25, 3),
+            layout(100, 80, 3),
+        ] {
+            let rect = cursor_rectangle(terminal.snapshot().unwrap(), &current).unwrap();
+            assert_ne!(previous, Some(rect));
+            let serial = ime.commit_serial();
+            assert_eq!(
+                ime.update_cursor_rectangle(seat, &focus, terminal.snapshot().unwrap(), &current),
+                Some([ImeRequest::SetCursorRectangle(rect), ImeRequest::Commit])
+            );
+            assert_eq!(ime.commit_serial(), serial + 1);
+            assert!(
+                ime.update_cursor_rectangle(seat, &focus, terminal.snapshot().unwrap(), &current)
+                    .is_none()
+            );
+            assert_eq!(ime.commit_serial(), serial + 1);
+            previous = Some(rect);
+        }
+        let current = layout(100, 80, 3);
+        let wrong = Terminal::new(TabId(8), 4, 10).unwrap();
+        assert!(
+            ime.update_cursor_rectangle(seat, &focus, wrong.snapshot().unwrap(), &current)
+                .is_none()
+        );
+        assert!(
+            ime.update_cursor_rectangle(SeatId(2), &focus, terminal.snapshot().unwrap(), &current)
+                .is_none()
+        );
+        ime.sync_enabled(seat, &focus, false);
+        assert!(
+            ime.update_cursor_rectangle(seat, &focus, terminal.snapshot().unwrap(), &current)
+                .is_none()
+        );
+        ime.sync_enabled(seat, &focus, true);
+        assert!(
+            ime.update_cursor_rectangle(seat, &focus, terminal.snapshot().unwrap(), &current)
+                .is_some()
+        );
+    }
 
     #[test]
     fn ime_cursor_rect_tracks_text_cell() {

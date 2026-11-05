@@ -333,7 +333,7 @@
   - **Dependencies:** `TASK-031`, `TASK-073`  |  **Unit Test:** `ime_cursor_rect_tracks_text_cell`
   - **Done:** IME candidate anchors 對應目前 Cursor
 
-- [ ] **TASK-077 — Scale/Resize 時更新 cursor rectangle**
+- [x] **TASK-077 — Scale/Resize 時更新 cursor rectangle**
   - **Dependencies:** `TASK-076`, `TASK-015`  |  **Unit Test:** `ime_cursor_rect_recomputes_after_resize`
   - **Done:** 視窗變更後 IME 座標正確
 

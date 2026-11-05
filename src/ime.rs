@@ -6,6 +6,7 @@ pub mod preedit;
 use crate::{
     WindowId,
     clipboard::{PasteSink, SeatId},
+    damage::Rect,
     error::{AppError, Component},
     input::{FocusTarget, KeyboardFocus},
     wayland::{Binding, Capabilities, Protocol},
@@ -84,6 +85,7 @@ pub enum ImeRequest {
     Enable,
     Disable,
     Commit,
+    SetCursorRectangle(Rect),
 }
 
 /// One capability snapshot per bound wl_seat; the adapter owns its lifetime.
@@ -94,6 +96,7 @@ pub struct ImeState {
     surface: Option<WindowId>,
     enabled_target: Option<FocusTarget>,
     commit_serial: u32,
+    cursor_rectangle: Option<Rect>,
     pending_preedit: ImePreedit,
     pending_commit: String,
     invalid_batch: bool,
@@ -107,6 +110,7 @@ impl ImeState {
             surface: None,
             enabled_target: None,
             commit_serial: 0,
+            cursor_rectangle: None,
             pending_preedit: ImePreedit::default(),
             pending_commit: String::new(),
             invalid_batch: false,
@@ -130,6 +134,7 @@ impl ImeState {
         self.surface = Some(surface);
         // Every enter invalidates the compositor's text-input state.
         self.enabled_target = None;
+        self.cursor_rectangle = None;
         self.clear_pending();
         true
     }
@@ -140,6 +145,7 @@ impl ImeState {
         }
         self.surface = None;
         self.enabled_target = None;
+        self.cursor_rectangle = None;
         self.clear_pending();
         true
     }
@@ -187,6 +193,7 @@ impl ImeState {
             (None, None) => &[],
         };
         self.enabled_target = target;
+        self.cursor_rectangle = None;
         self.clear_pending();
         self.commit_serial = self.commit_serial.wrapping_add(
             requests
