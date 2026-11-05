@@ -1,5 +1,7 @@
 //! Seat-scoped text-input-v3 capability and focus state. No Wayland or IME I/O.
 
+pub mod preedit;
+
 use crate::{
     WindowId,
     clipboard::SeatId,
@@ -29,6 +31,24 @@ pub struct ImePreedit {
     pub text: String,
     pub cursor_begin: i32,
     pub cursor_end: i32,
+}
+
+impl ImePreedit {
+    fn validate(&self) -> Result<(), AppError> {
+        if self.text.len() > MAX_IME_TEXT_BYTES {
+            return Err(AppError::new(Component::Ime, ErrorKind::FileTooLarge));
+        }
+        let valid_cursor = (self.cursor_begin == -1 && self.cursor_end == -1)
+            || [self.cursor_begin, self.cursor_end]
+                .into_iter()
+                .all(|index| {
+                    usize::try_from(index).is_ok_and(|index| self.text.is_char_boundary(index))
+                });
+        if !valid_cursor {
+            return Err(AppError::new(Component::Ime, ErrorKind::InvalidData));
+        }
+        Ok(())
+    }
 }
 
 /// One complete done batch, consumed by later overlay/PTY adapters. No payload Debug or I/O.
@@ -185,18 +205,13 @@ impl ImeState {
                 cursor_begin,
                 cursor_end,
             } => copy_ime_text(text).and_then(|text| {
-                let valid_cursor = (cursor_begin == -1 && cursor_end == -1)
-                    || [cursor_begin, cursor_end].into_iter().all(|index| {
-                        usize::try_from(index).is_ok_and(|index| text.is_char_boundary(index))
-                    });
-                if !valid_cursor {
-                    return Err(AppError::new(Component::Ime, ErrorKind::InvalidData));
-                }
-                self.pending_preedit = ImePreedit {
+                let preedit = ImePreedit {
                     text,
                     cursor_begin,
                     cursor_end,
                 };
+                preedit.validate()?;
+                self.pending_preedit = preedit;
                 Ok(())
             }),
         };

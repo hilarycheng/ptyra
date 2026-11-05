@@ -317,7 +317,7 @@
   - **Dependencies:** `TASK-071`  |  **Unit Test:** `ime_done_applies_staged_events`
   - **Done:** `done` 前唔送半套更新入 PTY
 
-- [ ] **TASK-073 — 保存 preedit text，不送 PTY**
+- [x] **TASK-073 — 保存 preedit text，不送 PTY**
   - **Dependencies:** `TASK-072`, `TASK-037`  |  **Unit Test:** `preedit_never_writes_to_pty`
   - **Done:** 候選字前文字只畫 overlay
 
