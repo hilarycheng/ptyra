@@ -431,7 +431,7 @@
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `oversized_osc_is_rejected_safely`
   - **Done:** 過長 sequence 不引致無界 allocation
 
-- [ ] **TASK-100 — Hyperlink 只經 user action 開啟**
+- [x] **TASK-100 — Hyperlink 只經 user action 開啟**
   - **Dependencies:** `TASK-026`  |  **Unit Test:** `hyperlink_does_not_auto_execute`
   - **Done:** PTY 輸出唔可直接執行指令或開網址
 

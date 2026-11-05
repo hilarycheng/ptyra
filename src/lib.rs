@@ -6,6 +6,7 @@ pub mod error;
 pub mod font;
 pub mod frame;
 pub mod geometry;
+pub mod hyperlink;
 pub mod ime;
 pub mod input;
 pub mod keymap;
