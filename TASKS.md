@@ -275,7 +275,7 @@
   - **Dependencies:** `TASK-058`, `TASK-027`  |  **Unit Test:** `multiline_paste_requires_confirmation`
   - **Done:** 避免未經確認嘅多行 Paste；不聲稱能阻止所有 Shell 執行
 
-- [ ] **TASK-063 — 偵測 primary-selection protocol 可用性**
+- [x] **TASK-063 — 偵測 primary-selection protocol 可用性**
   - **Dependencies:** `TASK-008`  |  **Unit Test:** `primary_selection_capability_is_optional`
   - **Done:** 缺少 protocol 時正常使用一般 Clipboard
 

@@ -85,6 +85,59 @@ mod tests {
     use super::{Binding, Capabilities, Global, Protocol};
 
     #[test]
+    fn primary_selection_capability_is_optional() {
+        let clipboard = Global {
+            name: 1,
+            interface: "wl_data_device_manager",
+            version: 3,
+        };
+        let clipboard_binding = Some(Binding {
+            name: 1,
+            version: 3,
+        });
+        let without_primary = Capabilities::from_globals(&[clipboard]);
+        assert_eq!(
+            without_primary.binding(Protocol::PrimarySelection, 1, 1),
+            None
+        );
+        assert_eq!(
+            without_primary.binding(Protocol::DataDeviceManager, 1, 3),
+            clipboard_binding
+        );
+
+        for version in [0, 1, 2] {
+            let primary = Global {
+                name: 2,
+                interface: "zwp_primary_selection_device_manager_v1",
+                version,
+            };
+            let globals = [clipboard, primary];
+            let capabilities = Capabilities::from_globals(&globals);
+            assert_eq!(
+                capabilities.binding(Protocol::PrimarySelection, 1, 1),
+                (version > 0).then_some(Binding {
+                    name: 2,
+                    version: 1
+                })
+            );
+            assert_eq!(
+                capabilities.binding(Protocol::DataDeviceManager, 1, 3),
+                clipboard_binding
+            );
+
+            let remaining: Vec<_> = globals
+                .into_iter()
+                .filter(|global| global.name != primary.name)
+                .collect();
+            assert_eq!(Capabilities::from_globals(&remaining), without_primary);
+            assert_eq!(
+                Capabilities::from_globals(&[primary]).binding(Protocol::DataDeviceManager, 1, 3),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn capabilities_detect_protocols() {
         let globals = [
             Global {
