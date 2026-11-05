@@ -503,7 +503,7 @@
   - **Dependencies:** `TASK-115`  |  **Unit Test:** `kitty_chunks_reassemble_in_order`
   - **Done:** 不完整 chunk 不 Render
 
-- [ ] **TASK-117 — 解碼 Direct PNG / RGBA payload**
+- [x] **TASK-117 — 解碼 Direct PNG / RGBA payload**
   - **Dependencies:** `TASK-116`  |  **Unit Test:** `kitty_direct_payload_checks_dimensions`
   - **Done:** 拒絕非法 dimensions / formats
 

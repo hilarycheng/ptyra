@@ -1,5 +1,31 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## PNG decoder — TASK-117 (2026-11-05)
+
+`png = 0.18.1` supplies PNG decoding without an image framework or native codec.
+The [maintained upstream](https://github.com/image-rs/image-png) and cached manifests were checked.
+New locked packages and licenses:
+
+| Package | Version | License |
+|---|---|---|
+| png | 0.18.1 | MIT OR Apache-2.0 |
+| crc32fast | 1.5.4 | MIT OR Apache-2.0 |
+| fdeflate | 0.3.7 | MIT OR Apache-2.0 |
+| flate2 | 1.1.10 | MIT OR Apache-2.0 |
+| miniz_oxide | 0.8.9, 0.9.1 | MIT OR Zlib OR Apache-2.0 |
+| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
+| simd-adler32 | 0.3.10 | MIT |
+| zlib-rs | 0.6.8 | Zlib |
+
+The complete official RustSec tree `26fd2d43f7280a1fb925a3743ec463017afe7119` was checked for these package names.
+Only zlib-rs had a matching advisory: [RUSTSEC-2024-0401](https://rustsec.org/advisories/RUSTSEC-2024-0401.html), fixed in 0.4.0.
+The locked 0.6.8 is outside its affected range. This is a manual review, not a cargo-audit run.
+Upstream [issue 721](https://github.com/image-rs/image-png/issues/721) documents an unreleased PLTE panic fix.
+Ptyra rejects zero, oversized and non-multiple-of-three palettes before entering the decoder; a malformed fixture guards this boundary.
+Chunk bounds, dimensions, pixels, compressed input, output and decoder allocations are bounded before decoding.
+Animation is rejected; text and ICC metadata are ignored. The added code has no unsafe or FFI.
+Dependencies contain their own implementation internals; this is not a complete source audit or a no-vulnerability guarantee.
+
 ## Direct graphics chunks — TASK-116 (2026-11-05)
 
 The already reviewed and locked `base64 0.22.1` becomes direct with only `alloc` enabled.
