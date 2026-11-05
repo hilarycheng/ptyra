@@ -63,6 +63,7 @@ impl ImePreedit {
 /// One complete done batch, consumed by later overlay/PTY adapters. No payload Debug or I/O.
 pub struct ImeUpdate {
     focus: ImeFocus,
+    preedit_applied: bool,
     pub target: FocusTarget,
     pub serial: u32,
     /// False still permits applying text, but not updating the compositor-facing state.
@@ -299,6 +300,7 @@ impl ImeState {
         Some(ImeUpdate {
             target: focus.target?,
             focus: focus.clone(),
+            preedit_applied: false,
             serial,
             state_is_current: serial == self.commit_serial,
             preedit: std::mem::take(&mut self.pending_preedit),

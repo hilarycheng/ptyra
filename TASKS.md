@@ -399,7 +399,7 @@
   - **Dependencies:** `TASK-085`, `TASK-059`  |  **Unit Test:** `copy_paste_targets_original_tab`
   - **Done:** Pending Paste 唔混入另一個 Tab
 
-- [ ] **TASK-093 — Tab switch 時 IME route 保持隔離**
+- [x] **TASK-093 — Tab switch 時 IME route 保持隔離**
   - **Dependencies:** `TASK-085`, `TASK-080`  |  **Unit Test:** `ime_commit_targets_correct_tab`
   - **Done:** Preedit/Commit 唔跨 Tab
 

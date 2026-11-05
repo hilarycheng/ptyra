@@ -39,7 +39,11 @@ impl PreeditState {
             return Ok(false);
         }
         update.preedit.validate()?;
+        if update.preedit_applied {
+            return Ok(false);
+        }
         self.preedit = std::mem::take(&mut update.preedit);
+        update.preedit_applied = true;
         self.focus = Some(update.focus.clone());
         Ok(true)
     }

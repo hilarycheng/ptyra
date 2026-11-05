@@ -4,6 +4,7 @@ pub mod bar;
 pub mod output;
 mod render;
 mod routing;
+pub use routing::ImeRouteError;
 mod title;
 use crate::{
     TabId,
@@ -51,6 +52,7 @@ pub struct Tab<P> {
     selections: TabSelections,
     title: String,
     dirty: bool,
+    preedit: Option<crate::ime::preedit::PreeditState>,
 }
 
 impl<P> Tab<P> {
@@ -125,6 +127,7 @@ impl<P: TabPty> TabRegistry<P> {
             selections: TabSelections::new(id),
             title: "Terminal".into(),
             dirty: true,
+            preedit: None,
         });
         self.next_id = id.0.checked_add(1);
         if self.active.is_none() {
