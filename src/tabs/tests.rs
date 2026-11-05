@@ -9,6 +9,54 @@ impl TabPty for FakePty {
 }
 
 #[test]
+fn close_tab_does_not_kill_other_pty() {
+    use std::{cell::RefCell, rc::Rc};
+    #[derive(Debug)]
+    struct OwnedPty(TabId, Rc<RefCell<Vec<TabId>>>);
+    impl TabPty for OwnedPty {
+        fn tab(&self) -> TabId {
+            self.0
+        }
+    }
+    impl Drop for OwnedPty {
+        fn drop(&mut self) {
+            self.1.borrow_mut().push(self.0);
+        }
+    }
+    let stopped = Rc::new(RefCell::new(Vec::new()));
+    let mut tabs = TabRegistry::default();
+    for id in 1..=3 {
+        tabs.insert(TabId(id), 2, 8).unwrap();
+        tabs.attach_pty(OwnedPty(TabId(id), stopped.clone()))
+            .unwrap();
+    }
+    let closed = tabs.close(TabId(2)).unwrap();
+    assert_eq!(closed.tab, TabId(2));
+    assert!(
+        stopped.borrow().is_empty(),
+        "the reducer returns ownership for adapter cleanup"
+    );
+    drop(closed);
+    assert_eq!(*stopped.borrow(), [TabId(2)]);
+    assert_eq!(tabs.active(), Some(TabId(1)));
+    assert!(tabs.close(TabId(2)).is_none());
+    assert!(tabs.insert(TabId(2), 2, 8).is_err());
+    drop(tabs.close(TabId(1)).unwrap());
+    assert_eq!(tabs.active(), Some(TabId(3)));
+    assert_eq!(tabs.get(TabId(3)).unwrap().pty().unwrap().tab(), TabId(3));
+    drop(tabs.close(TabId(3)).unwrap());
+    assert_eq!(tabs.active(), None);
+    assert_eq!(*stopped.borrow(), [TabId(2), TabId(1), TabId(3)]);
+    let pending = tabs.new_tab(2, 8).unwrap();
+    assert_eq!(pending.tab, TabId(4));
+    assert!(tabs.close(pending.tab).unwrap().pty.is_none());
+    let late = tabs
+        .attach_pty(OwnedPty(pending.tab, stopped.clone()))
+        .unwrap_err();
+    assert_eq!(late.tab(), pending.tab);
+}
+
+#[test]
 fn tab_cycle_wraps_at_ends() {
     let mut tabs = TabRegistry::<FakePty>::default();
     assert_eq!(tabs.cycle(TabDirection::Next), None);

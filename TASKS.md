@@ -375,7 +375,7 @@
   - **Dependencies:** `TASK-085`  |  **Unit Test:** `tab_cycle_wraps_at_ends`
   - **Done:** 切換順序有確定結果
 
-- [ ] **TASK-087 — Close Tab 只清理所屬 PTY**
+- [x] **TASK-087 — Close Tab 只清理所屬 PTY**
   - **Dependencies:** `TASK-083`, `TASK-025`  |  **Unit Test:** `close_tab_does_not_kill_other_pty`
   - **Done:** 退出一個 Tab 不影響其餘 Shell
 

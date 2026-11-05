@@ -21,6 +21,12 @@ pub struct SpawnTab {
     pub columns: u16,
 }
 
+/// Adapter cleanup owns only the removed session. PtySession Drop closes and reaps its own child.
+pub struct ClosedTab<P> {
+    pub tab: TabId,
+    pub pty: Option<P>,
+}
+
 pub trait TabPty {
     fn tab(&self) -> TabId;
 }
@@ -128,6 +134,22 @@ impl<P: TabPty> TabRegistry<P> {
 
     pub fn active(&self) -> Option<TabId> {
         self.active
+    }
+
+    /// Choose the next neighbor, or the previous neighbor when closing the last item.
+    pub fn close(&mut self, id: TabId) -> Option<ClosedTab<P>> {
+        let index = self.entries.iter().position(|tab| tab.id == id)?;
+        let removed = self.entries.remove(index);
+        if self.active == Some(id) {
+            self.active = self
+                .entries
+                .get(index.min(self.entries.len().saturating_sub(1)))
+                .map(|tab| tab.id);
+        }
+        Some(ClosedTab {
+            tab: id,
+            pty: removed.pty,
+        })
     }
 
     pub fn cycle(&mut self, direction: TabDirection) -> Option<TabId> {
