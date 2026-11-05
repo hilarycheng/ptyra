@@ -525,7 +525,7 @@
 
 ## M. Packaging / Public Verification
 
-- [ ] **TASK-122 — 產生可逆 user-local / `/usr/local` install paths**
+- [x] **TASK-122 — 產生可逆 user-local / `/usr/local` install paths**
   - **Dependencies:** `TASK-094`  |  **Unit Test:** `install_paths_do_not_overwrite_system_files`
   - **Done:** 安裝/移除範圍限 Ptyra 自己檔案
 

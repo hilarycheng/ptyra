@@ -9,6 +9,7 @@ pub mod geometry;
 pub mod hyperlink;
 pub mod ime;
 pub mod input;
+pub mod install;
 pub mod keymap;
 pub mod kitty;
 #[cfg(target_os = "linux")]
