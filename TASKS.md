@@ -495,7 +495,7 @@
 
 ## L. Kitty Graphics Protocol（Keyboard 之後）
 
-- [ ] **TASK-115 — 有界 Kitty APC header parser**
+- [x] **TASK-115 — 有界 Kitty APC header parser**
   - **Dependencies:** `TASK-099`  |  **Unit Test:** `kitty_apc_parser_rejects_invalid_header`
   - **Done:** 壞 header / 超長序列無 panic
 
