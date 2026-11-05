@@ -11,11 +11,28 @@ pub struct Transmission {
     pub bytes: Vec<u8>,
     chunks: usize,
 }
-#[derive(Default)]
 pub struct Assembler {
     pending: Option<Transmission>,
+    limit: usize,
+}
+impl Default for Assembler {
+    fn default() -> Self {
+        Self {
+            pending: None,
+            limit: MAX_IMAGE_BYTES,
+        }
+    }
 }
 impl Assembler {
+    pub fn with_limit(limit: usize) -> Result<Self, AppError> {
+        if limit == 0 || limit > MAX_IMAGE_BYTES {
+            return Err(invalid());
+        }
+        Ok(Self {
+            pending: None,
+            limit,
+        })
+    }
     pub fn push(&mut self, command: GraphicsCommand) -> Result<Option<Transmission>, AppError> {
         let result = self.append(command);
         if result.is_err() {
@@ -46,20 +63,23 @@ impl Assembler {
         {
             return Err(invalid());
         }
-        let decoded = STANDARD.decode(payload).map_err(|_| invalid())?;
+        let mut decoded = [0; MAX_CHUNK_BYTES / 4 * 3];
+        let length = STANDARD
+            .decode_slice(payload, &mut decoded)
+            .map_err(|_| invalid())?;
         let pending = self.pending.get_or_insert_with(|| Transmission {
             header,
             bytes: Vec::new(),
             chunks: 0,
         });
-        if pending.chunks == MAX_CHUNKS || decoded.len() > MAX_IMAGE_BYTES - pending.bytes.len() {
+        if pending.chunks == MAX_CHUNKS || length > self.limit - pending.bytes.len() {
             return Err(AppError::new(Component::Terminal, ErrorKind::FileTooLarge));
         }
         pending
             .bytes
-            .try_reserve(decoded.len())
+            .try_reserve_exact(length)
             .map_err(|_| AppError::new(Component::Terminal, ErrorKind::OutOfMemory))?;
-        pending.bytes.extend_from_slice(&decoded);
+        pending.bytes.extend_from_slice(&decoded[..length]);
         pending.chunks += 1;
         if more {
             Ok(None)

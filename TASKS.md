@@ -507,7 +507,7 @@
   - **Dependencies:** `TASK-116`  |  **Unit Test:** `kitty_direct_payload_checks_dimensions`
   - **Done:** 拒絕非法 dimensions / formats
 
-- [ ] **TASK-118 — 限制 image bytes / pixel count**
+- [x] **TASK-118 — 限制 image bytes / pixel count**
   - **Dependencies:** `TASK-117`, `TASK-097`  |  **Unit Test:** `kitty_image_budget_limits_allocations`
   - **Done:** 超額拒絕而非 OOM
 

@@ -6,6 +6,37 @@ use crate::error::{AppError, Component};
 use std::io::{Cursor, ErrorKind};
 
 pub const MAX_IMAGE_PIXELS: usize = 4 * 1024 * 1024;
+#[derive(Clone, Copy)]
+pub struct ImageLimits {
+    bytes: usize,
+    pixels: usize,
+}
+impl Default for ImageLimits {
+    fn default() -> Self {
+        Self {
+            bytes: MAX_IMAGE_BYTES,
+            pixels: MAX_IMAGE_PIXELS,
+        }
+    }
+}
+impl ImageLimits {
+    pub fn new(bytes: usize, pixels: usize) -> Result<Self, AppError> {
+        if bytes == 0 || bytes > MAX_IMAGE_BYTES || pixels == 0 || pixels > MAX_IMAGE_PIXELS {
+            return Err(invalid());
+        }
+        Ok(Self { bytes, pixels })
+    }
+    pub fn bytes(self) -> usize {
+        self.bytes
+    }
+    pub fn check_dimensions(self, width: u32, height: u32) -> Result<usize, AppError> {
+        let size = rgba_len(width, height)?;
+        if size > self.bytes || size / 4 > self.pixels {
+            return Err(AppError::new(Component::Terminal, ErrorKind::FileTooLarge));
+        }
+        Ok(size)
+    }
+}
 pub struct Image {
     pub(crate) header: Header,
     pub(crate) width: u32,
@@ -41,8 +72,14 @@ pub(crate) fn rgba_len(width: u32, height: u32) -> Result<usize, AppError> {
 }
 
 pub fn decode(transmission: Transmission) -> Result<Image, AppError> {
+    decode_with_limits(transmission, ImageLimits::default())
+}
+pub fn decode_with_limits(
+    transmission: Transmission,
+    limits: ImageLimits,
+) -> Result<Image, AppError> {
     let Transmission { header, bytes, .. } = transmission;
-    if bytes.len() > MAX_IMAGE_BYTES {
+    if bytes.len() > limits.bytes {
         return Err(AppError::new(Component::Terminal, ErrorKind::FileTooLarge));
     }
     if header.value(b't', i64::from(b'd')) != i64::from(b'd') {
@@ -52,7 +89,7 @@ pub fn decode(transmission: Transmission) -> Result<Image, AppError> {
         32 => {
             let width = u32::try_from(header.value(b's', 0)).map_err(|_| invalid())?;
             let height = u32::try_from(header.value(b'v', 0)).map_err(|_| invalid())?;
-            if bytes.len() != rgba_len(width, height)? {
+            if bytes.len() != limits.check_dimensions(width, height)? {
                 return Err(invalid());
             }
             Ok(Image {
@@ -62,7 +99,7 @@ pub fn decode(transmission: Transmission) -> Result<Image, AppError> {
                 rgba: bytes,
             })
         }
-        100 => decode_png(header, bytes),
+        100 => decode_png(header, bytes, limits),
         _ => Err(AppError::new(Component::Terminal, ErrorKind::Unsupported)),
     }
 }
@@ -76,12 +113,12 @@ fn buffer(size: usize) -> Result<Vec<u8>, AppError> {
     Ok(bytes)
 }
 
-fn decode_png(header: Header, bytes: Vec<u8>) -> Result<Image, AppError> {
+fn decode_png(header: Header, bytes: Vec<u8>, limits: ImageLimits) -> Result<Image, AppError> {
     check_png_chunks(&bytes)?;
     let mut decoder = png::Decoder::new_with_limits(
         Cursor::new(&bytes),
         png::Limits {
-            bytes: MAX_IMAGE_BYTES,
+            bytes: limits.bytes,
         },
     );
     decoder.set_ignore_text_chunk(true);
@@ -89,7 +126,7 @@ fn decode_png(header: Header, bytes: Vec<u8>) -> Result<Image, AppError> {
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let info = decoder.read_header_info().map_err(|_| invalid())?;
     let (width, height) = (info.width, info.height);
-    let size = rgba_len(width, height)?;
+    let size = limits.check_dimensions(width, height)?;
     if header.get(b's').is_some_and(|w| w != i64::from(width))
         || header.get(b'v').is_some_and(|h| h != i64::from(height))
     {
@@ -174,6 +211,41 @@ mod tests {
     use super::super::{GraphicsCommand, Header, transfer::Assembler};
     use super::*;
     use base64::{Engine, engine::general_purpose::STANDARD};
+    #[test]
+    fn kitty_image_budget_limits_allocations() {
+        let config =
+            crate::config::Config::from_toml(Some("image_bytes=4\nimage_pixels=1")).unwrap();
+        let limits = config.image_limits().unwrap();
+        let command = |data: &[u8]| GraphicsCommand {
+            header: Header::parse(b"s=1,v=1").unwrap(),
+            payload: STANDARD.encode(data).into_bytes(),
+        };
+        let mut assembler = Assembler::with_limit(limits.bytes()).unwrap();
+        assert!(assembler.push(command(&[1; 5])).is_err());
+        let transmission = assembler.push(command(&[1; 4])).unwrap().unwrap();
+        assert_eq!(
+            decode_with_limits(transmission, limits)
+                .unwrap()
+                .pixels()
+                .len(),
+            4
+        );
+        let transmission = Assembler::default()
+            .push(command(&[1; 4]))
+            .unwrap()
+            .unwrap();
+        assert!(decode_with_limits(transmission, ImageLimits::new(3, 1).unwrap()).is_err());
+        assert!(limits.check_dimensions(2, 1).is_err());
+        for source in [
+            "image_bytes=0",
+            "image_bytes=16777217",
+            "image_pixels=0",
+            "image_pixels=4194305",
+            "image_pixels=-1",
+        ] {
+            assert!(crate::config::Config::from_toml(Some(source)).is_err());
+        }
+    }
     fn image(header: &[u8], bytes: &[u8]) -> Result<Image, AppError> {
         let transmission = Assembler::default()
             .push(GraphicsCommand {

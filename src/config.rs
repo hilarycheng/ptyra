@@ -11,6 +11,8 @@ pub struct Config {
     pub scrollback_lines: usize,
     pub clipboard_bytes: usize,
     pub glyph_cache_bytes: usize,
+    pub image_bytes: usize,
+    pub image_pixels: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,11 +39,18 @@ impl Default for Config {
             scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
             clipboard_bytes: crate::clipboard::read::MAX_PASTE_BYTES,
             glyph_cache_bytes: crate::font::cache::MAX_CACHE_BYTES,
+            image_bytes: crate::kitty::graphics::transfer::MAX_IMAGE_BYTES,
+            image_pixels: crate::kitty::graphics::decode::MAX_IMAGE_PIXELS,
         }
     }
 }
 
 impl Config {
+    pub fn image_limits(
+        &self,
+    ) -> Result<crate::kitty::graphics::decode::ImageLimits, crate::error::AppError> {
+        crate::kitty::graphics::decode::ImageLimits::new(self.image_bytes, self.image_pixels)
+    }
     pub fn glyph_cache(&self) -> Result<crate::font::cache::GlyphCache, crate::error::AppError> {
         crate::font::cache::GlyphCache::new(
             self.glyph_cache_bytes,
@@ -63,6 +72,12 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.bindings.validate()?;
+        self.image_limits().map_err(|_| {
+            error(
+                "image_limits",
+                "expected bytes 1..=16777216 and pixels 1..=4194304",
+            )
+        })?;
         if self.scrollback_lines > crate::terminal::MAX_SCROLLBACK_LINES {
             return Err(error("scrollback_lines", "expected 0..=10000 lines"));
         }
@@ -122,6 +137,8 @@ impl Config {
                     config.scrollback_lines = integer(&value, "scrollback_lines")?
                 }
                 "clipboard_bytes" => config.clipboard_bytes = integer(&value, "clipboard_bytes")?,
+                "image_bytes" => config.image_bytes = integer(&value, "image_bytes")?,
+                "image_pixels" => config.image_pixels = integer(&value, "image_pixels")?,
                 "glyph_cache_bytes" => {
                     config.glyph_cache_bytes = integer(&value, "glyph_cache_bytes")?
                 }
