@@ -93,16 +93,14 @@ fn ime_commit_is_written_once() {
     };
     for value in ["replaced", text] {
         ime.stage(
-            seat,
-            window,
+            &ime.capture_focus(seat, window, &keyboard),
             &keyboard,
             ImeEvent::Commit { text: Some(value) },
         )
         .unwrap();
     }
     ime.stage(
-        seat,
-        window,
+        &ime.capture_focus(seat, window, &keyboard),
         &keyboard,
         ImeEvent::Preedit {
             text: Some("候選"),
@@ -112,23 +110,35 @@ fn ime_commit_is_written_once() {
     )
     .unwrap();
     assert_eq!(sink.queue.pending(), 0, "nothing is queued before done");
-    let mut update = ime.done(seat, window, &keyboard, serial).unwrap();
+    let mut update = ime
+        .done(
+            &ime.capture_focus(seat, window, &keyboard),
+            &keyboard,
+            serial,
+        )
+        .unwrap();
 
     sink.tab = TabId(8);
-    assert!(!update.enqueue_commit(&mut sink).unwrap());
+    assert!(!update.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
     assert_eq!(sink.queue.pending(), 0);
     assert_eq!(update.commit, text);
     sink.tab = tab;
     sink.open = false;
     assert_eq!(
-        update.enqueue_commit(&mut sink).unwrap_err().reason,
+        update
+            .enqueue_commit(&ime, &keyboard, &mut sink)
+            .unwrap_err()
+            .reason,
         PtyWriteFailure::Closed
     );
     assert_eq!(update.commit, text);
     sink.open = true;
     sink.enqueue(&vec![b'x'; MAX_PTY_PENDING_BYTES]).unwrap();
     assert_eq!(
-        update.enqueue_commit(&mut sink).unwrap_err().reason,
+        update
+            .enqueue_commit(&ime, &keyboard, &mut sink)
+            .unwrap_err()
+            .reason,
         PtyWriteFailure::QueueFull
     );
     assert_eq!(update.commit, text);
@@ -137,10 +147,10 @@ fn ime_commit_is_written_once() {
         sink.queue.flush(tab, Some(&mut discard)).unwrap();
     }
     assert_eq!(sink.queue.pending(), 0);
-    assert!(update.enqueue_commit(&mut sink).unwrap());
+    assert!(update.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
     assert!(update.commit.is_empty());
     assert_eq!(update.preedit.text, "候選");
-    assert!(!update.enqueue_commit(&mut sink).unwrap());
+    assert!(!update.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
     assert_eq!(sink.queue.pending(), text.len());
 
     let mut writer = FakeWriter::new(
@@ -150,7 +160,7 @@ fn ime_commit_is_written_once() {
     );
     for _ in 0..text.len() + 3 {
         sink.queue.flush(tab, Some(&mut writer)).unwrap();
-        assert!(!update.enqueue_commit(&mut sink).unwrap());
+        assert!(!update.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
     }
     assert_eq!(sink.queue.pending(), 0);
     assert_eq!(writer.output, text.as_bytes());
@@ -159,26 +169,47 @@ fn ime_commit_is_written_once() {
     let mut output = Vec::new();
     for _ in 0..2 {
         ime.stage(
-            seat,
-            window,
+            &ime.capture_focus(seat, window, &keyboard),
             &keyboard,
             ImeEvent::Commit { text: Some(text) },
         )
         .unwrap();
-        let mut next = ime.done(seat, window, &keyboard, serial).unwrap();
-        assert!(next.enqueue_commit(&mut sink).unwrap());
-        assert!(!next.enqueue_commit(&mut sink).unwrap());
+        let mut next = ime
+            .done(
+                &ime.capture_focus(seat, window, &keyboard),
+                &keyboard,
+                serial,
+            )
+            .unwrap();
+        assert!(next.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
+        assert!(!next.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
         sink.queue.flush(tab, Some(&mut output)).unwrap();
     }
     assert_eq!(output, text.repeat(2).as_bytes());
     for text in [Some(""), None] {
-        ime.stage(seat, window, &keyboard, ImeEvent::Commit { text })
+        ime.stage(
+            &ime.capture_focus(seat, window, &keyboard),
+            &keyboard,
+            ImeEvent::Commit { text },
+        )
+        .unwrap();
+        let mut empty = ime
+            .done(
+                &ime.capture_focus(seat, window, &keyboard),
+                &keyboard,
+                serial,
+            )
             .unwrap();
-        let mut empty = ime.done(seat, window, &keyboard, serial).unwrap();
-        assert!(!empty.enqueue_commit(&mut sink).unwrap());
+        assert!(!empty.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
     }
-    let mut empty = ime.done(seat, window, &keyboard, serial).unwrap();
-    assert!(!empty.enqueue_commit(&mut sink).unwrap());
+    let mut empty = ime
+        .done(
+            &ime.capture_focus(seat, window, &keyboard),
+            &keyboard,
+            serial,
+        )
+        .unwrap();
+    assert!(!empty.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
     assert_eq!(sink.queue.pending(), 0);
 }
 

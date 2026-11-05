@@ -337,7 +337,7 @@
   - **Dependencies:** `TASK-076`, `TASK-015`  |  **Unit Test:** `ime_cursor_rect_recomputes_after_resize`
   - **Done:** 視窗變更後 IME 座標正確
 
-- [ ] **TASK-078 — focus epoch 擋掉舊 IME transaction**
+- [x] **TASK-078 — focus epoch 擋掉舊 IME transaction**
   - **Dependencies:** `TASK-070`, `TASK-074`  |  **Unit Test:** `stale_ime_transaction_is_ignored`
   - **Done:** 焦點已轉移時不可誤 Commit 去其他 Tab
 

@@ -14,7 +14,8 @@ impl ImeState {
         layout: &CellLayout,
     ) -> Option<[ImeRequest; 2]> {
         let target = self.target_for(seat, self.surface?, keyboard)?;
-        if self.enabled_target != Some(target) || snapshot.tab != target.tab {
+        let focus = self.capture_focus(seat, target.window, keyboard);
+        if !self.matches_focus(&focus, keyboard) || snapshot.tab != target.tab {
             return None;
         }
         let rect = cursor_rectangle(snapshot, layout);

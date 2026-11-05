@@ -108,8 +108,7 @@ mod tests {
         ] {
             let previous = ui.preedit().text.clone();
             ime.stage(
-                seat,
-                target.window,
+                &ime.capture_focus(seat, target.window, &keyboard),
                 &keyboard,
                 ImeEvent::Preedit {
                     text,
@@ -120,7 +119,11 @@ mod tests {
             .unwrap();
             assert_eq!(ui.preedit().text, previous);
             let update = ime
-                .done(seat, target.window, &keyboard, ime.commit_serial())
+                .done(
+                    &ime.capture_focus(seat, target.window, &keyboard),
+                    &keyboard,
+                    ime.commit_serial(),
+                )
                 .unwrap();
             ui.apply(update.target, update.preedit).unwrap();
             // Fake downstream PTY consumer receives only the batch's Commit field.
@@ -153,8 +156,7 @@ mod tests {
             );
         }
         ime.stage(
-            seat,
-            target.window,
+            &ime.capture_focus(seat, target.window, &keyboard),
             &keyboard,
             ImeEvent::Preedit {
                 text: Some("候選"),
@@ -164,8 +166,7 @@ mod tests {
         )
         .unwrap();
         ime.stage(
-            seat,
-            target.window,
+            &ime.capture_focus(seat, target.window, &keyboard),
             &keyboard,
             ImeEvent::Commit {
                 text: Some("確定")
@@ -173,7 +174,11 @@ mod tests {
         )
         .unwrap();
         let update = ime
-            .done(seat, target.window, &keyboard, ime.commit_serial())
+            .done(
+                &ime.capture_focus(seat, target.window, &keyboard),
+                &keyboard,
+                ime.commit_serial(),
+            )
             .unwrap();
         ui.apply(update.target, update.preedit).unwrap();
         fake_pty.write_all(update.commit.as_bytes()).unwrap();
@@ -209,7 +214,11 @@ mod tests {
             assert_eq!(ui.preedit().text, "候選");
         }
         let empty = ime
-            .done(seat, target.window, &keyboard, ime.commit_serial())
+            .done(
+                &ime.capture_focus(seat, target.window, &keyboard),
+                &keyboard,
+                ime.commit_serial(),
+            )
             .unwrap();
         ui.apply(empty.target, empty.preedit).unwrap();
         assert!(ui.overlay().is_none());

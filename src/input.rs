@@ -31,6 +31,10 @@ impl KeyboardFocus {
         self.target
     }
 
+    pub(crate) fn epoch(&self) -> Arc<()> {
+        self.epoch.clone()
+    }
+
     pub fn enter(&mut self, window: WindowId, tab: TabId) {
         self.target = Some(FocusTarget { window, tab });
         self.epoch = Arc::new(());

@@ -1,7 +1,9 @@
 //! Seat-scoped text-input-v3 capability and focus state. No Wayland or IME I/O.
 
 pub mod cursor;
+mod focus;
 pub mod preedit;
+pub use focus::ImeFocus;
 
 use crate::{
     WindowId,
@@ -11,7 +13,7 @@ use crate::{
     input::{FocusTarget, KeyboardFocus},
     wayland::{Binding, Capabilities, Protocol},
 };
-use std::io::ErrorKind;
+use std::{io::ErrorKind, sync::Arc};
 
 /// Per Preedit or Commit value; repeated events replace, rather than append, pending text.
 pub const MAX_IME_TEXT_BYTES: usize = 4096;
@@ -59,6 +61,7 @@ impl ImePreedit {
 
 /// One complete done batch, consumed by later overlay/PTY adapters. No payload Debug or I/O.
 pub struct ImeUpdate {
+    focus: ImeFocus,
     pub target: FocusTarget,
     pub serial: u32,
     /// False still permits applying text, but not updating the compositor-facing state.
@@ -69,8 +72,17 @@ pub struct ImeUpdate {
 
 impl ImeUpdate {
     /// Queue literal UTF-8 once; retain this update on error and retry when the sink can accept it.
-    /// False means empty/already queued or wrong Tab. PTY flushing owns partial-write retries.
-    pub fn enqueue_commit<S: PasteSink>(&mut self, sink: &mut S) -> Result<bool, S::Error> {
+    /// Stale focus discards undelivered Commit; PTY flushing owns retries for bytes already queued.
+    pub fn enqueue_commit<S: PasteSink>(
+        &mut self,
+        ime: &ImeState,
+        keyboard: &KeyboardFocus,
+        sink: &mut S,
+    ) -> Result<bool, S::Error> {
+        if !self.is_current(ime, keyboard) {
+            self.commit.clear();
+            return Ok(false);
+        }
         if self.commit.is_empty() || sink.tab() != self.target.tab {
             return Ok(false);
         }
@@ -95,6 +107,8 @@ pub struct ImeState {
     manager: Option<Binding>,
     surface: Option<WindowId>,
     enabled_target: Option<FocusTarget>,
+    enabled_focus: Option<Arc<()>>,
+    focus_epoch: Arc<()>,
     commit_serial: u32,
     cursor_rectangle: Option<Rect>,
     pending_preedit: ImePreedit,
@@ -109,6 +123,8 @@ impl ImeState {
             manager: capabilities.binding(Protocol::TextInput, 1, 1),
             surface: None,
             enabled_target: None,
+            enabled_focus: None,
+            focus_epoch: Arc::new(()),
             commit_serial: 0,
             cursor_rectangle: None,
             pending_preedit: ImePreedit::default(),
@@ -134,6 +150,8 @@ impl ImeState {
         self.surface = Some(surface);
         // Every enter invalidates the compositor's text-input state.
         self.enabled_target = None;
+        self.enabled_focus = None;
+        self.focus_epoch = Arc::new(());
         self.cursor_rectangle = None;
         self.clear_pending();
         true
@@ -145,6 +163,8 @@ impl ImeState {
         }
         self.surface = None;
         self.enabled_target = None;
+        self.enabled_focus = None;
+        self.focus_epoch = Arc::new(());
         self.cursor_rectangle = None;
         self.clear_pending();
         true
@@ -183,7 +203,13 @@ impl ImeState {
         } else {
             None
         };
-        if target == self.enabled_target {
+        if target == self.enabled_target
+            && target.is_none_or(|target| {
+                self.enabled_focus
+                    .as_ref()
+                    .is_some_and(|epoch| keyboard.matches(target, epoch))
+            })
+        {
             return &[];
         }
         let requests: &'static [ImeRequest] = match (self.enabled_target, target) {
@@ -193,6 +219,8 @@ impl ImeState {
             (None, None) => &[],
         };
         self.enabled_target = target;
+        self.enabled_focus = target.map(|_| keyboard.epoch());
+        self.focus_epoch = Arc::new(());
         self.cursor_rectangle = None;
         self.clear_pending();
         self.commit_serial = self.commit_serial.wrapping_add(
@@ -212,15 +240,11 @@ impl ImeState {
     /// Invalid data discards the entire batch until done, without recording its contents.
     pub fn stage(
         &mut self,
-        seat: SeatId,
-        surface: WindowId,
+        focus: &ImeFocus,
         keyboard: &KeyboardFocus,
         event: ImeEvent<'_>,
     ) -> Result<bool, AppError> {
-        let Some(target) = self.target_for(seat, surface, keyboard) else {
-            return Ok(false);
-        };
-        if self.enabled_target != Some(target) || self.invalid_batch {
+        if !self.matches_focus(focus, keyboard) || self.invalid_batch {
             return Ok(false);
         }
         let result = match event {
@@ -254,13 +278,11 @@ impl ImeState {
     /// A done serial can repeat across batches and is not a text-event deduplication key.
     pub fn done(
         &mut self,
-        seat: SeatId,
-        surface: WindowId,
+        focus: &ImeFocus,
         keyboard: &KeyboardFocus,
         serial: u32,
     ) -> Option<ImeUpdate> {
-        let target = self.target_for(seat, surface, keyboard)?;
-        if self.enabled_target != Some(target) {
+        if !self.matches_focus(focus, keyboard) {
             return None;
         }
         if self.invalid_batch {
@@ -268,7 +290,8 @@ impl ImeState {
             return None;
         }
         Some(ImeUpdate {
-            target,
+            target: focus.target?,
+            focus: focus.clone(),
             serial,
             state_is_current: serial == self.commit_serial,
             preedit: std::mem::take(&mut self.pending_preedit),
@@ -354,8 +377,7 @@ mod tests {
             for mixed in [false, true] {
                 if mixed {
                     ime.stage(
-                        seat,
-                        window,
+                        &ime.capture_focus(seat, window, &keyboard),
                         &keyboard,
                         ImeEvent::Commit {
                             text: Some("確定")
@@ -363,8 +385,7 @@ mod tests {
                     )
                     .unwrap();
                     ime.stage(
-                        seat,
-                        window,
+                        &ime.capture_focus(seat, window, &keyboard),
                         &keyboard,
                         ImeEvent::Preedit {
                             text: Some("候選"),
@@ -378,8 +399,7 @@ mod tests {
                 for _ in 0..2 {
                     assert!(
                         !ime.stage(
-                            seat,
-                            window,
+                            &ime.capture_focus(seat, window, &keyboard),
                             &keyboard,
                             ImeEvent::DeleteSurroundingText {
                                 before_length,
@@ -391,17 +411,28 @@ mod tests {
                 }
                 assert!(sink.0.is_empty());
                 let mut update = ime
-                    .done(seat, window, &keyboard, ime.commit_serial())
+                    .done(
+                        &ime.capture_focus(seat, window, &keyboard),
+                        &keyboard,
+                        ime.commit_serial(),
+                    )
                     .unwrap();
                 assert_eq!(update.preedit.text, if mixed { "候選" } else { "" });
-                assert_eq!(update.enqueue_commit(&mut sink).unwrap(), mixed);
+                assert_eq!(
+                    update.enqueue_commit(&ime, &keyboard, &mut sink).unwrap(),
+                    mixed
+                );
                 assert_eq!(sink.0, if mixed { "確定".as_bytes() } else { b"" });
-                assert!(!update.enqueue_commit(&mut sink).unwrap());
+                assert!(!update.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
                 sink.0.clear();
                 let mut empty = ime
-                    .done(seat, window, &keyboard, ime.commit_serial())
+                    .done(
+                        &ime.capture_focus(seat, window, &keyboard),
+                        &keyboard,
+                        ime.commit_serial(),
+                    )
                     .unwrap();
-                assert!(!empty.enqueue_commit(&mut sink).unwrap());
+                assert!(!empty.enqueue_commit(&ime, &keyboard, &mut sink).unwrap());
                 assert!(sink.0.is_empty());
                 assert_eq!(cells(), before);
                 assert_eq!(terminal.grid().unwrap().cursor, cursor);
@@ -427,21 +458,31 @@ mod tests {
         let mut ime = ImeState::new(seat, &capabilities);
         let commit = |text| ImeEvent::Commit { text };
         assert!(
-            !ime.stage(seat, window, &keyboard, commit(Some("ignored")))
-                .unwrap()
+            !ime.stage(
+                &ime.capture_focus(seat, window, &keyboard),
+                &keyboard,
+                commit(Some("ignored"))
+            )
+            .unwrap()
         );
-        assert!(ime.done(seat, window, &keyboard, 0).is_none());
+        assert!(
+            ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 0)
+                .is_none()
+        );
         ime.enter(seat, window);
         ime.sync_enabled(seat, &keyboard, true);
         assert_eq!(ime.commit_serial(), 1);
         assert!(
-            ime.stage(seat, window, &keyboard, commit(Some("舊")))
-                .unwrap()
+            ime.stage(
+                &ime.capture_focus(seat, window, &keyboard),
+                &keyboard,
+                commit(Some("舊"))
+            )
+            .unwrap()
         );
         assert!(
             ime.stage(
-                seat,
-                window,
+                &ime.capture_focus(seat, window, &keyboard),
                 &keyboard,
                 ImeEvent::Preedit {
                     text: Some("組字"),
@@ -452,19 +493,40 @@ mod tests {
             .unwrap()
         );
         assert!(
-            ime.stage(seat, window, &keyboard, commit(Some("中文\n")))
-                .unwrap()
+            ime.stage(
+                &ime.capture_focus(seat, window, &keyboard),
+                &keyboard,
+                commit(Some("中文\n"))
+            )
+            .unwrap()
         );
         assert!(
-            !ime.stage(SeatId(2), window, &keyboard, commit(Some("wrong seat")))
-                .unwrap()
+            !ime.stage(
+                &ime.capture_focus(SeatId(2), window, &keyboard),
+                &keyboard,
+                commit(Some("wrong seat"))
+            )
+            .unwrap()
         );
         assert!(
-            !ime.stage(seat, WindowId(2), &keyboard, commit(Some("wrong surface")))
-                .unwrap()
+            !ime.stage(
+                &ime.capture_focus(seat, WindowId(2), &keyboard),
+                &keyboard,
+                commit(Some("wrong surface"))
+            )
+            .unwrap()
         );
-        assert!(ime.done(SeatId(2), window, &keyboard, 1).is_none());
-        let update = ime.done(seat, window, &keyboard, 1).unwrap();
+        assert!(
+            ime.done(
+                &ime.capture_focus(SeatId(2), window, &keyboard),
+                &keyboard,
+                1
+            )
+            .is_none()
+        );
+        let update = ime
+            .done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 1)
+            .unwrap();
         assert_eq!(update.target, keyboard.target().unwrap());
         assert_eq!(update.serial, 1);
         assert!(update.state_is_current);
@@ -474,21 +536,28 @@ mod tests {
             (update.preedit.cursor_begin, update.preedit.cursor_end),
             (0, 6)
         );
-        let empty = ime.done(seat, window, &keyboard, 1).unwrap();
+        let empty = ime
+            .done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 1)
+            .unwrap();
         assert!(empty.commit.is_empty());
         assert!(empty.preedit.text.is_empty());
         assert!(
-            ime.stage(seat, window, &keyboard, commit(Some("下一批")))
-                .unwrap()
+            ime.stage(
+                &ime.capture_focus(seat, window, &keyboard),
+                &keyboard,
+                commit(Some("下一批"))
+            )
+            .unwrap()
         );
-        let older_serial = ime.done(seat, window, &keyboard, 0).unwrap();
+        let older_serial = ime
+            .done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 0)
+            .unwrap();
         assert_eq!(older_serial.commit, "下一批");
         assert!(!older_serial.state_is_current);
         assert_eq!(ime.commit_serial(), 1);
 
         ime.stage(
-            seat,
-            window,
+            &ime.capture_focus(seat, window, &keyboard),
             &keyboard,
             ImeEvent::Preedit {
                 text: None,
@@ -497,18 +566,28 @@ mod tests {
             },
         )
         .unwrap();
-        ime.stage(seat, window, &keyboard, commit(None)).unwrap();
-        let cleared = ime.done(seat, window, &keyboard, 1).unwrap();
+        ime.stage(
+            &ime.capture_focus(seat, window, &keyboard),
+            &keyboard,
+            commit(None),
+        )
+        .unwrap();
+        let cleared = ime
+            .done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 1)
+            .unwrap();
         assert!(cleared.preedit.text.is_empty());
         assert!(cleared.commit.is_empty());
         assert_eq!(cleared.preedit.cursor_begin, -1);
 
         let limit = "a".repeat(MAX_IME_TEXT_BYTES);
-        ime.stage(seat, window, &keyboard, commit(Some(&limit)))
-            .unwrap();
         ime.stage(
-            seat,
-            window,
+            &ime.capture_focus(seat, window, &keyboard),
+            &keyboard,
+            commit(Some(&limit)),
+        )
+        .unwrap();
+        ime.stage(
+            &ime.capture_focus(seat, window, &keyboard),
             &keyboard,
             ImeEvent::Preedit {
                 text: Some(&limit),
@@ -517,16 +596,21 @@ mod tests {
             },
         )
         .unwrap();
-        let bounded = ime.done(seat, window, &keyboard, 1).unwrap();
+        let bounded = ime
+            .done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 1)
+            .unwrap();
         assert_eq!(bounded.commit, limit);
         assert_eq!(bounded.preedit.text, limit);
         for (begin, end) in [(1, 3), (0, 4), (-1, 0), (-2, -2)] {
-            ime.stage(seat, window, &keyboard, commit(Some("must not escape")))
-                .unwrap();
+            ime.stage(
+                &ime.capture_focus(seat, window, &keyboard),
+                &keyboard,
+                commit(Some("must not escape")),
+            )
+            .unwrap();
             assert_eq!(
                 ime.stage(
-                    seat,
-                    window,
+                    &ime.capture_focus(seat, window, &keyboard),
                     &keyboard,
                     ImeEvent::Preedit {
                         text: Some("中"),
@@ -537,10 +621,17 @@ mod tests {
                 Err(AppError::new(Component::Ime, ErrorKind::InvalidData))
             );
             assert!(
-                !ime.stage(seat, window, &keyboard, commit(Some("still invalid")))
-                    .unwrap()
+                !ime.stage(
+                    &ime.capture_focus(seat, window, &keyboard),
+                    &keyboard,
+                    commit(Some("still invalid"))
+                )
+                .unwrap()
             );
-            assert!(ime.done(seat, window, &keyboard, 1).is_none());
+            assert!(
+                ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 1)
+                    .is_none()
+            );
         }
         let oversized = "a".repeat(MAX_IME_TEXT_BYTES + 1);
         for event in [
@@ -552,42 +643,70 @@ mod tests {
             },
         ] {
             assert_eq!(
-                ime.stage(seat, window, &keyboard, event),
+                ime.stage(
+                    &ime.capture_focus(seat, window, &keyboard),
+                    &keyboard,
+                    event
+                ),
                 Err(AppError::new(Component::Ime, ErrorKind::FileTooLarge))
             );
-            assert!(ime.done(seat, window, &keyboard, 1).is_none());
+            assert!(
+                ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 1)
+                    .is_none()
+            );
         }
-        ime.stage(seat, window, &keyboard, commit(Some("cancelled")))
-            .unwrap();
+        ime.stage(
+            &ime.capture_focus(seat, window, &keyboard),
+            &keyboard,
+            commit(Some("cancelled")),
+        )
+        .unwrap();
         keyboard.enter(window, TabId(8));
-        assert!(ime.done(seat, window, &keyboard, 1).is_none());
+        assert!(
+            ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 1)
+                .is_none()
+        );
         ime.sync_enabled(seat, &keyboard, true);
         assert_eq!(ime.commit_serial(), 3);
         assert!(
-            ime.done(seat, window, &keyboard, 3)
+            ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 3)
                 .unwrap()
                 .commit
                 .is_empty()
         );
-        ime.stage(seat, window, &keyboard, commit(Some("cancelled")))
-            .unwrap();
+        ime.stage(
+            &ime.capture_focus(seat, window, &keyboard),
+            &keyboard,
+            commit(Some("cancelled")),
+        )
+        .unwrap();
         ime.leave(seat, window);
-        assert!(ime.done(seat, window, &keyboard, 3).is_none());
+        assert!(
+            ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 3)
+                .is_none()
+        );
         ime.enter(seat, window);
         ime.sync_enabled(seat, &keyboard, true);
         assert!(
-            ime.done(seat, window, &keyboard, 4)
+            ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 4)
                 .unwrap()
                 .commit
                 .is_empty()
         );
-        ime.stage(seat, window, &keyboard, commit(Some("disabled")))
-            .unwrap();
+        ime.stage(
+            &ime.capture_focus(seat, window, &keyboard),
+            &keyboard,
+            commit(Some("disabled")),
+        )
+        .unwrap();
         ime.sync_enabled(seat, &keyboard, false);
-        assert!(ime.done(seat, window, &keyboard, 5).is_none());
+        assert!(
+            ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 5)
+                .is_none()
+        );
         ime.sync_enabled(seat, &keyboard, true);
         assert!(
-            ime.done(seat, window, &keyboard, 6)
+            ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 6)
                 .unwrap()
                 .commit
                 .is_empty()
@@ -596,16 +715,33 @@ mod tests {
         other.enter(SeatId(2), window);
         other.sync_enabled(SeatId(2), &keyboard, true);
         other
-            .stage(SeatId(2), window, &keyboard, commit(Some("other seat")))
+            .stage(
+                &other.capture_focus(SeatId(2), window, &keyboard),
+                &keyboard,
+                commit(Some("other seat")),
+            )
             .unwrap();
-        ime.stage(seat, window, &keyboard, commit(Some("first seat")))
-            .unwrap();
+        ime.stage(
+            &ime.capture_focus(seat, window, &keyboard),
+            &keyboard,
+            commit(Some("first seat")),
+        )
+        .unwrap();
         assert_eq!(
-            ime.done(seat, window, &keyboard, 6).unwrap().commit,
+            ime.done(&ime.capture_focus(seat, window, &keyboard), &keyboard, 6)
+                .unwrap()
+                .commit,
             "first seat"
         );
         assert_eq!(
-            other.done(SeatId(2), window, &keyboard, 1).unwrap().commit,
+            other
+                .done(
+                    &other.capture_focus(SeatId(2), window, &keyboard),
+                    &keyboard,
+                    1
+                )
+                .unwrap()
+                .commit,
             "other seat"
         );
         ime.commit_serial = u32::MAX;
@@ -640,8 +776,10 @@ mod tests {
 
         let mut other = ImeState::new(SeatId(2), &capabilities);
         assert!(other.enter(SeatId(2), window));
+        let mut other_keyboard = KeyboardFocus::default();
+        other_keyboard.enter(window, TabId(7));
         assert_eq!(
-            other.sync_enabled(SeatId(2), &keyboard, true),
+            other.sync_enabled(SeatId(2), &other_keyboard, true),
             [Enable, Commit]
         );
         keyboard.enter(window, TabId(8));
@@ -662,7 +800,11 @@ mod tests {
         assert!(ime.sync_enabled(seat, &keyboard, true).is_empty());
         keyboard.enter(window, TabId(7));
         assert_eq!(ime.sync_enabled(seat, &keyboard, true), [Enable, Commit]);
-        assert!(other.sync_enabled(SeatId(2), &keyboard, true).is_empty());
+        assert!(
+            other
+                .sync_enabled(SeatId(2), &other_keyboard, true)
+                .is_empty()
+        );
 
         // After IME leave, requests are ignored by the compositor until the next enter.
         assert!(ime.leave(seat, window));
