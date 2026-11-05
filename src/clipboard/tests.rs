@@ -394,6 +394,119 @@ fn paste_shortcut_routes_to_focused_tab() {
 }
 
 #[test]
+fn middle_click_reads_primary_only() {
+    use super::{SelectionKind, middle_click_paste};
+    use crate::{
+        geometry::Scale,
+        input::{Point as PointerPoint, PointerFocus},
+        wayland::{Capabilities, Global},
+    };
+
+    let capabilities = Capabilities::from_globals(&[Global {
+        name: 1,
+        interface: "zwp_primary_selection_device_manager_v1",
+        version: 1,
+    }]);
+    let target = FocusTarget {
+        window: WindowId(1),
+        tab: TabId(7),
+    };
+    let mut pointer = PointerFocus::default();
+    pointer.enter(target.window, PointerPoint::new(10.0, 20.0).unwrap());
+    let click = pointer
+        .button(274, true, Scale::new(1).unwrap())
+        .unwrap()
+        .unwrap();
+    let intent = middle_click_paste(target, &click, &capabilities).unwrap();
+    assert_eq!(intent.target(), target);
+    assert_eq!(intent.selection(), SelectionKind::Primary);
+
+    let mut clipboard = ClipboardState::new();
+    let mut primary = ClipboardState::new_primary();
+    assert!(clipboard.set_local_owner(TabId(8)));
+    assert_eq!(intent.owner_from(&clipboard), None);
+    assert_eq!(intent.owner_from(&primary), None);
+    assert!(primary.set_local_owner(TabId(9)));
+    assert_eq!(
+        intent.owner_from(&primary),
+        Some(ClipboardOwner::Local(TabId(9)))
+    );
+    let primary_offer = primary.offer_created().unwrap();
+    assert!(primary.select_offer(primary_offer));
+    let clipboard_offer = clipboard.offer_created().unwrap();
+    assert!(clipboard.select_offer(clipboard_offer));
+    assert_eq!(intent.owner_from(&clipboard), None);
+    assert_eq!(
+        intent.owner_from(&primary),
+        Some(ClipboardOwner::External(primary_offer))
+    );
+
+    let mut focus = KeyboardFocus::default();
+    focus.enter(target.window, target.tab);
+    let route = focus.route_key(47, true).unwrap();
+    let modifiers = Modifiers {
+        depressed: ModifierMask::CONTROL.0 | ModifierMask::SHIFT.0,
+        ..Modifiers::default()
+    };
+    let PasteKeyAction::Paste(keyboard_intent) =
+        paste_shortcut(&focus, &route, modifiers, b'V' as u32, KeyState::Pressed)
+    else {
+        panic!("expected Clipboard Paste");
+    };
+    assert_eq!(keyboard_intent.selection(), SelectionKind::Clipboard);
+    assert_eq!(
+        keyboard_intent.owner_from(&clipboard),
+        Some(ClipboardOwner::External(clipboard_offer))
+    );
+    assert_eq!(keyboard_intent.owner_from(&primary), None);
+    focus.enter(target.window, TabId(10));
+    assert_eq!(intent.target(), target);
+    let terminal = Terminal::new(target.tab, 2, 4).unwrap();
+    let pending = intent
+        .with_payload(
+            PastePayload::new("Primary\n文字".into()).unwrap(),
+            &terminal,
+        )
+        .unwrap();
+    assert_eq!(pending.target(), target);
+    assert!(pending.confirmation_prompt().is_some());
+    primary.cancel_offer(primary_offer);
+    assert_eq!(intent.owner_from(&primary), None);
+    assert_eq!(intent.owner_from(&clipboard), None);
+    assert_eq!(
+        keyboard_intent.owner_from(&clipboard),
+        Some(ClipboardOwner::External(clipboard_offer))
+    );
+
+    assert!(middle_click_paste(target, &click, &Capabilities::default()).is_none());
+    assert!(
+        middle_click_paste(
+            FocusTarget {
+                window: WindowId(2),
+                ..target
+            },
+            &click,
+            &capabilities
+        )
+        .is_none()
+    );
+    for (button, pressed) in [(272, true), (273, true), (274, false)] {
+        let click = pointer
+            .button(button, pressed, Scale::new(1).unwrap())
+            .unwrap()
+            .unwrap();
+        assert!(middle_click_paste(target, &click, &capabilities).is_none());
+    }
+    pointer.leave(target.window);
+    assert!(
+        pointer
+            .button(274, true, Scale::new(1).unwrap())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn paste_never_switches_target_mid_transfer() {
     struct Sink {
         tab: TabId,
@@ -475,6 +588,7 @@ fn bracketed_paste_wraps_exactly_once() {
 
     let tab = TabId(7);
     let intent = super::PasteIntent {
+        selection: super::SelectionKind::Clipboard,
         target: FocusTarget {
             window: WindowId(1),
             tab,
@@ -568,7 +682,10 @@ fn multiline_paste_requires_confirmation() {
         window: WindowId(1),
         tab: TabId(7),
     };
-    let intent = super::PasteIntent { target };
+    let intent = super::PasteIntent {
+        target,
+        selection: super::SelectionKind::Clipboard,
+    };
     for bracketed in [false, true] {
         let mut terminal = Terminal::new(target.tab, 2, 4).unwrap();
         if bracketed {

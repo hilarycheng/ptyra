@@ -3,10 +3,11 @@
 use crate::{
     TabId,
     error::{AppError, Component},
-    input::{FocusTarget, KeyRoute, KeyboardFocus},
+    input::{FocusTarget, KeyRoute, KeyboardFocus, PointerClick},
     keymap::{KeyState, Modifiers},
     selection::copy_text,
     terminal::Terminal,
+    wayland::{Capabilities, Protocol},
 };
 use alacritty_terminal::{
     grid::Grid,
@@ -84,11 +85,24 @@ pub fn copy_shortcut(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PasteIntent {
     target: FocusTarget,
+    selection: SelectionKind,
 }
 
 impl PasteIntent {
     pub fn target(self) -> FocusTarget {
         self.target
+    }
+
+    pub fn selection(self) -> SelectionKind {
+        self.selection
+    }
+
+    /// Resolve the source owner before reading data; never fall back to the other selection.
+    pub fn owner_from(self, state: &ClipboardState) -> Option<ClipboardOwner> {
+        if state.selection != self.selection {
+            return None;
+        }
+        state.owner()
     }
 
     /// Bind completed Clipboard data to the Tab that initiated Paste.
@@ -230,6 +244,24 @@ pub fn paste_shortcut(
     }
     PasteKeyAction::Paste(PasteIntent {
         target: route.target,
+        selection: SelectionKind::Clipboard,
+    })
+}
+
+/// The caller supplies the terminal Tab hit by this pointer event, excluding the Tab Bar.
+pub fn middle_click_paste(
+    target: FocusTarget,
+    click: &PointerClick,
+    capabilities: &Capabilities,
+) -> Option<PasteIntent> {
+    // wl_pointer uses Linux evdev button codes: BTN_MIDDLE is 0x112.
+    if !click.pressed || click.button != 0x112 || click.window != target.window {
+        return None;
+    }
+    capabilities.binding(Protocol::PrimarySelection, 1, 1)?;
+    Some(PasteIntent {
+        target,
+        selection: SelectionKind::Primary,
     })
 }
 
@@ -318,7 +350,7 @@ pub fn plan_data_source(
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum SelectionKind {
+pub enum SelectionKind {
     #[default]
     Clipboard,
     Primary,

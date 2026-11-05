@@ -283,7 +283,7 @@
   - **Dependencies:** `TASK-063`, `TASK-047`  |  **Unit Test:** `primary_selection_does_not_replace_clipboard`
   - **Done:** Mouse selection / Copy 兩套 owner 狀態互不覆寫
 
-- [ ] **TASK-065 — Middle-click 產生 Primary PasteIntent**
+- [x] **TASK-065 — Middle-click 產生 Primary PasteIntent**
   - **Dependencies:** `TASK-064`, `TASK-014`  |  **Unit Test:** `middle_click_reads_primary_only`
   - **Done:** Middle-click 唔讀錯一般 Clipboard
 
