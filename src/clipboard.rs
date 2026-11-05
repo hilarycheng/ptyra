@@ -104,6 +104,12 @@ impl PasteIntent {
         let mode = terminal
             .mode()
             .ok_or_else(|| AppError::new(Component::Clipboard, ErrorKind::NotConnected))?;
+        // A trailing CR/LF can execute a command even without a second visible line.
+        let confirmation_pending = !mode.contains(TermMode::BRACKETED_PASTE)
+            && payload
+                .bytes
+                .iter()
+                .any(|byte| matches!(byte, b'\r' | b'\n'));
         if mode.contains(TermMode::BRACKETED_PASTE) {
             let start = b"\x1b[200~";
             let end = b"\x1b[201~";
@@ -122,6 +128,7 @@ impl PasteIntent {
             target: self.target,
             payload,
             sent: 0,
+            confirmation_pending,
         })
     }
 }
@@ -140,6 +147,7 @@ pub struct PendingPaste {
     target: FocusTarget,
     payload: PastePayload,
     sent: usize,
+    confirmation_pending: bool,
 }
 
 impl PendingPaste {
@@ -151,6 +159,26 @@ impl PendingPaste {
         self.sent == self.payload.bytes.len()
     }
 
+    /// Display before accepting a decision; the prompt never includes Clipboard text.
+    /// Bracketed framing is not a guarantee that a shell will prevent execution.
+    pub fn confirmation_prompt(&self) -> Option<&'static str> {
+        self.confirmation_pending
+            .then_some("This paste contains line breaks and may execute commands. Paste anyway?")
+    }
+
+    /// Route an explicit user decision to this exact Paste instance, never the current Tab's Paste.
+    /// Rejection drops the payload. Cancelled or previously resolved prompts ignore later decisions.
+    pub fn resolve_confirmation(&mut self, target: FocusTarget, accepted: bool) -> bool {
+        if target != self.target || !self.confirmation_pending {
+            return false;
+        }
+        self.confirmation_pending = false;
+        if !accepted {
+            self.cancel_for_tab(target.tab);
+        }
+        true
+    }
+
     /// Call when the target Tab closes or loses keyboard focus.
     /// Discards undelivered bytes; bytes already accepted by the sink stay queued.
     /// shortcut: partial cancellation leaves framing incomplete; revisit when lifecycle routing separates focus loss from Tab closure.
@@ -158,13 +186,14 @@ impl PendingPaste {
         if self.target.tab == tab {
             self.payload.bytes = Vec::new();
             self.sent = 0;
+            self.confirmation_pending = false;
         }
     }
 
     /// A different Tab never receives a chunk, even after a focus switch.
     /// Errors leave this chunk pending for a later retry.
     pub fn enqueue_next<S: PasteSink>(&mut self, sink: &mut S) -> Result<bool, S::Error> {
-        if sink.tab() != self.target.tab || self.is_complete() {
+        if self.confirmation_pending || sink.tab() != self.target.tab || self.is_complete() {
             return Ok(false);
         }
         let end = (self.sent + 16 * 1024).min(self.payload.bytes.len());

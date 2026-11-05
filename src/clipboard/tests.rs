@@ -422,6 +422,9 @@ fn bracketed_paste_wraps_exactly_once() {
             let mut transfer = intent
                 .with_payload(PastePayload::new(text.clone()).unwrap(), &terminal)
                 .unwrap();
+            if transfer.confirmation_prompt().is_some() {
+                assert!(transfer.resolve_confirmation(intent.target(), true));
+            }
             // Later mode changes must not alter an already prepared transfer.
             terminal
                 .feed(
@@ -469,6 +472,121 @@ fn bracketed_paste_wraps_exactly_once() {
         intent.with_payload(PastePayload::new("text".into()).unwrap(), &terminal),
         Err(error) if error == crate::error::AppError::new(crate::error::Component::Clipboard, std::io::ErrorKind::NotConnected)
     ));
+}
+
+#[test]
+fn multiline_paste_requires_confirmation() {
+    struct Sink {
+        tab: TabId,
+        bytes: Vec<u8>,
+        calls: usize,
+    }
+    impl PasteSink for Sink {
+        type Error = ();
+        fn tab(&self) -> TabId {
+            self.tab
+        }
+        fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.calls += 1;
+            self.bytes.extend_from_slice(bytes);
+            Ok(())
+        }
+    }
+    let target = FocusTarget {
+        window: WindowId(1),
+        tab: TabId(7),
+    };
+    let intent = super::PasteIntent { target };
+    for bracketed in [false, true] {
+        let mut terminal = Terminal::new(target.tab, 2, 4).unwrap();
+        if bracketed {
+            terminal.feed(target.tab, b"\x1b[?2004h").unwrap();
+        }
+        for (text, multiline) in [
+            (String::new(), false),
+            (" 繁體\t e\u{301} ".into(), false),
+            ("一\n二".into(), true),
+            ("一\r二".into(), true),
+            ("一\r\n二".into(), true),
+            ("command\n".into(), true),
+            ("\r".into(), true),
+            (format!("{}\n尾", "繁".repeat(6000)), true),
+        ] {
+            let mut paste = intent
+                .with_payload(PastePayload::new(text.clone()).unwrap(), &terminal)
+                .unwrap();
+            let mut sink = Sink {
+                tab: target.tab,
+                bytes: Vec::new(),
+                calls: 0,
+            };
+            let requires_confirmation = multiline && !bracketed;
+            assert_eq!(paste.confirmation_prompt().is_some(), requires_confirmation);
+            if requires_confirmation {
+                assert_eq!(
+                    paste.confirmation_prompt(),
+                    Some("This paste contains line breaks and may execute commands. Paste anyway?")
+                );
+                assert!(!paste.enqueue_next(&mut sink).unwrap());
+                assert_eq!(sink.calls, 0);
+                assert!(!paste.is_complete());
+                for wrong_target in [
+                    FocusTarget {
+                        tab: TabId(8),
+                        ..target
+                    },
+                    FocusTarget {
+                        window: WindowId(2),
+                        ..target
+                    },
+                ] {
+                    assert!(!paste.resolve_confirmation(wrong_target, true));
+                    assert!(!paste.resolve_confirmation(wrong_target, false));
+                }
+                assert!(paste.confirmation_prompt().is_some());
+                assert!(paste.resolve_confirmation(target, true));
+                assert!(!paste.resolve_confirmation(target, true));
+                sink.tab = TabId(8);
+                assert!(!paste.enqueue_next(&mut sink).unwrap());
+                sink.tab = target.tab;
+            }
+            while paste.enqueue_next(&mut sink).unwrap() {}
+            assert!(paste.is_complete());
+            let expected = if bracketed {
+                format!("\x1b[200~{text}\x1b[201~").into_bytes()
+            } else {
+                text.into_bytes()
+            };
+            assert_eq!(sink.bytes, expected);
+        }
+    }
+
+    let terminal = Terminal::new(target.tab, 2, 4).unwrap();
+    for rejected in [false, true] {
+        let mut paste = intent
+            .with_payload(PastePayload::new("secret\ntext".into()).unwrap(), &terminal)
+            .unwrap();
+        if rejected {
+            assert!(paste.resolve_confirmation(target, false));
+        } else {
+            paste.cancel_for_tab(target.tab);
+        }
+        assert!(paste.is_complete());
+        assert!(paste.payload.bytes.is_empty());
+        assert!(paste.confirmation_prompt().is_none());
+        assert!(!paste.resolve_confirmation(target, true));
+        let mut sink = Sink {
+            tab: target.tab,
+            bytes: Vec::new(),
+            calls: 0,
+        };
+        assert!(!paste.enqueue_next(&mut sink).unwrap());
+        assert_eq!(sink.calls, 0);
+        let next = intent
+            .with_payload(PastePayload::new("new\npaste".into()).unwrap(), &terminal)
+            .unwrap();
+        assert!(next.confirmation_prompt().is_some());
+    }
 }
 
 #[test]

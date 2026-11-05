@@ -271,7 +271,7 @@
   - **Dependencies:** `TASK-027`, `TASK-058`  |  **Unit Test:** `bracketed_paste_wraps_exactly_once`
   - **Done:** 啟用輸出前後 delimiter；無啟用時不亂加
 
-- [ ] **TASK-062 — 無 bracketed mode 時對多行 Paste 作安全提示**
+- [x] **TASK-062 — 無 bracketed mode 時對多行 Paste 作安全提示**
   - **Dependencies:** `TASK-058`, `TASK-027`  |  **Unit Test:** `multiline_paste_requires_confirmation`
   - **Done:** 避免未經確認嘅多行 Paste；不聲稱能阻止所有 Shell 執行
 
