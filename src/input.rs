@@ -27,6 +27,10 @@ pub struct KeyboardFocus {
 }
 
 impl KeyboardFocus {
+    pub fn target(&self) -> Option<FocusTarget> {
+        self.target
+    }
+
     pub fn enter(&mut self, window: WindowId, tab: TabId) {
         self.target = Some(FocusTarget { window, tab });
         self.epoch = Arc::new(());

@@ -305,7 +305,7 @@
   - **Dependencies:** `TASK-008`  |  **Unit Test:** `ime_capability_does_not_require_gtk`
   - **Done:** 冇 protocol 時仍可普通英文輸入
 
-- [ ] **TASK-070 — IME enter/leave focus reducer**
+- [x] **TASK-070 — IME enter/leave focus reducer**
   - **Dependencies:** `TASK-069`, `TASK-011`  |  **Unit Test:** `ime_focus_matches_surface`
   - **Done:** 只接受持有 focus 嘅 Surface IME events
 
