@@ -515,7 +515,7 @@
   - **Dependencies:** `TASK-118`  |  **Unit Test:** `kitty_image_ids_do_not_collide`
   - **Done:** 不同 images/placements 不互相覆蓋
 
-- [ ] **TASK-120 — 刪除 image/placement 並釋放資源**
+- [x] **TASK-120 — 刪除 image/placement 並釋放資源**
   - **Dependencies:** `TASK-119`  |  **Unit Test:** `kitty_delete_releases_memory`
   - **Done:** 刪除後 budget 可回收
 

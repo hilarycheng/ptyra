@@ -24,6 +24,9 @@ impl Default for Assembler {
     }
 }
 impl Assembler {
+    pub fn cancel(&mut self) {
+        self.pending = None;
+    }
     pub fn with_limit(limit: usize) -> Result<Self, AppError> {
         if limit == 0 || limit > MAX_IMAGE_BYTES {
             return Err(invalid());

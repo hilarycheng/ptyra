@@ -40,6 +40,54 @@ pub struct ImageStore {
     next_anonymous: u64,
 }
 impl ImageStore {
+    /// Return reclaimed pixel bytes; placements on another screen keep their image alive.
+    pub fn delete(
+        &mut self,
+        header: &super::Header,
+        screen: Screen,
+        transfer: &mut super::transfer::Assembler,
+    ) -> Result<usize, AppError> {
+        if header.get(b'a') != Some(i64::from(b'd')) {
+            return Err(invalid());
+        }
+        transfer.cancel();
+        let mode = u8::try_from(header.value(b'd', i64::from(b'a'))).map_err(|_| invalid())?;
+        let image = match mode {
+            b'i' | b'I' => Some(ImageId::Named(
+                u32::try_from(header.get(b'i').ok_or_else(invalid)?).map_err(|_| invalid())?,
+            )),
+            b'a' | b'A' => None,
+            _ => return Err(invalid()),
+        };
+        let placement = header
+            .get(b'p')
+            .filter(|id| *id != 0)
+            .map(|id| PlacementId::Named(id as u32));
+        let selected = |p: &Placement| match image {
+            Some(image) => p.image == image && placement.is_none_or(|id| p.id == id),
+            None => p.screen == screen,
+        };
+        let mut affected = [None; MAX_IMAGES];
+        for (index, (id, _)) in self.images.iter().enumerate() {
+            if image == Some(*id) && placement.is_none()
+                || self
+                    .placements
+                    .iter()
+                    .any(|p| p.image == *id && selected(p))
+            {
+                affected[index] = Some(*id);
+            }
+        }
+        self.placements.retain(|p| !selected(p));
+        let before = self.used_bytes();
+        if mode.is_ascii_uppercase() {
+            self.images.retain(|(id, _)| {
+                !affected.contains(&Some(*id)) || self.placements.iter().any(|p| p.image == *id)
+            });
+        }
+        Ok(before - self.used_bytes())
+    }
+
     pub fn new(tab: TabId, limits: ImageLimits, budget: usize) -> Result<Self, AppError> {
         if budget == 0 || budget > MAX_STORE_BYTES {
             return Err(invalid());
@@ -161,6 +209,84 @@ impl ImageStore {
 mod tests {
     use super::*;
     use crate::kitty::graphics::Header;
+    #[test]
+    fn kitty_delete_releases_memory() {
+        use crate::kitty::graphics::{GraphicsCommand, transfer::Assembler};
+        let mut store = ImageStore::new(TabId(1), ImageLimits::default(), 8).unwrap();
+        let first = store.put(image(Some(1), 1)).unwrap();
+        let second = store.put(image(Some(2), 2)).unwrap();
+        assert!(store.put(image(Some(3), 3)).is_err());
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        store.place(first, Some(7), Screen::Main, rect).unwrap();
+        store
+            .place(first, Some(8), Screen::Alternate, rect)
+            .unwrap();
+        store.place(second, Some(7), Screen::Main, rect).unwrap();
+        let mut transfer = Assembler::default();
+        transfer
+            .push(GraphicsCommand {
+                header: Header::parse(b"m=1").unwrap(),
+                payload: b"AAAA".to_vec(),
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .delete(
+                    &Header::parse(b"a=d,d=I,i=1,p=7").unwrap(),
+                    Screen::Main,
+                    &mut transfer
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(store.used_bytes(), 8);
+        assert_eq!(
+            store
+                .delete(
+                    &Header::parse(b"a=d,d=I,i=1").unwrap(),
+                    Screen::Main,
+                    &mut transfer
+                )
+                .unwrap(),
+            4
+        );
+        store.put(image(Some(3), 3)).unwrap();
+        assert_eq!(
+            store
+                .delete(
+                    &Header::parse(b"a=d,d=i,i=2").unwrap(),
+                    Screen::Main,
+                    &mut transfer
+                )
+                .unwrap(),
+            0
+        );
+        assert!(store.get(second).is_some());
+        assert_eq!(
+            store
+                .delete(
+                    &Header::parse(b"a=d,d=I,i=2").unwrap(),
+                    Screen::Main,
+                    &mut transfer
+                )
+                .unwrap(),
+            4
+        );
+        let complete = transfer
+            .push(GraphicsCommand {
+                header: Header::parse(b"s=1,v=1").unwrap(),
+                payload: b"AQIDBA==".to_vec(),
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(complete.bytes, [1, 2, 3, 4]);
+        assert_eq!(store.used_bytes(), 4);
+    }
     fn image(id: Option<u32>, color: u8) -> Image {
         let header = id.map_or_else(Header::default, |id| {
             Header::parse(format!("i={id}").as_bytes()).unwrap()
