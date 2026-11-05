@@ -387,7 +387,7 @@
   - **Dependencies:** `TASK-083`  |  **Unit Test:** `tab_title_is_sanitized`
   - **Done:** 不可信 Escape/控制字元不直接顯示
 
-- [ ] **TASK-090 — Inactive Tab 持續更新 PTY/Terminal state**
+- [x] **TASK-090 — Inactive Tab 持續更新 PTY/Terminal state**
   - **Dependencies:** `TASK-085`, `TASK-026`  |  **Unit Test:** `inactive_tab_drains_output`
   - **Done:** 隱藏 Tab 不阻塞 child process
 

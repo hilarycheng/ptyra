@@ -1,5 +1,7 @@
 //! Ordered, bounded ownership of independent Tab state. No platform I/O in registry operations.
 pub mod bar;
+#[cfg(target_os = "linux")]
+pub mod output;
 mod title;
 use crate::{
     TabId,
