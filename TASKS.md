@@ -451,7 +451,7 @@
   - **Dependencies:** `TASK-017`, `TASK-038`  |  **Unit Test:** `idle_does_not_schedule_unneeded_frames`
   - **Done:** event-loop 無 busy spin
 
-- [ ] **TASK-105 — 資源計算按 Tab 分配、有上限**
+- [x] **TASK-105 — 資源計算按 Tab 分配、有上限**
   - **Dependencies:** `TASK-083`, `TASK-097`  |  **Unit Test:** `tab_budget_rejects_overallocation`
   - **Done:** 新增 Tab 不造成無界 cache
 

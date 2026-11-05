@@ -29,6 +29,20 @@ const CORE_HISTORY_CACHE_LINES: usize = 1_000;
 pub const MAX_OSC_BYTES: usize = 4096;
 pub const MAX_COMBINING_MARKS: usize = 64;
 
+pub(crate) fn cell_reservation(rows: u16, columns: u16, history: usize) -> Option<usize> {
+    let screen = usize::from(rows) * usize::from(columns);
+    if rows == 0 || columns < 2 || screen > MAX_GRID_CELLS || history > MAX_SCROLLBACK_LINES {
+        return None;
+    }
+    let spare = if history == 0 {
+        0
+    } else {
+        CORE_HISTORY_CACHE_LINES
+    };
+    let total = 2 * screen + (history + spare) * usize::from(columns);
+    (total <= MAX_TERMINAL_CELLS).then_some(total)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalError {
     pub tab: TabId,
@@ -80,23 +94,7 @@ impl Terminal {
             tab,
             error: AppError::new(Component::Terminal, ErrorKind::InvalidInput),
         };
-        let screen_cells = size.rows * size.columns;
-        if rows == 0
-            || columns < 2
-            || screen_cells > MAX_GRID_CELLS
-            || scrollback_lines > MAX_SCROLLBACK_LINES
-        {
-            return Err(invalid());
-        }
-        let spare_rows = if scrollback_lines == 0 {
-            0
-        } else {
-            CORE_HISTORY_CACHE_LINES
-        };
-        let total_cells = 2 * screen_cells + (scrollback_lines + spare_rows) * size.columns;
-        if total_cells > MAX_TERMINAL_CELLS {
-            return Err(invalid());
-        }
+        cell_reservation(rows, columns, scrollback_lines).ok_or_else(invalid)?;
         let events = ClipboardEvents {
             tab,
             pending: Rc::new(RefCell::new([None, None])),

@@ -15,6 +15,8 @@ use crate::{
 use std::io::ErrorKind;
 
 pub const MAX_TABS: usize = 64;
+/// Reserved grid/history slots, not measured bytes; glyph caches stay outside Tab ownership.
+pub const MAX_TOTAL_TAB_CELLS: usize = 8_000_000;
 
 pub enum TabDirection {
     Next,
@@ -54,6 +56,7 @@ pub struct Tab<P> {
     dirty: bool,
     preedit: Option<crate::ime::preedit::PreeditState>,
     exit_status: Option<std::process::ExitStatus>,
+    reserved_cells: usize,
 }
 
 impl<P> Tab<P> {
@@ -105,6 +108,10 @@ impl<P> Default for TabRegistry<P> {
 }
 
 impl<P: TabPty> TabRegistry<P> {
+    pub fn reserved_cells(&self) -> usize {
+        self.entries.iter().map(|tab| tab.reserved_cells).sum()
+    }
+
     /// Keep the PTY for final output drainage; child exit never closes other Tabs.
     pub fn apply_effect(&mut self, effect: &crate::AppEffect) -> bool {
         let crate::AppEffect::PtyExited { tab, status } = effect else {
@@ -150,6 +157,12 @@ impl<P: TabPty> TabRegistry<P> {
         if self.next_id.is_none_or(|next| id.0 < next) || self.entries.len() >= MAX_TABS {
             return Err(AppError::new(Component::Terminal, ErrorKind::InvalidInput));
         }
+        let reserved_cells =
+            crate::terminal::cell_reservation(rows, columns, self.scrollback_lines)
+                .ok_or_else(|| AppError::new(Component::Terminal, ErrorKind::InvalidInput))?;
+        if reserved_cells > MAX_TOTAL_TAB_CELLS - self.reserved_cells() {
+            return Err(AppError::new(Component::Terminal, ErrorKind::OutOfMemory));
+        }
         self.entries
             .try_reserve(1)
             .map_err(|_| AppError::new(Component::Terminal, ErrorKind::OutOfMemory))?;
@@ -164,6 +177,7 @@ impl<P: TabPty> TabRegistry<P> {
             dirty: true,
             preedit: None,
             exit_status: None,
+            reserved_cells,
         });
         self.next_id = id.0.checked_add(1);
         if self.active.is_none() {

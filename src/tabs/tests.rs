@@ -1,5 +1,30 @@
 use super::*;
 
+#[test]
+fn tab_budget_rejects_overallocation() {
+    let mut tabs = TabRegistry::<FakePty>::default();
+    let per_tab = (2 * 2 + 5_000 + 1_000) * 300;
+    for _ in 0..4 {
+        tabs.new_tab(2, 300).unwrap();
+    }
+    assert_eq!(tabs.reserved_cells(), 4 * per_tab);
+    assert!(tabs.new_tab(2, 300).is_err());
+    assert_eq!(tabs.ids().count(), 4);
+    assert_eq!(tabs.reserved_cells(), 4 * per_tab);
+    tabs.close(TabId(2)).unwrap();
+    assert_eq!(tabs.reserved_cells(), 3 * per_tab);
+    assert_eq!(tabs.new_tab(2, 300).unwrap().tab, TabId(5));
+    assert!(tabs.new_tab(u16::MAX, u16::MAX).is_err());
+    assert_eq!(tabs.reserved_cells(), 4 * per_tab);
+    for id in [1, 3, 4, 5] {
+        tabs.close(TabId(id)).unwrap();
+    }
+    assert_eq!(tabs.reserved_cells(), 0);
+    let mut no_history = TabRegistry::<FakePty>::with_scrollback(0).unwrap();
+    no_history.new_tab(2, 300).unwrap();
+    assert_eq!(no_history.reserved_cells(), 1200);
+}
+
 #[cfg(unix)]
 #[test]
 fn unexpected_exit_is_per_tab() {
