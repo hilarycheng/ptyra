@@ -341,7 +341,7 @@
   - **Dependencies:** `TASK-070`, `TASK-074`  |  **Unit Test:** `stale_ime_transaction_is_ignored`
   - **Done:** 焦點已轉移時不可誤 Commit 去其他 Tab
 
-- [ ] **TASK-079 — 分離 IME 消費 key 與一般 PTY key**
+- [x] **TASK-079 — 分離 IME 消費 key 與一般 PTY key**
   - **Dependencies:** `TASK-012`, `TASK-072`  |  **Unit Test:** `ime_key_is_not_sent_twice`
   - **Done:** 中文組字唔重複輸入 key/character
 

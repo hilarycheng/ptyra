@@ -2,6 +2,7 @@
 
 pub mod cursor;
 mod focus;
+pub mod key;
 pub mod preedit;
 pub use focus::ImeFocus;
 
