@@ -23,6 +23,11 @@ pub(super) fn spawn_tab<P: TabPty>(
     Ok(request.tab)
 }
 
+/// A stale close does nothing; only the returned session is dropped/reaped.
+pub(super) fn close_tab<P: TabPty>(tabs: &mut TabRegistry<P>, id: TabId) -> bool {
+    tabs.close(id).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -31,6 +36,44 @@ mod tests {
         fn tab(&self) -> TabId {
             self.0
         }
+    }
+    #[test]
+    fn runtime_close_tab_preserves_other_sessions() {
+        use std::{cell::RefCell, rc::Rc};
+        struct Owned(TabId, Rc<RefCell<Vec<TabId>>>);
+        impl TabPty for Owned {
+            fn tab(&self) -> TabId {
+                self.0
+            }
+        }
+        impl Drop for Owned {
+            fn drop(&mut self) {
+                self.1.borrow_mut().push(self.0);
+            }
+        }
+        let dropped = Rc::new(RefCell::new(Vec::new()));
+        let mut tabs = TabRegistry::with_scrollback(0).unwrap();
+        for _ in 0..3 {
+            spawn_tab(&mut tabs, 2, 8, |request| {
+                Ok(Owned(request.tab, dropped.clone()))
+            })
+            .unwrap();
+        }
+        tabs.activate(TabId(2));
+        assert!(close_tab(&mut tabs, TabId(2)));
+        assert_eq!(*dropped.borrow(), [TabId(2)]);
+        assert_eq!(tabs.active(), Some(TabId(3)));
+        assert!(!close_tab(&mut tabs, TabId(2)));
+        assert!(!close_tab(&mut tabs, TabId(99)));
+        assert_eq!(tabs.ids().collect::<Vec<_>>(), [TabId(1), TabId(3)]);
+        close_tab(&mut tabs, TabId(3));
+        close_tab(&mut tabs, TabId(1));
+        assert!(tabs.active().is_none());
+        assert_eq!(tabs.reserved_cells(), 0);
+        assert_eq!(
+            spawn_tab(&mut tabs, 2, 8, |r| Ok(Owned(r.tab, dropped.clone()))).unwrap(),
+            TabId(4)
+        );
     }
     #[test]
     fn runtime_new_tab_spawns_one_session() {

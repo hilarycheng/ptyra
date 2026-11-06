@@ -142,6 +142,22 @@ fn read_keymap(file: &File, size: usize) -> Result<Keymap> {
 }
 
 impl Runtime {
+    pub(super) fn close_tab(&mut self, id: TabId) {
+        let previous = self.tabs.active();
+        if !super::sessions::close_tab(&mut self.tabs, id) {
+            return;
+        }
+        self.ready_pty.retain(|ready| *ready != id);
+        if let Some(active) = self.tabs.active() {
+            if previous != Some(active) {
+                self.input.retarget(active);
+            }
+        } else {
+            self.input.clear_focus();
+            self.running = false;
+        }
+        self.paint.dirty = true;
+    }
     pub(super) fn activate_tab(&mut self, id: TabId) {
         if self.tabs.activate(id) {
             self.input.retarget(id);
@@ -163,6 +179,11 @@ impl Runtime {
                         Ok(id) => self.activate_tab(id),
                         Err(error) => eprintln!("Ptyra: {error}"),
                     }
+                }
+            }
+            BindingAction::CloseTab => {
+                if let Some(id) = self.tabs.active() {
+                    self.close_tab(id);
                 }
             }
             BindingAction::NextTab | BindingAction::PreviousTab => {

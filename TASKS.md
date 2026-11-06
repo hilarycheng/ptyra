@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（132 已勾選；TASK-129、TASK-134–199 共 67 項未勾選）。
+**Total:** 199 atomic TASKS（133 已勾選；TASK-129、TASK-135–199 共 66 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -598,7 +598,7 @@
   - **Dependencies:** `TASK-085`, `TASK-086`, `TASK-091`, `TASK-130`, `TASK-131` | **Unit Test:** `runtime_tab_switch_retargets_keyboard`
   - **Done:** Next/Previous/direct activation 更新唯一 active Tab；取消舊 repeat，重新綁定 focus epoch；keyboard 只寫新 target，renderer 只畫 active grid；保留其他 Tab state，切換唔新開 Shell。
 
-- [ ] **TASK-134 — Runtime 關 Tab 只清理所屬 session**
+- [x] **TASK-134 — Runtime 關 Tab 只清理所屬 session**
   - **Dependencies:** `TASK-087`, `TASK-131`, `TASK-133` | **Unit Test:** `runtime_close_tab_preserves_other_sessions`
   - **Done:** CloseTab 移除對應 FD、回收 child 同該 Tab resources；只選一個有效 successor；last Tab 關閉有明確退出行為；重複/stale close 唔誤殺其他 Shell，ID 不重用。
 
