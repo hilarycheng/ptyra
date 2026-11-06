@@ -488,6 +488,8 @@ impl Runtime {
         if self.tabs.active().is_none() {
             self.new_tab(size)?;
         }
+        self.tabs
+            .set_cell_pixels((self.raster.cell_width, self.raster.cell_height));
         match self.tabs.resize_all(size.rows, size.columns) {
             Ok(changed) => {
                 self.paint.dirty |= changed;

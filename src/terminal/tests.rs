@@ -929,3 +929,148 @@ fn core_reply_overflow_is_bounded_atomic_and_recovers() {
         Point::new(Line(0), Column(0))
     );
 }
+
+#[test]
+fn runtime_queries_report_actual_colors_and_geometry() {
+    let query =
+        b"\x1b[c\x1b]10;?\x07\x1b]11;?\x1b\\\x1b]4;1;?;16;?;231;?;255;?\x07\x1b[14t\x1b[18t\x1b[5n";
+    let expected = b"\x1b[?6c\x1b]10;rgb:d3d3/d7d7/cfcf\x07\x1b]11;rgb:1818/1818/1818\x1b\\\x1b]4;1;rgb:cccc/0000/0000\x07\x1b]4;16;rgb:0000/0000/0000\x07\x1b]4;231;rgb:ffff/ffff/ffff\x07\x1b]4;255;rgb:eeee/eeee/eeee\x07\x1b[4;84;144t\x1b[8;4;16t\x1b[0n";
+    for split in 0..=query.len() {
+        let mut term = terminal(7);
+        term.set_cell_pixels((9, 21));
+        feed(&mut term, &query[..split]);
+        feed(&mut term, &query[split..]);
+        assert_eq!(
+            term.take_core_replies(),
+            (expected.to_vec(), false),
+            "split {split}"
+        );
+        assert_eq!(term.take_core_replies(), (Vec::new(), false));
+    }
+    for ending in [b"\x07".as_slice(), b"\x1b\\", b"\x18", b"\x1a"] {
+        for ignored in [b"".as_slice(), b"\0\t"] {
+            let mut term = terminal(7);
+            let input = [b"\x1b]", ignored, b"4;1;?;1;#123456;1;?", ending].concat();
+            for byte in input {
+                feed(&mut term, &[byte]);
+            }
+            let terminator = if ending == b"\x07" {
+                b"\x07".as_slice()
+            } else {
+                b"\x1b\\"
+            };
+            let expected = [
+                b"\x1b]4;1;rgb:cccc/0000/0000",
+                terminator,
+                b"\x1b]4;1;rgb:1212/3434/5656",
+                terminator,
+            ]
+            .concat();
+            assert_eq!(term.take_core_replies(), (expected, false));
+        }
+    }
+    let mut term = terminal(8);
+    // No actual raster metrics means no fabricated pixel geometry.
+    feed(&mut term, b"\x1b[14t\x1b[18t");
+    assert_eq!(term.take_core_replies().0, b"\x1b[8;4;16t");
+    term.set_cell_pixels((10, 20));
+    term.resize(3, 12).unwrap();
+    feed(&mut term, b"\x1b[14t\x1b[18t");
+    assert_eq!(term.take_core_replies().0, b"\x1b[4;60;120t\x1b[8;3;12t");
+    // Color changes/queries/resets in one PTY read resolve before the next sequence.
+    feed(
+        &mut term,
+        b"\x1b]4;1;#123456\x07\x1b]4;1;?\x07\x1b]104;1\x07\x1b]4;1;?\x07\x1b]12;?\x07",
+    );
+    assert_eq!(term.take_core_replies().0, b"\x1b]4;1;rgb:1212/3434/5656\x07\x1b]4;1;rgb:cccc/0000/0000\x07\x1b]12;rgb:eeee/eeee/ecec\x07");
+    // Clipboard load is never an authorized query, even with OSC write enabled.
+    term.set_osc52_write_enabled(true).unwrap();
+    feed(
+        &mut term,
+        b"\x1b]52;c;?\x07\x1b]52;p;?\x07\x1b[15t\x1b[16t\x1b]4;999;?\x07",
+    );
+    assert_eq!(term.take_core_replies(), (Vec::new(), false));
+    for cell in [(0, 1), (1, 0), (u32::MAX, 1), (65535, 65535)] {
+        term.set_cell_pixels(cell);
+        feed(&mut term, b"\x1b[14t");
+        assert_eq!(term.take_core_replies(), (Vec::new(), false));
+    }
+    // Synthetic events also enforce a bounded formatter queue and reject unknown colors.
+    let core = term.core.as_ref().unwrap();
+    use std::sync::Arc;
+    core.events.send_event(Event::ColorRequest(
+        usize::MAX,
+        Arc::new(|_| panic!("unknown color")),
+    ));
+    core.events.send_event(Event::ClipboardLoad(
+        ClipboardType::Clipboard,
+        Arc::new(|_| panic!("clipboard read")),
+    ));
+    core.answer_queries();
+    assert_eq!(term.take_core_replies(), (Vec::new(), false));
+    let core = term.core.as_ref().unwrap();
+    for _ in 0..=queries::MAX_QUERY_EVENTS {
+        core.events
+            .send_event(Event::ColorRequest(1, Arc::new(|_| "unused".into())));
+    }
+    assert_eq!(
+        core.events.queries.borrow().len(),
+        queries::MAX_QUERY_EVENTS
+    );
+    core.answer_queries();
+    assert_eq!(term.take_core_replies(), (Vec::new(), true));
+    term.set_cell_pixels((9, 21));
+    let queries = b"\x1b]10;?\x07".repeat(1000);
+    for _ in 0..3 {
+        feed(&mut term, &queries);
+    }
+    let (bytes, overflow) = term.take_core_replies();
+    assert!(overflow);
+    assert!(bytes.len() <= MAX_CORE_REPLY_BYTES);
+    assert!(
+        bytes
+            .chunks(b"\x1b]10;rgb:d3d3/d7d7/cfcf\x07".len())
+            .all(|chunk| chunk == b"\x1b]10;rgb:d3d3/d7d7/cfcf\x07")
+    );
+    feed(&mut term, b"\x1b[14t");
+    assert_eq!(
+        term.take_core_replies(),
+        (b"\x1b[4;63;108t".to_vec(), false)
+    );
+}
+
+#[test]
+fn terminal_palette_dispatch_matches_vte_boundary() {
+    use alacritty_terminal::vte::{Parser, Perform};
+    #[derive(Default)]
+    struct Observe(bool);
+    impl Perform for Observe {
+        fn osc_dispatch(&mut self, params: &[&[u8]], _: bool) {
+            self.0 = params.len() > 1 && params[0] == b"4";
+        }
+    }
+    for byte in 0..=u8::MAX {
+        for input in [
+            vec![0x1b, byte, b']', b'4', b';', b'1', b';', b'?'],
+            vec![0x1b, b']', byte, b'4', b';', b'1', b';', b'?'],
+            vec![0x1b, b']', b'4', byte, b';', b'1', b';', b'?'],
+        ] {
+            for end in [0x07, 0x18, 0x1a, 0x1b] {
+                let mut parser = Parser::new();
+                let mut observer = Observe::default();
+                parser.advance(&mut observer, &input);
+                observer.0 = false;
+                let mut guard = OscLimit::Ground;
+                for b in &input {
+                    assert!(guard.accept(*b));
+                }
+                let dispatch = guard.palette_dispatch(end);
+                parser.advance(&mut observer, &[end]);
+                assert_eq!(
+                    dispatch, observer.0,
+                    "byte={byte}, end={end}, input={input:?}"
+                );
+            }
+        }
+    }
+}

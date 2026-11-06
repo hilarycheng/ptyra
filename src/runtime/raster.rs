@@ -2,20 +2,17 @@ use super::Result;
 use crate::{
     config::Config,
     font::cache::{GlyphCache, GlyphKey},
+    renderer::palette::color,
     terminal::Terminal,
 };
 use ab_glyph::{Font, FontVec, ScaleFont, point};
 use alacritty_terminal::{
-    term::{cell::Flags, color::Colors},
+    term::cell::Flags,
     vte::ansi::{Color, CursorShape},
 };
 use std::{fs::File, io::Read, process::Command};
 
 const MAX_FONT_BYTES: u64 = 32 * 1024 * 1024;
-const ANSI: [u32; 16] = [
-    0x181818, 0xcc0000, 0x4e9a06, 0xc4a000, 0x3465a4, 0x75507b, 0x06989a, 0xd3d7cf, 0x555753,
-    0xef2929, 0x8ae234, 0xfce94f, 0x729fcf, 0xad7fa8, 0x34e2e2, 0xeeeeec,
-];
 
 pub(super) struct Raster {
     fonts: Vec<FontVec>,
@@ -222,6 +219,10 @@ impl Raster {
                 (x, y, self.cell_width, self.cell_height),
                 cursor.shape,
                 focused,
+                color(
+                    Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),
+                    colors,
+                ),
             );
         }
         Ok(())
@@ -233,6 +234,7 @@ fn paint_cursor(
     rect: (u32, u32, u32, u32),
     shape: CursorShape,
     focused: bool,
+    cursor_color: u32,
 ) {
     let (x, y, w, h) = rect;
     if shape == CursorShape::Hidden {
@@ -245,7 +247,7 @@ fn paint_cursor(
             (x, y, 1, h),
             (x + w - 1, y, 1, h),
         ] {
-            fill(pixels, size, rect, 0xeeeeec);
+            fill(pixels, size, rect, cursor_color);
         }
     } else if shape == CursorShape::Block {
         for row in y..y.saturating_add(h).min(size.1) {
@@ -257,9 +259,9 @@ fn paint_cursor(
             }
         }
     } else if shape == CursorShape::Beam {
-        fill(pixels, size, (x, y, 1, h), 0xeeeeec);
+        fill(pixels, size, (x, y, 1, h), cursor_color);
     } else if shape == CursorShape::Underline {
-        fill(pixels, size, (x, y + h - 1, w, 1), 0xeeeeec);
+        fill(pixels, size, (x, y + h - 1, w, 1), cursor_color);
     }
 }
 
@@ -289,33 +291,7 @@ fn load_font(pattern: &str) -> Result<FontVec> {
     }
     FontVec::try_from_vec_and_index(bytes, index).map_err(|_| "unsupported font file")
 }
-fn color(value: Color, colors: &Colors) -> u32 {
-    let index = match value {
-        Color::Spec(rgb) => {
-            return (u32::from(rgb.r) << 16) | (u32::from(rgb.g) << 8) | u32::from(rgb.b);
-        }
-        Color::Named(n) => n as usize,
-        Color::Indexed(n) => n as usize,
-    };
-    if let Some(rgb) = colors[index] {
-        return (u32::from(rgb.r) << 16) | (u32::from(rgb.g) << 8) | u32::from(rgb.b);
-    }
-    match index {
-        0..=15 => ANSI[index],
-        16..=231 => {
-            let n = index - 16;
-            let level = |v| if v == 0 { 0 } else { 55 + 40 * v as u32 };
-            (level(n / 36) << 16) | (level(n / 6 % 6) << 8) | level(n % 6)
-        }
-        232..=255 => {
-            let level = 8 + 10 * (index as u32 - 232);
-            level * 0x010101
-        }
-        257 => 0x181818,
-        259..=266 => ANSI[index - 259],
-        _ => 0xd3d7cf,
-    }
-}
+
 fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: u32) {
     let (x, y, w, h) = rect;
     for row in y..y.saturating_add(h).min(size.1) {
@@ -329,6 +305,43 @@ fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::renderer::palette::CURSOR;
+    #[test]
+    fn runtime_query_palette_matches_cell_and_cursor_pixels() {
+        let font = FontVec::try_from_vec(include_bytes!("../../tests/fixtures/demo.ttf").to_vec())
+            .unwrap();
+        let mut raster = Raster::new(vec![font], &Config::default()).unwrap();
+        let mut terminal = Terminal::with_scrollback(crate::TabId(1), 2, 8, 0).unwrap();
+        terminal.set_cell_pixels((raster.cell_width, raster.cell_height));
+        terminal.feed(crate::TabId(1), b"\x1b]4;1;#123456\x07\x1b]12;#abcdef\x07\x1b[41m \x1b[0m\x1b[6 q\x1b]4;1;?\x07\x1b]12;?\x07").unwrap();
+        let size = (8 * raster.cell_width, 2 * raster.cell_height);
+        let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
+        raster.draw(&terminal, size, &mut pixels, true).unwrap();
+        let pixel = |x: u32, y: u32| {
+            let offset = ((y * size.0 + x) * 4) as usize;
+            u32::from_ne_bytes(pixels[offset..offset + 4].try_into().unwrap())
+        };
+        assert_eq!(pixel(0, 0), 0xff123456);
+        assert_eq!(pixel(raster.cell_width, 0), 0xffabcdef);
+        assert_eq!(pixel(raster.cell_width * 2, 0), 0xff181818);
+        assert_eq!(
+            terminal.take_core_replies().0,
+            b"\x1b]4;1;rgb:1212/3434/5656\x07\x1b]12;rgb:abab/cdcd/efef\x07"
+        );
+        terminal
+            .feed(crate::TabId(1), b"\x1b]112\x07\x1b]12;?\x07")
+            .unwrap();
+        raster.draw(&terminal, size, &mut pixels, true).unwrap();
+        let offset = (raster.cell_width * 4) as usize;
+        assert_eq!(
+            u32::from_ne_bytes(pixels[offset..offset + 4].try_into().unwrap()),
+            0xffeeeeec
+        );
+        assert_eq!(
+            terminal.take_core_replies().0,
+            b"\x1b]12;rgb:eeee/eeee/ecec\x07"
+        );
+    }
     #[test]
     fn runtime_history_rows_use_display_offset() {
         use alacritty_terminal::grid::Scroll;
@@ -387,14 +400,35 @@ mod tests {
     #[test]
     fn runtime_cursor_matches_focus_and_shape() {
         let mut pixels = vec![0; 8 * 8 * 4];
-        paint_cursor(&mut pixels, (8, 8), (1, 1, 6, 6), CursorShape::Block, true);
+        paint_cursor(
+            &mut pixels,
+            (8, 8),
+            (1, 1, 6, 6),
+            CursorShape::Block,
+            true,
+            CURSOR,
+        );
         assert_ne!(&pixels[(3 * 8 + 3) * 4..(3 * 8 + 3) * 4 + 4], &[0; 4]);
         pixels.fill(0);
-        paint_cursor(&mut pixels, (8, 8), (1, 1, 6, 6), CursorShape::Block, false);
+        paint_cursor(
+            &mut pixels,
+            (8, 8),
+            (1, 1, 6, 6),
+            CursorShape::Block,
+            false,
+            CURSOR,
+        );
         assert_eq!(&pixels[(3 * 8 + 3) * 4..(3 * 8 + 3) * 4 + 4], &[0; 4]);
         assert_ne!(&pixels[(8 + 1) * 4..(8 + 1) * 4 + 4], &[0; 4]);
         pixels.fill(0);
-        paint_cursor(&mut pixels, (8, 8), (1, 1, 6, 6), CursorShape::Hidden, true);
+        paint_cursor(
+            &mut pixels,
+            (8, 8),
+            (1, 1, 6, 6),
+            CursorShape::Hidden,
+            true,
+            CURSOR,
+        );
         assert!(pixels.iter().all(|b| *b == 0));
     }
     #[test]

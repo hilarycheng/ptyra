@@ -1,6 +1,7 @@
 //! Renderer data contract; no PTY handles, Wayland objects or platform I/O.
 pub mod dirty;
 pub mod overlay;
+pub(crate) mod palette;
 
 use crate::{
     TabId, WindowId,

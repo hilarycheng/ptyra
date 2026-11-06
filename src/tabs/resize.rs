@@ -3,6 +3,13 @@ use crate::error::{AppError, Component};
 use std::io::ErrorKind;
 
 impl<P: TabPty> TabRegistry<P> {
+    /// Raster metrics remain valid even when a requested grid resize is rejected.
+    pub(crate) fn set_cell_pixels(&mut self, cell: (u32, u32)) {
+        for tab in &mut self.entries {
+            tab.terminal.set_cell_pixels(cell);
+        }
+    }
+
     /// Validate every grid and the combined reservation before mutating any Tab.
     pub fn resize_all(&mut self, rows: u16, columns: u16) -> Result<bool, AppError> {
         let invalid = || AppError::new(Component::Terminal, ErrorKind::InvalidInput);
@@ -68,6 +75,14 @@ mod tests {
         );
         assert!(!tabs.resize_all(20, 80).unwrap());
         let reservation = tabs.reserved_cells();
+        // Even under a rejected configure, a newly inserted Tab receives actual cell pixels.
+        tabs.insert(TabId(6), 2, 8).unwrap();
+        tabs.set_cell_pixels((9, 21));
+        assert!(tabs.resize_all(20, 150).is_err());
+        let newest = tabs.get_mut(TabId(6)).unwrap().terminal_mut();
+        newest.feed(TabId(6), b"\x1b[14t").unwrap();
+        assert_eq!(newest.take_core_replies().0, b"\x1b[4;42;72t");
+        tabs.close(TabId(6));
         assert!(tabs.resize_all(20, 150).is_err()); // Each fits, combined budget does not.
         assert!(tabs.resize_all(0, 80).is_err());
         assert_eq!(tabs.reserved_cells(), reservation);

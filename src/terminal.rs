@@ -1,4 +1,5 @@
 //! Stateful byte-to-grid adapter. No PTY, Wayland, clipboard or renderer I/O.
+mod queries;
 use crate::{
     TabId,
     clipboard::SelectionKind,
@@ -109,6 +110,7 @@ impl Terminal {
             pending: Rc::new(RefCell::new([None, None])),
             title: Rc::new(RefCell::new(None)),
             replies: Rc::new(RefCell::new(CoreReplies::default())),
+            queries: Rc::new(RefCell::new(Vec::new())),
         };
         Ok(Self {
             tab,
@@ -119,6 +121,7 @@ impl Terminal {
                 osc: OscLimit::Ground,
                 events,
                 scrollback_lines,
+                cell_pixels: None,
                 keyboard: crate::kitty::protocol::KeyboardProtocol::default(),
             }),
         })
@@ -152,6 +155,16 @@ impl Terminal {
         };
         let replies = std::mem::take(&mut *core.events.replies.borrow_mut());
         (replies.bytes, replies.overflow)
+    }
+
+    /// Runtime supplies actual raster cell pixels; absent/invalid metrics cannot fabricate a reply.
+    pub(crate) fn set_cell_pixels(&mut self, cell: (u32, u32)) {
+        if let Some(core) = &mut self.core {
+            core.cell_pixels = u16::try_from(cell.0)
+                .ok()
+                .zip(u16::try_from(cell.1).ok())
+                .filter(|&(width, height)| width != 0 && height != 0);
+        }
     }
 
     /// Untrusted OSC title, bounded by MAX_OSC_BYTES. Tab::refresh_title sanitizes it before display.
@@ -363,11 +376,21 @@ struct ClipboardEvents {
     pending: Rc<RefCell<[Option<Osc52Write>; 2]>>,
     title: Rc<RefCell<Option<String>>>,
     replies: Rc<RefCell<CoreReplies>>,
+    queries: Rc<RefCell<Vec<Event>>>,
 }
 
 impl EventListener for ClipboardEvents {
     fn send_event(&self, event: Event) {
         match event {
+            Event::ColorRequest(..) | Event::TextAreaSizeRequest(..) => {
+                let mut queries = self.queries.borrow_mut();
+                if queries.len() == queries::MAX_QUERY_EVENTS || queries.try_reserve(1).is_err() {
+                    self.replies.borrow_mut().overflow = true;
+                } else {
+                    queries.push(event);
+                }
+                return;
+            }
             Event::PtyWrite(text) => {
                 self.replies.borrow_mut().push(text.as_bytes());
                 return;
@@ -403,11 +426,13 @@ struct Core {
     events: ClipboardEvents,
     scrollback_lines: usize,
     keyboard: crate::kitty::protocol::KeyboardProtocol,
+    cell_pixels: Option<(u16, u16)>,
 }
 
 impl Core {
     fn feed(&mut self, bytes: &[u8]) -> bool {
         for byte in bytes {
+            let palette_dispatch = self.osc.palette_dispatch(*byte);
             if !self.osc.accept(*byte) {
                 return false;
             }
@@ -415,8 +440,20 @@ impl Core {
                 return false;
             }
             // Check after each parser step: REP can append up to u16::MAX marks.
-            self.parser
-                .advance(&mut self.term, std::slice::from_ref(byte));
+            if palette_dispatch {
+                self.parser.advance(
+                    &mut queries::PaletteDispatch {
+                        term: &mut self.term,
+                        events: &self.events,
+                        cell_pixels: self.cell_pixels,
+                    },
+                    std::slice::from_ref(byte),
+                );
+            } else {
+                self.parser
+                    .advance(&mut self.term, std::slice::from_ref(byte));
+            }
+            self.answer_queries();
             self.keyboard
                 .set_screen(self.term.mode().contains(TermMode::ALT_SCREEN));
             let grid = self.term.grid();
@@ -445,17 +482,44 @@ impl Core {
 enum OscLimit {
     Ground,
     Escape,
-    String(usize),
+    String(OscString),
+}
+
+struct OscString {
+    bytes: usize,
+    // 0: empty, 1: "4", 2: "4;", 3: another OSC command.
+    palette_prefix: u8,
 }
 
 impl OscLimit {
+    fn palette_dispatch(&self, byte: u8) -> bool {
+        matches!(
+            self,
+            Self::String(OscString {
+                palette_prefix: 2,
+                ..
+            })
+        ) && matches!(byte, 0x07 | 0x18 | 0x1a | 0x1b)
+    }
     fn accept(&mut self, byte: u8) -> bool {
         *self = match (&self, byte) {
             (_, 0x1b) => Self::Escape,
             (Self::String(_), 0x07 | 0x18 | 0x1a) => Self::Ground,
-            (Self::String(count), _) if *count >= MAX_OSC_BYTES => return false,
-            (Self::String(count), _) => Self::String(count + 1),
-            (Self::Escape, b']') => Self::String(0),
+            (Self::String(state), _) if state.bytes >= MAX_OSC_BYTES => return false,
+            (Self::String(state), _) => Self::String(OscString {
+                bytes: state.bytes + 1,
+                palette_prefix: match (state.palette_prefix, byte) {
+                    // These C0 bytes are ignored by VTE inside OSC, but still count toward the cap.
+                    (prefix, 0x00..=0x06 | 0x08..=0x17 | 0x19 | 0x1c..=0x1f) => prefix,
+                    (0, b'4') => 1,
+                    (1, b';') | (2, _) => 2,
+                    _ => 3,
+                },
+            }),
+            (Self::Escape, b']') => Self::String(OscString {
+                bytes: 0,
+                palette_prefix: 0,
+            }),
             (Self::Escape, 0x00..=0x17 | 0x19 | 0x1c..=0x1f | 0x7f..=0xff) => Self::Escape,
             _ => Self::Ground,
         };

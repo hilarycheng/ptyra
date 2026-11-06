@@ -245,6 +245,9 @@ def main():
                 keyboard.send(primary_pointer, 2, u32(0, 274, 0))
                 keyboard.send(primary_pointer, 4)
                 keyboard.sync()
+            if os.environ.get("PTYRA_TEST_QUERIES"):
+                from native_queries import check_queries
+                check_queries(root, env, keyboard, app, wait_until, ipc, nodes)
             if os.environ.get("PTYRA_TEST_REPLIES"):
                 from native_replies import check_replies
                 check_replies(root, keyboard, app, wait_until, ipc)
