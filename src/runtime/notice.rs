@@ -1,6 +1,8 @@
 //! Fixed recoverable outcomes only. No caller-supplied diagnostic or payload is retained.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Notice {
+    StreamStopped,
+    PtyStopped,
     Empty,
     NonText,
     TooLarge,
@@ -45,6 +47,12 @@ impl Notice {
     }
     pub fn message(self) -> &'static str {
         match self {
+            Self::StreamStopped => {
+                "Session stopped: invalid or oversized output. Close this Tab or open a new one."
+            }
+            Self::PtyStopped => {
+                "Session stopped: PTY I/O failed. Close this Tab or open a new one."
+            }
             Self::Empty => "Clipboard is empty.",
             Self::NonText => "Clipboard has no text.",
             Self::TooLarge => "Clipboard exceeds limit.",
@@ -163,6 +171,8 @@ mod tests {
         assert_eq!(notice, Notice::TransferFailed);
         assert!(!format!("{notice:?} {}", notice.message()).contains(secret));
         for notice in [
+            Notice::StreamStopped,
+            Notice::PtyStopped,
             Notice::Empty,
             Notice::NonText,
             Notice::TooLarge,

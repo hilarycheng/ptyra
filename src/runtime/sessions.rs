@@ -60,6 +60,89 @@ pub(super) fn active_title<P: TabPty>(tabs: &TabRegistry<P>) -> &str {
         .unwrap_or(crate::APP_NAME)
 }
 
+/// A stopped Tab's tiny diagnostic is not a replacement shell's initial size.
+pub(super) fn new_tab_size<P: TabPty>(
+    tabs: &TabRegistry<P>,
+    rows: u32,
+    columns: u32,
+) -> Option<crate::pty::PtySize> {
+    let tab = tabs.get(tabs.active()?)?;
+    let (rows, columns) = if tab.failure().is_some() {
+        tabs.initial_size(rows, columns)
+    } else {
+        let snapshot = tab.terminal().snapshot()?;
+        (snapshot.rows as u16, snapshot.columns as u16)
+    };
+    Some(crate::pty::PtySize { rows, columns })
+}
+
+/// EOF is normal only if the owned child can be reaped successfully.
+fn finish_owned_child<P>(
+    pty: &mut P,
+    mut wait: impl FnMut(
+        &mut P,
+    ) -> std::result::Result<
+        Option<std::process::ExitStatus>,
+        crate::error::AppError,
+    >,
+    terminate: impl FnOnce(&mut P) -> std::result::Result<(), crate::error::AppError>,
+) -> std::result::Result<Option<std::process::ExitStatus>, crate::error::AppError> {
+    let status = wait(pty)?;
+    if status.is_some() {
+        return Ok(status);
+    }
+    terminate(pty)?;
+    wait(pty)
+}
+pub(super) fn finish_child(
+    pty: &mut crate::pty::PtySession,
+) -> std::result::Result<Option<std::process::ExitStatus>, crate::error::AppError> {
+    finish_owned_child(
+        pty,
+        crate::pty::PtySession::try_wait,
+        crate::pty::PtySession::terminate,
+    )
+}
+
+impl super::Runtime {
+    pub(super) fn stop_session(&mut self, id: TabId, failure: crate::tabs::SessionFailure) {
+        self.tabs.stop_session(id, failure);
+        if self
+            .paste
+            .as_ref()
+            .is_some_and(|paste| paste.target.tab == id)
+        {
+            self.cancel_paste();
+        }
+        if self.tabs.active() == Some(id) {
+            self.cancel_pointer_drag();
+            self.input.retarget(id);
+        }
+        self.ready_pty.retain(|ready| *ready != id);
+        self.paint.dirty = true;
+        eprintln!("Ptyra Tab {}: {}", id.0, failure.title());
+    }
+    pub(super) fn flush_tab(&mut self, id: TabId) {
+        let result = self
+            .tabs
+            .get_mut(id)
+            .and_then(|tab| tab.pty_mut())
+            .filter(|pty| pty.wants_write())
+            .map(|pty| pty.flush_write());
+        match result {
+            Some(Err(_)) => self.stop_session(id, crate::tabs::SessionFailure::Io),
+            Some(Ok(result)) => {
+                if let crate::pty::PtyWriteStatus::Written(count) = result.status
+                    && let Some(trace) = &mut self.input_trace
+                {
+                    trace.add(4, count);
+                }
+            }
+            None => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,6 +150,56 @@ mod tests {
     impl TabPty for Fake {
         fn tab(&self) -> TabId {
             self.0
+        }
+    }
+    #[test]
+    fn runtime_bad_stream_does_not_stop_other_tabs_replacement_size() {
+        let mut tabs = TabRegistry::<Fake>::default();
+        spawn_tab(&mut tabs, 24, 80, |r| Ok(Fake(r.tab))).unwrap();
+        assert!(tabs.resize_all(38, 350).is_err());
+        tabs.stop_session(TabId(1), crate::tabs::SessionFailure::Stream);
+        assert!(tabs.resize_all(38, 350).is_err());
+        let size = new_tab_size(&tabs, 38, 350).unwrap();
+        assert_eq!(
+            size,
+            crate::pty::PtySize {
+                rows: 24,
+                columns: 80
+            }
+        );
+        let fresh = spawn_tab(&mut tabs, size.rows, size.columns, |r| Ok(Fake(r.tab))).unwrap();
+        assert!(tabs.resize_all(38, 350).is_err());
+        let snapshot = tabs.get(fresh).unwrap().terminal().snapshot().unwrap();
+        assert_eq!((snapshot.rows, snapshot.columns), (24, 80));
+        assert_eq!(tabs.get(TabId(1)).unwrap().title(), "Stopped: stream error");
+    }
+    #[test]
+    fn runtime_bad_stream_does_not_stop_other_tabs_cleanup_errors() {
+        use crate::error::{AppError, Component};
+        use std::{collections::VecDeque, io::ErrorKind, os::unix::process::ExitStatusExt};
+        let error = AppError::new(Component::Pty, ErrorKind::Other);
+        let status = std::process::ExitStatus::from_raw(0);
+        for (steps, kill_error, expected, kills) in [
+            (vec![Err(error)], false, Err(error), 0),
+            (vec![Ok(None)], true, Err(error), 1),
+            (vec![Ok(None), Err(error)], false, Err(error), 1),
+            (vec![Ok(Some(status))], false, Ok(Some(status)), 0),
+            (vec![Ok(None), Ok(Some(status))], false, Ok(Some(status)), 1),
+        ] {
+            let mut state = (VecDeque::from(steps), 0);
+            assert_eq!(
+                finish_owned_child(
+                    &mut state,
+                    |s| s.0.pop_front().unwrap(),
+                    |s| {
+                        s.1 += 1;
+                        if kill_error { Err(error) } else { Ok(()) }
+                    }
+                ),
+                expected
+            );
+            assert_eq!(state.1, kills);
+            assert!(state.0.is_empty());
         }
     }
     #[test]

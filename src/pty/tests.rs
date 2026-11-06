@@ -658,3 +658,115 @@ fn pty_spawn_rejects_invalid_request_before_opening() {
     assert_eq!(backend.calls, 0);
     assert_eq!(backend.resources.get(), 0);
 }
+
+#[test]
+fn runtime_bad_stream_does_not_stop_other_tabs_owned_io() {
+    use crate::tabs::{SessionFailure, TabRegistry};
+    for operation in ["read", "write", "resize"] {
+        let mut tabs = TabRegistry::with_scrollback(0).unwrap();
+        for id in [TabId(1), TabId(2)] {
+            tabs.insert(id, 2, 40).unwrap();
+            let pty = PtySession::spawn(PtySpawnRequest {
+                tab: id,
+                program: OsStr::new("/bin/sleep"),
+                args: &["60".into()],
+                cwd: Path::new("/tmp"),
+                size: PtySize {
+                    rows: 2,
+                    columns: 40,
+                },
+            })
+            .unwrap();
+            tabs.attach_pty(pty).ok().unwrap();
+        }
+        let good = tabs.get(TabId(2)).unwrap().pty().unwrap();
+        let good_pid = good.child_id();
+        let good_fd = std::fs::read_link(format!(
+            "/proc/self/fd/{}",
+            good.master_fd().unwrap().as_raw_fd()
+        ))
+        .unwrap();
+        let bad = tabs.get_mut(TabId(1)).unwrap().pty_mut().unwrap();
+        let bad_pid = bad.child_id();
+        // Keep the real PTY master alive until after this dispatch, so the child
+        // remains owned; inject an OS descriptor with deterministic I/O failure.
+        let original = bad.master.take().unwrap();
+        let (read_end, write_end) = nix::unistd::pipe().unwrap();
+        let (fault, peer) = if operation == "read" {
+            (write_end, read_end)
+        } else {
+            (read_end, write_end)
+        };
+        bad.master = Some(File::from(fault));
+        let bad_fd = format!("/proc/self/fd/{}", bad.master_fd().unwrap().as_raw_fd());
+        let bad_link = std::fs::read_link(&bad_fd).unwrap();
+        bad.enqueue_write(b"pending-private-input").unwrap();
+        match operation {
+            "read" => {
+                let mut result = None;
+                tabs.drain_ready(&[TabId(1)], &mut [0; MAX_PTY_READ_BYTES], |_, read| {
+                    result = Some(read)
+                })
+                .unwrap();
+                assert!(result.unwrap().is_err());
+            }
+            "write" => {
+                assert!(bad.flush_write().is_err());
+                assert_eq!(bad.pending_write_bytes(), b"pending-private-input".len());
+                tabs.stop_session(TabId(1), SessionFailure::Io);
+            }
+            "resize" => {
+                assert!(
+                    bad.resize(PtySize {
+                        rows: 3,
+                        columns: 40
+                    })
+                    .is_err()
+                );
+                tabs.stop_session(TabId(1), SessionFailure::Io);
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            tabs.get(TabId(1)).unwrap().failure(),
+            Some(SessionFailure::Io)
+        );
+        assert_ne!(std::fs::read_link(&bad_fd).ok(), Some(bad_link));
+        drop(peer);
+        assert!(
+            !Path::new(&format!("/proc/{bad_pid}")).exists(),
+            "failed direct child was not reaped"
+        );
+        drop(original);
+        assert_eq!(
+            std::fs::read_link(format!(
+                "/proc/self/fd/{}",
+                tabs.get(TabId(2))
+                    .unwrap()
+                    .pty()
+                    .unwrap()
+                    .master_fd()
+                    .unwrap()
+                    .as_raw_fd()
+            ))
+            .unwrap(),
+            good_fd
+        );
+        assert!(Path::new(&format!("/proc/{good_pid}")).exists());
+        let good = tabs.get_mut(TabId(2)).unwrap().pty_mut().unwrap();
+        good.enqueue_write(b"healthy").unwrap();
+        assert!(matches!(
+            good.flush_write().unwrap().status,
+            PtyWriteStatus::Written(7)
+        ));
+        assert!(
+            !tabs.stop_session(TabId(1), SessionFailure::Stream),
+            "stale failure is inert"
+        );
+        tabs.close(TabId(1));
+        tabs.close(TabId(2));
+        assert_eq!(tabs.reserved_cells(), 0);
+        assert_eq!(tabs.allocated_cells(), 0);
+        assert!(!Path::new(&format!("/proc/{good_pid}")).exists());
+    }
+}

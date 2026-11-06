@@ -35,7 +35,11 @@ impl<P: TabPty> TabRegistry<P> {
                 crate::terminal::cell_reservation(
                     rows.max(tab.reserved_rows),
                     columns.max(tab.reserved_columns),
-                    self.scrollback_lines,
+                    if tab.failure.is_some() {
+                        0
+                    } else {
+                        self.scrollback_lines
+                    },
                 )
                 .ok_or_else(invalid)
             })

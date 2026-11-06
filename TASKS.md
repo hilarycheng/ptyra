@@ -794,7 +794,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-023`, `TASK-132`, `TASK-150`, `TASK-160` | **Unit Test:** `runtime_input_backpressure_preserves_order_without_global_exit`
   - **Done:** keyboard、IME commit、paste 同 protocol reply 共用來源 Tab 嘅有界 ordered write policy；queue full/partial write 有明確 retry 或可見拒絕結果，不靜默遺失或重複 bytes；一個慢 child 唔令其他 Tabs/Wayland 停止。
 
-- [ ] **TASK-179 — 不可信 stream failure 隔離到來源 Tab**
+- [x] **TASK-179 — 不可信 stream failure 隔離到來源 Tab**
   - **Dependencies:** `TASK-099`, `TASK-101`, `TASK-106`, `TASK-132`, `TASK-135` | **Unit Test:** `runtime_bad_stream_does_not_stop_other_tabs`
   - **Done:** parser resource violation、oversized OSC 同 PTY I/O failure 只停止/標記所屬 session，保留可讀 metadata 同其他 Tabs；唔 retry 已部分消費嘅 bytes、唔轉送新 Tab；close/cleanup 後 budgets/FD/child 正確釋放。
 

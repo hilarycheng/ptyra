@@ -226,12 +226,11 @@ impl Runtime {
                 }
             }
             BindingAction::NewTab => {
-                let size = self
-                    .tabs
-                    .active()
-                    .and_then(|id| self.tabs.get(id))
-                    .and_then(|tab| tab.pty())
-                    .map(|pty| pty.current_size());
+                let size = super::sessions::new_tab_size(
+                    &self.tabs,
+                    (self.content_geometry().1.1 / self.raster.cell_height).max(1),
+                    (self.paint.buffer_size.0 / self.raster.cell_width).max(2),
+                );
                 if let Some(size) = size {
                     match self.new_tab(size) {
                         Ok(id) => self.activate_tab(id),

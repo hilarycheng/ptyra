@@ -200,16 +200,11 @@ struct Runtime {
     input_trace: Option<InputTrace>,
 }
 
-pub fn run(config: crate::config::Config) -> Result<()> {
-    let connection =
-        Connection::connect_to_env().map_err(|_| "cannot connect to Wayland compositor")?;
-    let mut queue = connection.new_event_queue();
-    let qh = queue.handle();
-    let raster = raster::Raster::load(&config)?;
+fn new_runtime(config: crate::config::Config, raster: raster::Raster) -> Result<Runtime> {
     let tabs = config
         .tab_registry()
         .map_err(|_| "invalid tab configuration")?;
-    let mut app = Runtime {
+    Ok(Runtime {
         compositor: None,
         shm: None,
         wm: None,
@@ -254,7 +249,16 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         input_trace: (std::env::var_os("PTYRA_TRACE_INPUT").as_deref()
             == Some(std::ffi::OsStr::new("1")))
         .then(InputTrace::default),
-    };
+    })
+}
+
+pub fn run(config: crate::config::Config) -> Result<()> {
+    let connection =
+        Connection::connect_to_env().map_err(|_| "cannot connect to Wayland compositor")?;
+    let mut queue = connection.new_event_queue();
+    let qh = queue.handle();
+    let raster = raster::Raster::load(&config)?;
+    let mut app = new_runtime(config, raster)?;
     connection.display().get_registry(&qh, ());
     queue
         .roundtrip(&mut app)
@@ -311,19 +315,8 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             trace.add(2, 1);
         }
         app.enqueue_input(bytes);
-        if let Some(pty) = app
-            .tabs
-            .active()
-            .and_then(|id| app.tabs.get_mut(id))
-            .and_then(|tab| tab.pty_mut())
-            && pty.wants_write()
-        {
-            let result = pty.flush_write().map_err(|_| "PTY write failed")?;
-            if let crate::pty::PtyWriteStatus::Written(count) = result.status
-                && let Some(trace) = &mut app.input_trace
-            {
-                trace.add(4, count);
-            }
+        if let Some(id) = app.tabs.active() {
+            app.flush_tab(id);
         }
         if let Some(trace) = &mut app.input_trace
             && let Some(tab) = app.tabs.active().and_then(|id| app.tabs.get(id))
@@ -446,7 +439,8 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                         PollFlags::POLLIN
                             | PollFlags::POLLOUT
                             | PollFlags::POLLERR
-                            | PollFlags::POLLHUP,
+                            | PollFlags::POLLHUP
+                            | PollFlags::POLLNVAL,
                     )
                     .then_some(id)
             })
@@ -605,8 +599,10 @@ impl Runtime {
         self.rejected_resize = None;
         let ids: Vec<_> = self.tabs.ids().collect();
         for id in ids {
-            if let Some(pty) = self.tabs.get_mut(id).and_then(|tab| tab.pty_mut()) {
-                pty.resize(size).map_err(|_| "PTY resize failed")?;
+            if let Some(pty) = self.tabs.get_mut(id).and_then(|tab| tab.pty_mut())
+                && pty.resize(size).is_err()
+            {
+                self.stop_session(id, crate::tabs::SessionFailure::Io);
             }
         }
         Ok(())
@@ -641,7 +637,14 @@ impl Runtime {
             })
             .map_err(|_| "PTY dispatch failed")?;
         for (id, result) in results {
-            match result.map_err(|_| "PTY read failed")?.status {
+            let result = match result {
+                Ok(result) => result,
+                Err(error) => {
+                    self.stop_session(id, crate::tabs::SessionFailure::from_error(error));
+                    continue;
+                }
+            };
+            match result.status {
                 PtyReadStatus::Data(_) => {
                     if self.tabs.enqueue_terminal_replies(id).is_err()
                         && self.clipboard_notice != Some(notice::Notice::ReplyRejected)
@@ -652,28 +655,25 @@ impl Runtime {
                     self.paint.dirty |= self.tabs.active() == Some(id);
                 }
                 PtyReadStatus::Eof => {
-                    let status = if let Some(pty) =
-                        self.tabs.get_mut(id).and_then(|tab| tab.pty_mut())
-                    {
-                        let mut status = pty.try_wait().map_err(|_| "child status unavailable")?;
-                        if status.is_none() {
-                            pty.terminate().map_err(|_| "child cleanup failed")?;
-                            status = pty.try_wait().map_err(|_| "child status unavailable")?;
+                    let status = self
+                        .tabs
+                        .get_mut(id)
+                        .and_then(|tab| tab.pty_mut())
+                        .map(sessions::finish_child)
+                        .transpose();
+                    let status = match status {
+                        Ok(status) => status.flatten(),
+                        Err(_) => {
+                            self.stop_session(id, crate::tabs::SessionFailure::Io);
+                            continue;
                         }
-                        status
-                    } else {
-                        None
                     };
                     self.exit_history.record(&mut self.tabs, id, status);
                     self.close_tab(id);
                 }
                 _ => {}
             }
-            if let Some(pty) = self.tabs.get_mut(id).and_then(|tab| tab.pty_mut())
-                && pty.wants_write()
-            {
-                pty.flush_write().map_err(|_| "PTY write failed")?;
-            }
+            self.flush_tab(id);
         }
         self.paint.dirty |= previous_titles
             .iter()
@@ -744,13 +744,22 @@ impl Runtime {
             .paste
             .as_ref()
             .and_then(|paste| paste.prompt_token(&self.input.focus));
+        let notice = self
+            .tabs
+            .get(active)
+            .and_then(|tab| tab.failure())
+            .map(|failure| match failure {
+                crate::tabs::SessionFailure::Stream => notice::Notice::StreamStopped,
+                crate::tabs::SessionFailure::Io => notice::Notice::PtyStopped,
+            })
+            .or(self.clipboard_notice);
         let overlay_height = if prompt.is_some() {
             paste::prompt_height(
                 self.paint.buffer_size,
                 (self.raster.cell_width, self.raster.cell_height),
             )
         } else {
-            self.clipboard_notice.map_or(0, |notice| {
+            notice.map_or(0, |notice| {
                 notice::height(
                     self.paint.buffer_size,
                     (self.raster.cell_width, self.raster.cell_height),
@@ -819,7 +828,7 @@ impl Runtime {
             )?;
         }
         if prompt.is_none()
-            && let Some(notice) = self.clipboard_notice
+            && let Some(notice) = notice
         {
             notice::draw(
                 &mut self.raster,
@@ -1269,3 +1278,6 @@ mod tests {
 
 #[cfg(test)]
 mod resource_tests;
+
+#[cfg(test)]
+mod failure_tests;

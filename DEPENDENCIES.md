@@ -614,3 +614,32 @@ upload/decoder integration or untrusted-font hardening is added by this task.
   a rendered notice and repeat cancellation, services another Tab and resize,
   then compares every accepted byte after recovery. Its optional `--ime` mode
   uses an owned input-method-v2 peer with the native text-input-v3 adapter.
+
+## Runtime stream failure isolation — TASK-179
+
+- Parser/resource violations (including oversized OSC and combining overflow),
+  PTY read/write/resize failures and child-status/cleanup errors stop only their
+  source session. Readiness remains bounded/fair and includes invalid descriptors;
+  stale readiness for a stopped session cannot read or retry bytes.
+- A failed Tab retains a fixed title and persistent readable diagnostic. Its old
+  core/history, pending protocol replies, accepted input/paste, PTY FD and owned
+  child are dropped. No partly consumed stream or partly written input is retried
+  or sent to another Tab, and diagnostics never include terminal/input payloads.
+- The stopped Tab has a minimal cursor-hidden, zero-history diagnostic core, with
+  its own checked resize accounting. It stays present even when it is the last
+  Tab; explicit Close closes it and New Tab starts a separate bounded session.
+  Normal EOF retains the existing close-after-drain policy. Failed-Tab slots and
+  diagnostic budgets are reclaimed on close; no automatic shell restart occurs.
+- Focus epoch/repeat and source-bound pending paste are cancelled on active failure.
+  The separate uncommitted TASK-129 adapter also disables IME on stopped sessions
+  and discards stale commits; this does not complete TASK-129 or extend Tab-1 IME.
+- Deterministic coverage: `cargo test --workspace runtime_bad_stream_does_not_stop_other_tabs`
+  exercises fair ready batches, stopped-source budgets, actual runtime write/resize
+  error handling, paste/repeat/focus invalidation, real owned child/FD disposal,
+  partial-write non-replay, EOF error classification and replacement-shell sizing
+  while an oversized viewport remains rejected.
+- Owned native coverage: `python3 tests/native_failure.py target/debug/ptyra osc`
+  and `combining` verify the rendered diagnostic, active/hidden failures,
+  live sibling input/output/resize, repeated close/reopen, exact non-frame descriptor
+  and child cleanup, bounded idle work, and final explicit close. These are isolated
+  headless Sway fixtures, not user-desktop acceptance or a long soak.

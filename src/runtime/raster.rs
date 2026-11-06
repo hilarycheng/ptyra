@@ -29,7 +29,7 @@ impl Raster {
     pub fn load(config: &Config) -> Result<Self> {
         Self::new(super::fonts::load(&config.font_family)?, config)
     }
-    fn new(fonts: Vec<FontVec>, config: &Config) -> Result<Self> {
+    pub(super) fn new(fonts: Vec<FontVec>, config: &Config) -> Result<Self> {
         config
             .validate()
             .map_err(|_| "invalid raster configuration")?;

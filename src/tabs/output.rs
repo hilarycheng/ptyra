@@ -63,8 +63,12 @@ impl<P: TabPtyRead> TabRegistry<P> {
             self.output_cursor %= self.entries.len();
             let id = self.entries[self.output_cursor].id;
             self.output_cursor += 1;
-            if ready.contains(&id) {
-                report(id, self.drain_output(id, buffer));
+            if ready.contains(&id) && self.entries[self.output_cursor - 1].pty.is_some() {
+                let result = self.drain_output(id, buffer);
+                if let Err(error) = result {
+                    self.stop_session(id, super::SessionFailure::from_error(error));
+                }
+                report(id, result);
                 reads += 1;
                 if reads == MAX_READS_PER_TICK {
                     break;
@@ -269,5 +273,108 @@ mod tests {
         assert!(tabs.drain_output(TabId(2), &mut buffer).is_err());
         tabs.get_mut(TabId(2)).unwrap().pty.as_mut().unwrap().tab = TabId(1);
         assert!(tabs.drain_output(TabId(2), &mut buffer).is_err());
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    use std::{cell::RefCell, rc::Rc};
+
+    struct Source {
+        id: TabId,
+        bad: bool,
+        calls: Rc<RefCell<Vec<TabId>>>,
+        dropped: Rc<RefCell<Vec<TabId>>>,
+    }
+    impl TabPty for Source {
+        fn tab(&self) -> TabId {
+            self.id
+        }
+    }
+    impl Drop for Source {
+        fn drop(&mut self) {
+            self.dropped.borrow_mut().push(self.id);
+        }
+    }
+    impl TabPtyRead for Source {
+        fn read_chunk(&mut self, buffer: &mut [u8]) -> Result<PtyReadResult, PtyReadError> {
+            self.calls.borrow_mut().push(self.id);
+            let bytes = if self.bad {
+                let mut bytes = b"prefix\x1b]2;".to_vec();
+                bytes.extend(std::iter::repeat_n(
+                    b'x',
+                    crate::terminal::MAX_OSC_BYTES + 1,
+                ));
+                bytes.extend_from_slice(b"\x07never replay\x1b[6n");
+                bytes
+            } else {
+                b"ok".to_vec()
+            };
+            buffer[..bytes.len()].copy_from_slice(&bytes);
+            Ok(PtyReadResult {
+                tab: self.id,
+                status: PtyReadStatus::Data(bytes.len()),
+            })
+        }
+    }
+    #[test]
+    fn runtime_bad_stream_does_not_stop_other_tabs() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let dropped = Rc::new(RefCell::new(Vec::new()));
+        let mut tabs = TabRegistry::with_scrollback(10).unwrap();
+        for id in 1..=6 {
+            tabs.insert(TabId(id), 3, 80).unwrap();
+            tabs.attach_pty(Source {
+                id: TabId(id),
+                bad: id == 1 || id == 4,
+                calls: calls.clone(),
+                dropped: dropped.clone(),
+            })
+            .ok()
+            .unwrap();
+        }
+        let ready: Vec<_> = (1..=6).map(TabId).collect();
+        let mut buffer = [0; MAX_FEED_BYTES];
+        let mut results = Vec::new();
+        assert_eq!(
+            tabs.drain_ready(&ready, &mut buffer, |id, result| results.push((id, result)))
+                .unwrap(),
+            4
+        );
+        assert!(results[0].1.is_err());
+        assert!(results[1].1.is_ok());
+        assert!(
+            tabs.get(TabId(1)).unwrap().pty().is_none(),
+            "failed source must release its PTY"
+        );
+        assert!(
+            tabs.get(TabId(1)).unwrap().terminal().snapshot().is_some(),
+            "failed active Tab stays drawable"
+        );
+        assert_eq!(*dropped.borrow(), [TabId(1), TabId(4)]);
+        for _ in 0..4 {
+            tabs.drain_ready(&ready, &mut buffer, |_, _| {}).unwrap();
+        }
+        assert_eq!(
+            calls.borrow().iter().filter(|id| **id == TabId(1)).count(),
+            1
+        );
+        assert_eq!(
+            calls.borrow().iter().filter(|id| **id == TabId(4)).count(),
+            1
+        );
+        assert!(
+            calls.borrow().contains(&TabId(6)),
+            "healthy sources remain fair"
+        );
+        assert!(tabs.resize_all(4, 60).unwrap());
+        assert_eq!(tabs.active(), Some(TabId(1)));
+        for id in ready {
+            tabs.close(id);
+        }
+        assert_eq!(tabs.reserved_cells(), 0);
+        assert_eq!(tabs.allocated_cells(), 0);
+        assert_eq!(dropped.borrow().len(), 6);
     }
 }

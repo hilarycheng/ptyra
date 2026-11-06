@@ -1,7 +1,9 @@
 //! Ordered, bounded ownership of independent Tab state. No platform I/O in registry operations.
 pub mod bar;
+mod failure;
 #[cfg(target_os = "linux")]
 pub mod output;
+pub use failure::SessionFailure;
 mod render;
 mod resize;
 mod routing;
@@ -62,6 +64,7 @@ pub struct Tab<P> {
     dirty: bool,
     preedit: Option<crate::ime::preedit::PreeditState>,
     exit_status: Option<std::process::ExitStatus>,
+    failure: Option<SessionFailure>,
     reserved_cells: usize,
     reserved_rows: u16,
     reserved_columns: u16,
@@ -220,6 +223,7 @@ impl<P: TabPty> TabRegistry<P> {
             dirty: true,
             preedit: None,
             exit_status: None,
+            failure: None,
             reserved_cells,
             reserved_rows: rows,
             reserved_columns: columns,
@@ -233,7 +237,10 @@ impl<P: TabPty> TabRegistry<P> {
 
     /// Return rejected sessions to the caller, rather than silently dropping a live child.
     pub fn attach_pty(&mut self, pty: P) -> Result<(), P> {
-        let Some(tab) = self.get_mut(pty.tab()).filter(|tab| tab.pty.is_none()) else {
+        let Some(tab) = self
+            .get_mut(pty.tab())
+            .filter(|tab| tab.pty.is_none() && tab.failure.is_none())
+        else {
             return Err(pty);
         };
         tab.pty = Some(pty);

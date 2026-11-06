@@ -960,3 +960,62 @@ fn runtime_input_backpressure_preserves_order_without_global_exit() {
     assert!(writer.output.ends_with(b"retry-new-key"));
     assert_eq!(second_writer.output, b"other-tab");
 }
+
+#[test]
+fn runtime_bad_stream_does_not_stop_other_tabs_partial_write() {
+    use crate::tabs::{SessionFailure, TabPty, TabRegistry};
+    struct Session(TabId, WriteQueue);
+    impl TabPty for Session {
+        fn tab(&self) -> TabId {
+            self.0
+        }
+    }
+    let mut tabs = TabRegistry::with_scrollback(0).unwrap();
+    for id in [TabId(1), TabId(2)] {
+        tabs.insert(id, 2, 40).unwrap();
+        tabs.attach_pty(Session(id, WriteQueue::default()))
+            .ok()
+            .unwrap();
+    }
+    let id = TabId(1);
+    let source = tabs.get_mut(id).unwrap().pty_mut().unwrap();
+    source
+        .1
+        .enqueue(id, true, b"prefix-private-suffix")
+        .unwrap();
+    source.1.reserve_paste(id, true).unwrap();
+    source
+        .1
+        .enqueue_paste(
+            id,
+            true,
+            &mut b"\x1b[200~private paste\x1b[201~".to_vec(),
+            true,
+        )
+        .unwrap();
+    let mut writer = FakeWriter::new([
+        Step::Accept(3),
+        Step::Error(io::Error::new(io::ErrorKind::BrokenPipe, "secret error")),
+    ]);
+    source.1.flush(id, Some(&mut writer)).unwrap();
+    assert_eq!(writer.output, b"pre");
+    let error = source.1.flush(id, Some(&mut writer)).unwrap_err();
+    assert!(error.pending > 0);
+    assert!(!format!("{error:?}").contains("secret"));
+    tabs.stop_session(id, SessionFailure::Io);
+    for _ in 0..8 {
+        assert!(!tabs.stop_session(id, SessionFailure::Io));
+    }
+    assert_eq!(
+        writer.calls, 2,
+        "neither written prefix nor accepted suffix can replay"
+    );
+    assert!(tabs.get(id).unwrap().pty().is_none());
+    tabs.activate(TabId(2));
+    let good = tabs.get_mut(TabId(2)).unwrap().pty_mut().unwrap();
+    good.1.enqueue(TabId(2), true, b"only-other-tab").unwrap();
+    let mut second = FakeWriter::new([Step::Accept(99)]);
+    good.1.flush(TabId(2), Some(&mut second)).unwrap();
+    assert_eq!(second.output, b"only-other-tab");
+    assert_eq!(writer.output, b"pre");
+}
