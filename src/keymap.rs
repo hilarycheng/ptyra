@@ -57,6 +57,8 @@ pub struct TranslatedKey {
     pub unshifted_keysyms: Vec<u32>,
     pub modifiers: Modifiers,
     pub num_lock: bool,
+    pub hyper: bool,
+    pub meta: bool,
     pub state: KeyState,
     pub repeatable: bool,
     pub(crate) focus_epoch: Arc<()>,
@@ -69,6 +71,8 @@ pub struct Keymap {
     keys: Vec<u32>,
     modifiers: Modifiers,
     num_lock_mask: u32,
+    hyper_mask: u32,
+    meta_mask: u32,
 }
 
 fn invalid() -> AppError {
@@ -134,16 +138,29 @@ impl Keymap {
             return Err(invalid());
         }
         keys.sort_unstable();
-        let num_lock_mask = map
-            .virtual_modifiers()
-            .find(|modifier| modifier.name() == "NumLock")
-            .map_or(0, |modifier| modifier.mask().0);
+        let named_mask = |name| {
+            map.virtual_modifiers()
+                .find(|modifier| modifier.name() == name)
+                .map_or(0, |modifier| modifier.mask().0)
+        };
+        let num_lock_mask = named_mask("NumLock");
+        // Common keymaps alias Meta to Alt and Hyper to Super; count each bit once.
+        let used = ModifierMask::SHIFT.0
+            | ModifierMask::LOCK.0
+            | ModifierMask::CONTROL.0
+            | ModifierMask::ALT.0
+            | ModifierMask::SUPER.0
+            | num_lock_mask;
+        let hyper_mask = named_mask("Hyper") & !used;
+        let meta_mask = named_mask("Meta") & !(used | hyper_mask);
         Ok(Self {
             epoch: Arc::new(()),
             lookup: map.to_builder().build_lookup_table(),
             keys,
             modifiers: Modifiers::default(),
             num_lock_mask,
+            hyper_mask,
+            meta_mask,
         })
     }
 
@@ -207,6 +224,8 @@ impl Keymap {
             unshifted_keysyms,
             modifiers: self.modifiers,
             num_lock: self.modifiers.effective() & self.num_lock_mask != 0,
+            hyper: self.modifiers.effective() & self.hyper_mask != 0,
+            meta: self.modifiers.effective() & self.meta_mask != 0,
             state: if repeat {
                 KeyState::Repeated
             } else if route.pressed {

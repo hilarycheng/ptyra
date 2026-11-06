@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（160 已勾選；TASK-129、TASK-162–199 共 39 項未勾選）。
+**Total:** 199 atomic TASKS（178 已勾選；TASK-129、TASK-175–176、TASK-182–199 共 21 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -804,7 +804,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-109`, `TASK-127`, `TASK-160` | **Unit Test:** `runtime_kitty_queries_drain_before_reply_queue_fills`
   - **Done:** `take_keyboard_reply()` 接入來源 PTY，包括同一 read chunk 多次 query；即使 enhancement 尚未啟用亦回覆真實 0 flags；重複 query 不因 runtime 漏 drain 而令第 33 次關閉 terminal；queue/backpressure 有界、錯誤不跨 Tab。
 
-- [ ] **TASK-181 — 定義可宣告 Kitty flags 嘅完整 key coverage**
+- [x] **TASK-181 — 定義可宣告 Kitty flags 嘅完整 key coverage**
   - **Dependencies:** `TASK-108`, `TASK-110`, `TASK-111`, `TASK-164` | **Unit Test:** `kitty_supported_flags_match_complete_encoder_coverage`
   - **Done:** 對擬宣告 subset 建立 printable/control/function/keypad/modified press-repeat-release byte fixtures，包括 Shift+Enter；補齊該 flags 要求嘅 encoding，未完成旗標仍拒絕/不宣告；唔因已有 bit definition 就開啟全 flags。
 

@@ -5,6 +5,10 @@ use crate::{
 };
 use kbvm::{Keysym, ModifierMask};
 
+/// Complete subset ready for TASK-182 negotiation; runtime still advertises zero.
+/// Event primitives remain testable, but flag 2 needs press/release ownership first.
+pub const READY_KEYBOARD_FLAGS: KeyboardFlags = KeyboardFlags::DISAMBIGUATE_ESC_CODES;
+
 pub struct KeyEncoder {
     pub flags: KeyboardFlags,
     pub application_cursor: bool,
@@ -43,9 +47,8 @@ pub fn encode_key(
     application_keypad: bool,
 ) -> Result<Vec<u8>, AppError> {
     let unsupported = || AppError::new(Component::Terminal, std::io::ErrorKind::Unsupported);
-    if !(flags - (KeyboardFlags::DISAMBIGUATE_ESC_CODES | KeyboardFlags::REPORT_EVENT_TYPES))
-        .is_empty()
-    {
+    // TASK-111's event primitive is retained, not advertised as a complete lifecycle.
+    if !(flags - (READY_KEYBOARD_FLAGS | KeyboardFlags::REPORT_EVENT_TYPES)).is_empty() {
         return Err(unsupported());
     }
     let report_events = flags.contains(KeyboardFlags::REPORT_EVENT_TYPES);
@@ -65,13 +68,16 @@ pub fn encode_key(
     if flags.is_empty() && super_key {
         return Err(unsupported());
     }
+    // Named Hyper/Meta state must not change the established legacy byte contract.
+    let hyper = !flags.is_empty() && key.hyper;
+    let meta = !flags.is_empty() && key.meta;
+    let enhanced = flags.contains(KeyboardFlags::DISAMBIGUATE_ESC_CODES);
     let (mut symbol, mut base) = (*symbol, *base);
-    if flags.is_empty()
-        && let Some((normal, suffix)) = keypad(symbol)
-    {
+    if !enhanced && let Some((normal, suffix)) = keypad(symbol) {
         // NumLock comes from the actual XKB mapping, never an assumed Mod2 bit.
         // Shift/Ctrl keypad combinations use the normal modified-navigation path.
-        if application_keypad
+        if flags.is_empty()
+            && application_keypad
             && !key.num_lock
             && !modifiers.shift()
             && !modifiers.ctrl()
@@ -90,12 +96,51 @@ pub fn encode_key(
             keypad(base).map_or(base, |mapping| mapping.0)
         };
     }
+    let non_lock_mods = u16::from(modifiers.shift())
+        + 2 * u16::from(modifiers.alt())
+        + 4 * u16::from(modifiers.ctrl())
+        + 8 * u16::from(super_key)
+        + 16 * u16::from(hyper)
+        + 32 * u16::from(meta);
     let mods = 1
-        + u8::from(modifiers.shift())
-        + 2 * u8::from(modifiers.alt())
-        + 4 * u8::from(modifiers.ctrl())
-        + 8 * u8::from(super_key);
-    let enhanced = flags.contains(KeyboardFlags::DISAMBIGUATE_ESC_CODES);
+        + non_lock_mods
+        + if flags.is_empty() {
+            0
+        } else {
+            64 * u16::from(modifiers.effective() & ModifierMask::LOCK.0 != 0)
+                + 128 * u16::from(key.num_lock)
+        };
+    let shortcut = modifiers.ctrl() || modifiers.alt() || super_key || hyper || meta;
+    // Lock/modifier key events require flag 8, even though their state is in CSI modifiers.
+    if (0xffe1..=0xffee).contains(&symbol)
+        || matches!(symbol, 0xff7e | 0xff7f | 0xff14 | 0xfe03 | 0xfe11)
+    {
+        return Ok(Vec::new());
+    }
+    let resolved_keypad = keypad(symbol).is_some();
+    // XKB keypad aliases without dedicated protocol identities keep their ordinary identity.
+    if matches!(symbol, 0xff80 | 0xff89 | 0xff91..=0xff94) {
+        symbol = keypad(symbol).unwrap().0;
+        base = keypad(base).map_or(base, |mapping| mapping.0);
+    }
+    if enhanced {
+        let text = keypad(symbol)
+            .and_then(|(normal, _)| char::from_u32(normal).filter(char::is_ascii))
+            .or_else(|| Keysym(symbol).char())
+            .filter(|ch| !ch.is_control());
+        if !shortcut && let Some(text) = text {
+            return Ok(if key.state == KeyState::Released {
+                Vec::new()
+            } else {
+                text.to_string().into_bytes()
+            });
+        }
+        // Text follows the resolved level; non-text reports use the unshifted key.
+        // Keypad identity instead retains the XKB NumLock/Shift navigation result.
+        if !resolved_keypad {
+            symbol = base;
+        }
+    }
     let control = match symbol {
         0xff0d => Some(13),
         0xff09 | 0xfe20 => Some(9),
@@ -104,10 +149,13 @@ pub fn encode_key(
         _ => None,
     };
     if let Some(code) = control {
-        if key.state == KeyState::Released && code != 27 {
+        if key.state == KeyState::Released && code != 27 && non_lock_mods == 0 {
             return Ok(Vec::new());
         }
-        if enhanced && (code == 27 || mods != 1) || super_key || code == 27 && event.is_some() {
+        if (enhanced || report_events) && non_lock_mods != 0
+            || enhanced && code == 27
+            || code == 27 && report_events && (event.is_some() || mods != 1)
+        {
             return Ok(csi(code, mods, event, 'u'));
         }
         let mut bytes = if code == 9 && modifiers.shift() {
@@ -126,7 +174,7 @@ pub fn encode_key(
     }
     if let Some((number, suffix, ss3)) = functional(symbol, enhanced || report_events) {
         return Ok(
-            if !enhanced
+            if flags.is_empty()
                 && event.is_none()
                 && mods == 1
                 && ss3
@@ -138,10 +186,6 @@ pub fn encode_key(
             },
         );
     }
-    // Modifier-only events have no legacy byte representation.
-    if (0xffe1..=0xffee).contains(&symbol) || matches!(symbol, 0xff7f | 0xff14) {
-        return Ok(Vec::new());
-    }
     let text = Keysym(symbol)
         .char()
         .filter(|ch| !ch.is_control())
@@ -151,8 +195,11 @@ pub fn encode_key(
         .filter(|ch| !ch.is_control())
         .ok_or_else(unsupported)?;
     if super_key
+        || hyper
+        || meta
         || !flags.is_empty() && modifiers.ctrl() && modifiers.shift()
-        || enhanced && (modifiers.ctrl() || modifiers.alt())
+        || enhanced
+        || report_events && shortcut && (event.is_some() || !base.is_ascii() || mods > 64)
     {
         return Ok(csi(base as u32, mods, event, 'u'));
     }
@@ -166,7 +213,7 @@ pub fn encode_key(
             '[' | '3' => '\x1b',
             '\\' | '4' => '\x1c',
             ']' | '5' => '\x1d',
-            '^' | '6' => '\x1e',
+            '^' | '6' | '~' => '\x1e',
             '_' | '7' | '/' => '\x1f',
             '8' | '?' => '\x7f',
             _ => text,
@@ -212,7 +259,7 @@ fn keypad(symbol: u32) -> Option<(u32, u8)> {
     })
 }
 
-fn csi(number: u32, mods: u8, event: Option<u8>, suffix: char) -> Vec<u8> {
+fn csi(number: u32, mods: u16, event: Option<u8>, suffix: char) -> Vec<u8> {
     if let Some(event) = event {
         return format!("\x1b[{number};{mods}:{event}{suffix}").into_bytes();
     }
@@ -227,6 +274,49 @@ fn csi(number: u32, mods: u8, event: Option<u8>, suffix: char) -> Vec<u8> {
 }
 
 fn functional(symbol: u32, enhanced: bool) -> Option<(u32, char, bool)> {
+    if enhanced {
+        let number = match symbol {
+            0xffca..=0xffe0 => Some(57376 + symbol - 0xffca),
+            0xff61 => Some(57361),
+            0xff13 | 0xff6b => Some(57362),
+            0xff67 => Some(57363),
+            0xffb0..=0xffb9 => Some(57399 + symbol - 0xffb0),
+            0xffae => Some(57409),
+            0xffaf => Some(57410),
+            0xffaa => Some(57411),
+            0xffad => Some(57412),
+            0xffab => Some(57413),
+            0xff8d => Some(57414),
+            0xffbd => Some(57415),
+            0xffac => Some(57416),
+            0xff96 => Some(57417),
+            0xff98 => Some(57418),
+            0xff97 => Some(57419),
+            0xff99 => Some(57420),
+            0xff9a => Some(57421),
+            0xff9b => Some(57422),
+            0xff95 => Some(57423),
+            0xff9c => Some(57424),
+            0xff9e => Some(57425),
+            0xff9f => Some(57426),
+            0xff9d => return Some((1, 'E', false)),
+            0x1008ff14 => Some(57428),
+            0x1008ff31 => Some(57429),
+            0x1008ff15 => Some(57432),
+            0x1008ff97 => Some(57433),
+            0x1008ff3e => Some(57434),
+            0x1008ff17 => Some(57435),
+            0x1008ff16 => Some(57436),
+            0x1008ff1c => Some(57437),
+            0x1008ff11 => Some(57438),
+            0x1008ff13 => Some(57439),
+            0x1008ff12 => Some(57440),
+            _ => None,
+        };
+        if let Some(number) = number {
+            return Some((number, 'u', false));
+        }
+    }
     Some(match symbol {
         0xff52 => (1, 'A', true),
         0xff54 => (1, 'B', true),
@@ -533,3 +623,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "encode_coverage.rs"]
+mod coverage;
