@@ -100,3 +100,9 @@
 - Dependencies satisfied. An injectable monotonic clock groups up to three clicks within 400 ms and a 4-pixel tolerance. Double click uses the existing Unicode word policy; triple click selects the complete soft-wrapped logical line. Timeout, pointer displacement, focus/tab cancellation and screen identity reset the count. A fourth click starts a new single-cell drag.
 - `runtime_click_count_selects_word_or_line`: initially failed, then PASS, including ASCII/CJK/combining, wrapped rows, timeout, displacement, Tab and screen resets. Full workspace, fmt and Clippy pass both combined and T129-free staged trees.
 - Owned-headless native matrix with `PTYRA_TEST_POINTER=1 PTYRA_TEST_SELECTION=1 PTYRA_TEST_MULTI_CLICK=1`: PASS on both trees, checking actual ASCII word, whole CJK and multi-row logical-line selection. Opt-in tracing contains coordinates/cell geometry only, not selected text. Desktop acceptance remains NOT RUN.
+
+## TASK-143
+
+- Dependencies satisfied. The active Tab's whole-glyph selection range is attached to a renderer snapshot and consumed by the existing independent overlay iterator. A bounded RGB inversion layer preserves glyph pixels and alpha; it never changes terminal cells, cursor, or PTY input. Cleared selections redraw from the base frame.
+- `runtime_selection_overlay_matches_range`: initially failed, then PASS. Tests cover two-cell CJK spans, unchanged outside pixels/alpha/cursor/text, clearing and malformed buffer size. Workspace, fmt and Clippy PASS in both worktree and T129-free staged tree.
+- Native pointer/multi-click matrix plus `PTYRA_TEST_SELECTION_PIXELS=1`: PASS on both trees. Compositor pixels verify the full two-cell highlight; `/tmp/ptyra-t143-clean-selection.png` visually inspected. This is headless Sway evidence, not desktop/font/IME acceptance.

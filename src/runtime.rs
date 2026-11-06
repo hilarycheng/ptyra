@@ -4,6 +4,7 @@ mod keyboard;
 mod pointer;
 mod raster;
 mod selection;
+mod selection_overlay;
 mod sessions;
 use crate::pty::{PtyReadStatus, PtySession, PtySize, PtySpawnRequest};
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
@@ -524,16 +525,22 @@ impl Runtime {
         self.pixels.resize(bytes, 0);
         let (bar_height, content_size) = self.content_geometry();
         let content_offset = (bar_height * self.paint.size.0) as usize * 4;
-        let terminal = self
+        let tab = self
             .tabs
             .get(self.tabs.active().ok_or("no active tab")?)
-            .ok_or("terminal unavailable")?
-            .terminal();
+            .ok_or("terminal unavailable")?;
+        let terminal = tab.terminal();
         self.raster.draw(
             terminal,
             content_size,
             &mut self.pixels[content_offset..],
             self.input.focus.target().is_some(),
+        )?;
+        selection_overlay::draw(
+            tab,
+            content_size,
+            (self.raster.cell_width, self.raster.cell_height),
+            &mut self.pixels[content_offset..],
         )?;
         let layout = self.tab_layout();
         layout.draw(

@@ -318,6 +318,23 @@ def main():
                 click_cell(5)
                 assert selected()[:4] == (0, 4, 0, 5), selected()
                 print("PASS: native double/triple click selects ASCII, whole CJK and soft-wrapped logical lines")
+                if os.environ.get("PTYRA_TEST_SELECTION_PIXELS"):
+                    def highlight_visible():
+                        ppm = subprocess.check_output(["grim", "-t", "ppm", "-"], env=env)
+                        _, dimensions, _, pixels = ppm.split(b"\n", 3)
+                        width, height = map(int, dimensions.split())
+                        x = rect["x"] + window["x"] + 4 * cw
+                        y = rect["y"] + window["y"] + origin
+                        assert x + 2 * cw <= width and y + ch <= height
+                        for column in range(x, x + 2 * cw):
+                            if not any(pixels[(row * width + column) * 3:(row * width + column) * 3 + 3] == b"\xe7\xe7\xe7" for row in range(y, y + ch)):
+                                return False
+                        return True
+                    wait_until(highlight_visible)
+                    if screenshot:
+                        subprocess.run(["grim", str(screenshot.with_name(screenshot.stem + "-selection.png"))], env=env, check=True)
+                    print("PASS: compositor pixels highlight both complete CJK cells without overwriting glyphs")
+
             if os.environ.get("PTYRA_TEST_TAB_CLICK"):
                 node = next(n for n in nodes(json.loads(ipc("-t", "get_tree"))) if n.get("app_id") == "ptyra")
                 rect, window = node["rect"], node["window_rect"]
