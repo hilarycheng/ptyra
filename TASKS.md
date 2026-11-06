@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（154 已勾選；TASK-129、TASK-155、TASK-157–199 共 45 項未勾選）。
+**Total:** 199 atomic TASKS（155 已勾選；TASK-129、TASK-157–199 共 44 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -688,7 +688,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-066`, `TASK-067`, `TASK-068`, `TASK-094`, `TASK-145`, `TASK-147`, `TASK-153` | **Unit Test:** `runtime_osc52_respects_explicit_write_policy`
   - **Done:** 明確 config opt-in 才 drain/發佈 bounded OSC 52 writes，仍需有效 seat serial 同正確 selection kind；缺 serial/能力有明確拒絕策略；read 永遠預設拒絕，PTY output 不能自授權；撤銷 opt-in 清理 pending writes。
 
-- [ ] **TASK-155 — Clipboard 可恢復錯誤顯示 metadata 提示**
+- [x] **TASK-155 — Clipboard 可恢復錯誤顯示 metadata 提示**
   - **Dependencies:** `TASK-101`, `TASK-147`, `TASK-149`, `TASK-151` | **Unit Test:** `runtime_clipboard_errors_do_not_leak_or_exit`
   - **Done:** empty/non-text offer、size limit、owner 消失、FD failure 同取消各有明確結果；需要提醒嘅錯誤可見，但無 Clipboard text/key/PTY payload；只取消該 transfer，其他 Shell 同下一次 Copy/Paste 仍可用。
 

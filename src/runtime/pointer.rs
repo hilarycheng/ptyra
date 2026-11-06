@@ -101,6 +101,7 @@ impl PointerInput {
 }
 impl Runtime {
     pub(super) fn cancel_pointer_drag(&mut self) {
+        self.clear_clipboard_notice();
         self.clipboard.binding.focus(None);
         self.primary.binding.focus(None);
         self.pointer_input.cancel_drag();
@@ -136,6 +137,9 @@ impl Runtime {
                 serial,
                 InputSerialEvent::PointerButtonPress,
             );
+        }
+        if matches!(event.kind, Kind::Button { pressed: true, .. }) {
+            self.clear_clipboard_notice();
         }
         // Only the last submitted layout is clickable, and only at its current size.
         if self.trace_pointer {
@@ -187,6 +191,7 @@ impl Runtime {
         {
             if let Err(error) = self.receive_selection(crate::clipboard::SelectionKind::Primary) {
                 eprintln!("Ptyra paste: {error}");
+                self.clipboard_error(error);
             }
             return;
         }
@@ -205,6 +210,7 @@ impl Runtime {
             && let Err(error) = self.publish_primary(qh)
         {
             eprintln!("Ptyra primary: {error}");
+            self.clipboard_error(error);
         }
         self.paint.dirty |= selection_changed;
         if selection_changed && self.trace_pointer {

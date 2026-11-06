@@ -54,10 +54,12 @@ impl Primary {
     pub fn send_fds(&self) -> impl Iterator<Item = (u64, &std::fs::File)> {
         self.sends.fds()
     }
-    pub fn pump_sends(&mut self) {
-        if self.sends.pump(&std::mem::take(&mut self.ready_sends)) > 0 {
+    pub fn pump_sends(&mut self) -> bool {
+        let failed = self.sends.pump(&std::mem::take(&mut self.ready_sends)) > 0;
+        if failed {
             eprintln!("Ptyra primary: transfer failed");
         }
+        failed
     }
     pub fn receive_fd(&self) -> Option<(u64, &std::fs::File)> {
         self.receive.fd()
@@ -297,11 +299,13 @@ impl Dispatch<source::ZwpPrimarySelectionSourceV1, crate::TabId> for Runtime {
                 let file = std::fs::File::from(fd);
                 if let Err(error) = super::clipboard_send::nonblocking(&file) {
                     eprintln!("Ptyra primary: {error}");
+                    state.clipboard_error(error);
                     return;
                 }
                 let source = state.primary.source.as_ref().unwrap();
                 if let Err(error) = state.primary.sends.start(source.id, &source.text, file) {
                     eprintln!("Ptyra primary: {error}");
+                    state.clipboard_error(error);
                 }
             }
             _ => {}

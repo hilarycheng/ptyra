@@ -205,11 +205,13 @@ impl Runtime {
             BindingAction::Copy => {
                 if let Err(error) = self.copy_selection(qh) {
                     eprintln!("Ptyra copy: {error}");
+                    self.clipboard_error(error);
                 }
             }
             BindingAction::Paste => {
                 if let Err(error) = self.receive_clipboard() {
                     eprintln!("Ptyra paste: {error}");
+                    self.clipboard_error(error);
                 }
             }
             BindingAction::NewTab => {
@@ -318,6 +320,9 @@ impl Runtime {
                     WEnum::Value(wl_keyboard::KeyState::Released) => false,
                     _ => return Ok(()),
                 };
+                if pressed {
+                    self.clear_clipboard_notice();
+                }
                 if let Some(trace) = &mut self.input_trace {
                     trace.add(usize::from(!pressed), 1);
                 }

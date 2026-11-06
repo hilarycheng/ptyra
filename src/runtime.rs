@@ -1,6 +1,7 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod bar;
 mod clipboard;
+mod notice;
 mod osc52;
 mod primary;
 use crate::clipboard::SelectionKind;
@@ -143,6 +144,7 @@ struct Runtime {
     clipboard: clipboard::Clipboard,
     primary: primary::Primary,
     paste: Option<paste::Paste>,
+    clipboard_notice: Option<notice::Notice>,
     presented_paste: Option<std::sync::Arc<()>>,
     trace_pointer: bool,
     input: keyboard::KeyboardInput,
@@ -185,6 +187,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         clipboard: clipboard::Clipboard::new(config.clipboard_bytes),
         primary: primary::Primary::new(config.clipboard_bytes),
         paste: None,
+        clipboard_notice: None,
         presented_paste: None,
         trace_pointer: std::env::var_os("PTYRA_TRACE_POINTER").as_deref()
             == Some(std::ffi::OsStr::new("1")),
@@ -227,8 +230,11 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         }
         app.sync_terminal()?;
         app.read_output(&qh)?;
-        app.clipboard.pump_sends();
-        app.primary.pump_sends();
+        let copy_failed = app.clipboard.pump_sends();
+        let primary_failed = app.primary.pump_sends();
+        if copy_failed || primary_failed {
+            app.show_clipboard_notice(notice::Notice::TransferFailed);
+        }
         app.pump_paste();
         if !app.running {
             break;
@@ -642,6 +648,11 @@ impl Runtime {
             .paste
             .as_ref()
             .and_then(|paste| paste.prompt_token(&self.input.focus));
+        if prompt.is_none()
+            && let Some(notice) = self.clipboard_notice
+        {
+            notice::draw(&mut self.raster, self.paint.size, &mut self.pixels, notice)?;
+        }
         let presented = if prompt.is_some()
             && paste::draw_prompt(&mut self.raster, self.paint.size, &mut self.pixels)?
         {

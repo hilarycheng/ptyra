@@ -130,10 +130,12 @@ impl Clipboard {
     pub fn send_fds(&self) -> impl Iterator<Item = (u64, &std::fs::File)> {
         self.sends.fds()
     }
-    pub fn pump_sends(&mut self) {
-        if self.sends.pump(&std::mem::take(&mut self.ready_sends)) > 0 {
+    pub fn pump_sends(&mut self) -> bool {
+        let failed = self.sends.pump(&std::mem::take(&mut self.ready_sends)) > 0;
+        if failed {
             eprintln!("Ptyra copy: transfer failed");
         }
+        failed
     }
     pub fn receive_fd(&self) -> Option<(u64, &std::fs::File)> {
         self.receive.fd()
@@ -265,6 +267,9 @@ impl Runtime {
         match received {
             Ok(Some(text)) => {
                 eprintln!("Ptyra paste: received {} bytes", text.len());
+                if text.is_empty() {
+                    self.show_clipboard_notice(super::notice::Notice::Empty);
+                }
                 let result = self
                     .paste
                     .as_mut()
@@ -290,11 +295,13 @@ impl Runtime {
                 }
                 if let Err(error) = result {
                     eprintln!("Ptyra paste: {error}");
+                    self.clipboard_error(error);
                     self.cancel_paste();
                 }
             }
             Err(error) => {
                 eprintln!("Ptyra paste: {error}");
+                self.clipboard_error(error);
                 self.cancel_paste();
             }
             Ok(None) => {}
@@ -308,6 +315,7 @@ impl Runtime {
                 SelectionKind::Primary => self.primary.receive_fd().is_some(),
             };
             if !receiving {
+                self.show_clipboard_notice(super::notice::Notice::Unavailable);
                 self.cancel_paste();
             }
             return;
@@ -334,6 +342,7 @@ impl Runtime {
             Err(_) => {
                 self.cancel_paste();
                 eprintln!("Ptyra paste: target unavailable");
+                self.clipboard_error("paste target unavailable");
             }
         }
     }
@@ -524,11 +533,13 @@ impl Dispatch<wl_data_source::WlDataSource, crate::TabId> for Runtime {
                 let file = std::fs::File::from(fd);
                 if let Err(error) = super::clipboard_send::nonblocking(&file) {
                     eprintln!("Ptyra copy: {error}");
+                    state.clipboard_error(error);
                     return;
                 }
                 let source = state.clipboard.source.as_ref().unwrap();
                 if let Err(error) = state.clipboard.sends.start(source.id, &source.text, file) {
                     eprintln!("Ptyra copy: {error}");
+                    state.clipboard_error(error);
                 }
             }
             _ => {}
