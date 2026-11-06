@@ -1,6 +1,7 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod bar;
 mod keyboard;
+mod pointer;
 mod raster;
 mod sessions;
 use crate::pty::{PtyReadStatus, PtySession, PtySize, PtySpawnRequest};
@@ -125,6 +126,9 @@ struct Runtime {
     seat: Option<wl_seat::WlSeat>,
     seat_name: Option<u32>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    pointer: Option<wayland_client::protocol::wl_pointer::WlPointer>,
+    pointer_input: pointer::PointerInput,
+    trace_pointer: bool,
     input: keyboard::KeyboardInput,
     clock: crate::clock::MonotonicClock,
     input_trace: Option<InputTrace>,
@@ -158,6 +162,10 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         seat: None,
         seat_name: None,
         keyboard: None,
+        pointer: None,
+        pointer_input: pointer::PointerInput::default(),
+        trace_pointer: std::env::var_os("PTYRA_TRACE_POINTER").as_deref()
+            == Some(std::ffi::OsStr::new("1")),
         input: keyboard::KeyboardInput {
             bindings: config.bindings,
             ..Default::default()
@@ -593,6 +601,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
             }
             wl_registry::Event::GlobalRemove { name } if state.seat_name == Some(name) => {
                 state.remove_keyboard();
+                state.remove_pointer();
                 if let Some(seat) = state.seat.take() {
                     seat.release();
                 }

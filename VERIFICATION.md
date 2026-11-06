@@ -58,3 +58,10 @@
 - `runtime_tab_bar_layout_reserves_content_area`, workspace regression, fmt, Clippy: PASS.
 - Native multi-tab test with `PTYRA_TEST_TAB_BAR=1`: PASS, including compositor pixel evidence and resize. Screenshot visually inspected; strip cursor artifact removed and regression rerun.
 - T140 precedes T138 because pointer binding is a declared dependency of tab clicking.
+
+## TASK-140 (before TASK-138 by dependency)
+
+- Dependencies satisfied. Seat pointer capability binds/releases wl_pointer; surface enter/leave, motion, button and axis events capture TabId and surface coordinates. Input serials are retained by the existing seat policy; enter serial cannot authorize clipboard publication. Capability removal, focus loss and tab changes cancel drag/serial state. Stale pointer objects/surfaces and stale routed targets are ignored.
+- `runtime_pointer_lifecycle_preserves_serials`, workspace regression, fmt, Clippy: PASS.
+- Native test with `PTYRA_TEST_POINTER=1`: PASS; actual virtual-pointer enter/press/release/axis events reach the native adapter. Trace is opt-in and contains event categories only.
+- Scale remains the existing runtime scale=1; output scaling is separately TASK-167. Selection and application mouse reporting remain later tasks.

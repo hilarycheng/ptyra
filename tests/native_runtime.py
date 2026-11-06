@@ -179,6 +179,8 @@ def main():
             env["SHELL"] = str(wrapper)
             if os.environ.get("PTYRA_TEST_TRACE"):
                 env["PTYRA_TRACE_INPUT"] = "1"
+            if os.environ.get("PTYRA_TEST_POINTER"):
+                env["PTYRA_TRACE_POINTER"] = "1"
             (root / "test.toml").write_text("[bindings]\ncopy='Ctrl+Shift+a'\n")
             keyboard = Keyboard(display, keymap.read_bytes())
             with open(root / "app.log", "w") as log:
@@ -244,6 +246,23 @@ def main():
                 assert proof2.read_text().strip() in children.read_text().split()
                 assert len(children.read_text().split()) == 2
                 print("PASS: new Tab activation and previous Tab shortcut route input without spawning")
+            if os.environ.get("PTYRA_TEST_POINTER"):
+                manager = keyboard.bind("zwlr_virtual_pointer_manager_v1")
+                pointer = keyboard.allocate()
+                keyboard.send(manager, 0, u32(0, pointer))
+                keyboard.send(pointer, 1, u32(0, 400, 300, 800, 600))
+                keyboard.send(pointer, 4)
+                keyboard.sync()
+                time.sleep(0.1)
+                keyboard.send(pointer, 2, u32(0, 272, 1))
+                keyboard.send(pointer, 2, u32(0, 272, 0))
+                keyboard.send(pointer, 3, u32(0, 0, 2560))
+                keyboard.send(pointer, 4)
+                keyboard.sync()
+                wait_until(lambda: "Ptyra pointer: axis" in (root / "app.log").read_text())
+                assert "Ptyra pointer: press" in (root / "app.log").read_text()
+                assert "Ptyra pointer: release" in (root / "app.log").read_text()
+                print("PASS: real Wayland pointer enter/button/axis events reach the targeted adapter")
             if os.environ.get("PTYRA_TEST_TAB_BAR"):
                 wait_until(lambda: b"\x34\x65\xa4" * 24 in subprocess.check_output(["grim", "-t", "ppm", "-"], env=env))
                 print("PASS: native compositor pixels contain the active GUI tab strip")

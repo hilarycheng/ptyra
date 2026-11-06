@@ -1,0 +1,244 @@
+//! Seat-scoped pointer adapter. Routed events capture their original target.
+use super::Runtime;
+use crate::{
+    TabId, WindowId,
+    clipboard::{InputSerialEvent, SeatId, SeatSerialState},
+    geometry::Scale,
+    input::{FocusTarget, Point, PointerFocus},
+};
+use wayland_client::{Connection, Dispatch, QueueHandle, WEnum, protocol::wl_pointer};
+
+pub(super) enum Kind {
+    Enter,
+    Leave,
+    Motion,
+    Button {
+        button: u32,
+        pressed: bool,
+        serial: u32,
+    },
+    Axis {
+        axis: u32,
+        value: f64,
+    },
+}
+pub(super) struct Routed {
+    pub target: FocusTarget,
+    pub position: Point,
+    pub kind: Kind,
+}
+#[derive(Default)]
+pub(super) struct PointerInput {
+    focus: PointerFocus,
+    target: Option<(SeatId, FocusTarget)>,
+    pub serials: SeatSerialState,
+    enter_serial: Option<u32>,
+    drag: Option<TabId>,
+}
+impl PointerInput {
+    fn route(&self, kind: Kind) -> Option<Routed> {
+        let target = self.target?.1;
+        let click = self.focus.button(0, false, Scale::new(1).ok()?).ok()??;
+        Some(Routed {
+            target,
+            position: click.buffer,
+            kind,
+        })
+    }
+    fn enter(
+        &mut self,
+        seat: SeatId,
+        target: FocusTarget,
+        point: Point,
+        serial: u32,
+    ) -> Option<Routed> {
+        self.clear();
+        self.target = Some((seat, target));
+        self.focus.enter(target.window, point);
+        self.serials.focus(seat, target);
+        self.enter_serial = Some(serial);
+        self.route(Kind::Enter)
+    }
+    fn motion(&mut self, point: Point) -> Option<Routed> {
+        self.focus.motion(point);
+        self.route(Kind::Motion)
+    }
+    fn button(&mut self, button: u32, pressed: bool, serial: u32) -> Option<Routed> {
+        let (seat, target) = self.target?;
+        if pressed {
+            self.serials
+                .record_event(seat, target, serial, InputSerialEvent::PointerButtonPress);
+            self.drag = Some(target.tab);
+        } else {
+            self.drag = None;
+        }
+        self.route(Kind::Button {
+            button,
+            pressed,
+            serial,
+        })
+    }
+    pub fn cancel_drag(&mut self) {
+        self.drag = None;
+        self.serials.clear();
+    }
+    pub fn retarget(&mut self, tab: TabId) {
+        self.cancel_drag();
+        if let Some((seat, target)) = &mut self.target {
+            target.tab = tab;
+            self.serials.focus(*seat, *target);
+        }
+    }
+    pub fn clear(&mut self) {
+        self.focus.clear();
+        self.target = None;
+        self.enter_serial = None;
+        self.cancel_drag();
+    }
+}
+impl Runtime {
+    pub(super) fn remove_pointer(&mut self) {
+        if let Some(pointer) = self.pointer.take() {
+            pointer.release();
+        }
+        self.pointer_input.clear();
+    }
+    pub(super) fn route_pointer(&mut self, event: Routed) {
+        if self.tabs.active() != Some(event.target.tab) {
+            return;
+        }
+        // Selection, application mouse reporting and tab clicks are separate tasks.
+        if self.trace_pointer {
+            let kind = match event.kind {
+                Kind::Enter => "enter",
+                Kind::Leave => "leave",
+                Kind::Motion => "motion",
+                Kind::Button { pressed: true, .. } => "press",
+                Kind::Button { .. } => "release",
+                Kind::Axis { .. } => "axis",
+            };
+            eprintln!("Ptyra pointer: {kind}");
+        }
+        match event.kind {
+            Kind::Button { button, serial, .. } => {
+                let _ = (button, serial, event.position);
+            }
+            Kind::Axis { axis, value } => {
+                let _ = (axis, value, event.position);
+            }
+            _ => {}
+        }
+    }
+}
+impl Dispatch<wl_pointer::WlPointer, ()> for Runtime {
+    fn event(
+        state: &mut Self,
+        pointer: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if state.pointer.as_ref() != Some(pointer) {
+            return;
+        }
+        let routed = match event {
+            wl_pointer::Event::Enter {
+                serial,
+                surface,
+                surface_x,
+                surface_y,
+            } if state.surface.as_ref() == Some(&surface) => {
+                match (
+                    state.seat_name,
+                    state.tabs.active(),
+                    Point::new(surface_x, surface_y),
+                ) {
+                    (Some(seat), Some(tab), Ok(point)) => state.pointer_input.enter(
+                        SeatId(seat),
+                        FocusTarget {
+                            window: WindowId(1),
+                            tab,
+                        },
+                        point,
+                        serial,
+                    ),
+                    _ => None,
+                }
+            }
+            wl_pointer::Event::Leave { surface, .. }
+                if state.surface.as_ref() == Some(&surface) =>
+            {
+                let event = state.pointer_input.route(Kind::Leave);
+                state.pointer_input.clear();
+                event
+            }
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => Point::new(surface_x, surface_y)
+                .ok()
+                .and_then(|point| state.pointer_input.motion(point)),
+            wl_pointer::Event::Button {
+                serial,
+                button,
+                state: WEnum::Value(pressed),
+                ..
+            } => state.pointer_input.button(
+                button,
+                pressed == wl_pointer::ButtonState::Pressed,
+                serial,
+            ),
+            wl_pointer::Event::Axis {
+                axis: WEnum::Value(axis),
+                value,
+                ..
+            } if value.is_finite() => state.pointer_input.route(Kind::Axis {
+                axis: axis as u32,
+                value,
+            }),
+            _ => None,
+        };
+        if let Some(event) = routed {
+            state.route_pointer(event);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn runtime_pointer_lifecycle_preserves_serials() {
+        let mut pointer = PointerInput::default();
+        let seat = SeatId(7);
+        let target = FocusTarget {
+            window: WindowId(1),
+            tab: TabId(2),
+        };
+        let point = Point::new(12.5, 30.25).unwrap();
+        assert!(pointer.button(272, true, 1).is_none());
+        let enter = pointer.enter(seat, target, point, 50).unwrap();
+        assert_eq!(enter.target, target);
+        assert_eq!(enter.position, point);
+        assert_eq!(pointer.enter_serial, Some(50));
+        assert!(pointer.serials.take_for_selection(seat, target).is_none());
+        let pressed = pointer.button(272, true, 0).unwrap();
+        assert_eq!(pressed.target, target);
+        assert_eq!(
+            pointer.serials.take_for_selection(seat, target).unwrap().0,
+            0
+        );
+        assert_eq!(pointer.drag, Some(TabId(2)));
+        pointer.retarget(TabId(3));
+        assert!(pointer.drag.is_none());
+        assert!(pointer.serials.take_for_selection(seat, target).is_none());
+        assert_eq!(pressed.target.tab, TabId(2)); // Existing events never retarget.
+        assert_eq!(pointer.motion(point).unwrap().target.tab, TabId(3));
+        pointer.clear();
+        assert!(pointer.enter_serial.is_none());
+        assert!(pointer.motion(point).is_none());
+        assert!(pointer.button(272, false, 52).is_none());
+    }
+}

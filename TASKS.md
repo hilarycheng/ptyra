@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（136 已勾選；TASK-129、TASK-138–199 共 63 項未勾選）。
+**Total:** 199 atomic TASKS（137 已勾選；TASK-129、TASK-138–139、TASK-141–199 共 62 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -624,7 +624,7 @@
 
 ## P. Pointer / Selection Runtime
 
-- [ ] **TASK-140 — 綁定 Wayland pointer 並保留事件 serial**
+- [x] **TASK-140 — 綁定 Wayland pointer 並保留事件 serial**
   - **Dependencies:** `TASK-014`, `TASK-049`, `TASK-125` | **Unit Test:** `runtime_pointer_lifecycle_preserves_serials`
   - **Done:** seat pointer capability 加入/移除、enter/leave、motion/button/axis 轉成有 target 嘅 events；保留有效 input serial，正確轉換 surface coordinates；移除/失焦取消 drag，stale surface event 不操作新 target。
 
