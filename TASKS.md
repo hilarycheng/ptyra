@@ -800,7 +800,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## W. Kitty Keyboard Runtime（獨立交付）
 
-- [ ] **TASK-180 — Drain Kitty query replies 避免 queue 飽和**
+- [x] **TASK-180 — Drain Kitty query replies 避免 queue 飽和**
   - **Dependencies:** `TASK-109`, `TASK-127`, `TASK-160` | **Unit Test:** `runtime_kitty_queries_drain_before_reply_queue_fills`
   - **Done:** `take_keyboard_reply()` 接入來源 PTY，包括同一 read chunk 多次 query；即使 enhancement 尚未啟用亦回覆真實 0 flags；重複 query 不因 runtime 漏 drain 而令第 33 次關閉 terminal；queue/backpressure 有界、錯誤不跨 Tab。
 

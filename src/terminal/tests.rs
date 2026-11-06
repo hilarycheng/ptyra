@@ -1074,3 +1074,29 @@ fn terminal_palette_dispatch_matches_vte_boundary() {
         }
     }
 }
+
+#[test]
+fn runtime_kitty_queries_drain_before_reply_queue_fills_bounded() {
+    let id = TabId(7);
+    let mut terminal = Terminal::with_scrollback(id, 2, 8, 0).unwrap();
+    let query = b"\x1b[?u".repeat(MAX_FEED_BYTES / 4);
+    for _ in 0..4 {
+        terminal.feed_with_replies(id, &query).unwrap();
+    }
+    let (reply, overflow) = terminal.take_core_replies();
+    assert!(overflow);
+    assert_eq!(reply, b"\x1b[?0u".repeat(MAX_CORE_REPLY_BYTES / 5));
+    assert!(reply.capacity() <= MAX_CORE_REPLY_BYTES);
+    assert!(terminal.take_keyboard_reply().is_none());
+    assert_eq!(terminal.take_core_replies(), (Vec::new(), false));
+    terminal.feed_with_replies(id, b"ok\x1b[?u").unwrap();
+    assert_eq!(terminal.take_core_replies(), (b"\x1b[?0u".to_vec(), false));
+    assert!(terminal.grid().is_some());
+    // Public consumers still own their explicit keyboard drain; no duplicate response.
+    terminal.feed(id, b"\x1b[5n\x1b[?u").unwrap();
+    let reply = terminal.take_keyboard_reply().unwrap();
+    assert_eq!(reply.tab, id);
+    assert_eq!(reply.bytes, b"\x1b[?0u");
+    assert!(terminal.take_keyboard_reply().is_none());
+    assert_eq!(terminal.take_core_replies(), (b"\x1b[0n".to_vec(), false));
+}

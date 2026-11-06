@@ -108,7 +108,7 @@ impl<P: TabPtyRead> TabRegistry<P> {
             }
             tab.dirty = true;
             tab.terminal
-                .feed(id, &buffer[..length])
+                .feed_with_replies(id, &buffer[..length])
                 .map_err(|error| error.error)?;
             tab.refresh_title()?;
         }

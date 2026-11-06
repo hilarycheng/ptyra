@@ -266,6 +266,25 @@ impl Terminal {
     /// prior bytes in that call may have been consumed. Do not retry or reroute.
     /// WouldBlock/Interrupted/EOF must not reset the parser or synthesize bytes.
     pub fn feed(&mut self, tab: TabId, bytes: &[u8]) -> Result<(), TerminalError> {
+        self.feed_inner(tab, bytes, false)
+    }
+
+    /// Runtime consumes keyboard replies into the shared bounded response FIFO at
+    /// each parser step. Public feed/take_keyboard_reply retain their separate queue.
+    pub(crate) fn feed_with_replies(
+        &mut self,
+        tab: TabId,
+        bytes: &[u8],
+    ) -> Result<(), TerminalError> {
+        self.feed_inner(tab, bytes, true)
+    }
+
+    fn feed_inner(
+        &mut self,
+        tab: TabId,
+        bytes: &[u8],
+        drain_keyboard: bool,
+    ) -> Result<(), TerminalError> {
         let error = |kind| TerminalError {
             tab: self.tab,
             error: AppError::new(Component::Terminal, kind),
@@ -279,7 +298,7 @@ impl Terminal {
         if !bytes.is_empty() {
             self.content_epoch = self.content_epoch.and_then(|epoch| epoch.checked_add(1));
         }
-        if !core.feed(bytes) {
+        if !core.feed(bytes, drain_keyboard) {
             self.core = None;
             return Err(error(ErrorKind::InvalidData));
         }
@@ -561,7 +580,7 @@ struct Core {
 }
 
 impl Core {
-    fn feed(&mut self, bytes: &[u8]) -> bool {
+    fn feed(&mut self, bytes: &[u8], drain_keyboard: bool) -> bool {
         for byte in bytes {
             let palette_dispatch = self.osc.palette_dispatch(*byte);
             if !self.osc.accept(*byte) {
@@ -595,6 +614,11 @@ impl Core {
                     .advance(&mut self.term, std::slice::from_ref(byte));
             }
             self.answer_queries();
+            if drain_keyboard {
+                while let Some(reply) = self.keyboard.take_reply() {
+                    self.events.replies.borrow_mut().push(&reply);
+                }
+            }
             self.keyboard
                 .set_screen(self.term.mode().contains(TermMode::ALT_SCREEN));
             let grid = self.term.grid();

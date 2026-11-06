@@ -290,6 +290,9 @@ def main():
             if os.environ.get("PTYRA_TEST_QUERIES"):
                 from native_queries import check_queries
                 check_queries(root, env, keyboard, app, wait_until, ipc, nodes)
+            if os.environ.get("PTYRA_TEST_KITTY_PRESSURE"):
+                from native_kitty_pressure import check_kitty_pressure
+                check_kitty_pressure(root, env, keyboard, app, wait_until)
             if os.environ.get("PTYRA_TEST_REPLIES"):
                 from native_replies import check_replies
                 check_replies(root, keyboard, app, wait_until, ipc)

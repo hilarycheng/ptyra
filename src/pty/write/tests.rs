@@ -1019,3 +1019,173 @@ fn runtime_bad_stream_does_not_stop_other_tabs_partial_write() {
     assert_eq!(second.output, b"only-other-tab");
     assert_eq!(writer.output, b"pre");
 }
+
+#[test]
+fn runtime_kitty_queries_drain_before_reply_queue_fills() {
+    use crate::{
+        pty::{PtyReadError, PtyReadResult, PtyReadStatus},
+        tabs::{
+            TabPty, TabRegistry,
+            output::{TabPtyRead, TabPtyWrite},
+        },
+        terminal::MAX_FEED_BYTES,
+    };
+    struct Session {
+        id: TabId,
+        input: VecDeque<Vec<u8>>,
+        queue: WriteQueue,
+    }
+    impl TabPty for Session {
+        fn tab(&self) -> TabId {
+            self.id
+        }
+    }
+    impl TabPtyRead for Session {
+        fn read_chunk(&mut self, buffer: &mut [u8]) -> Result<PtyReadResult, PtyReadError> {
+            let bytes = self.input.pop_front().unwrap();
+            buffer[..bytes.len()].copy_from_slice(&bytes);
+            Ok(PtyReadResult {
+                tab: self.id,
+                status: PtyReadStatus::Data(bytes.len()),
+            })
+        }
+    }
+    impl TabPtyWrite for Session {
+        fn enqueue_write(&mut self, bytes: &[u8]) -> Result<(), PtyWriteError> {
+            self.queue.enqueue(self.id, true, bytes).map(|_| ())
+        }
+    }
+    let mut tabs = TabRegistry::with_scrollback(0).unwrap();
+    for id in [TabId(1), TabId(2)] {
+        tabs.insert(id, 4, 16).unwrap();
+        tabs.attach_pty(Session {
+            id,
+            input: VecDeque::new(),
+            queue: WriteQueue::default(),
+        })
+        .ok()
+        .unwrap();
+        tabs.get_mut(id)
+            .unwrap()
+            .terminal_mut()
+            .set_cell_pixels((8, 16));
+    }
+    let id = TabId(2); // Hidden source, never the active Tab.
+    let mut buffer = [0; MAX_FEED_BYTES];
+    let mut feed = |tabs: &mut TabRegistry<Session>, bytes: &[u8]| {
+        if bytes.is_empty() {
+            return;
+        }
+        tabs.get_mut(id)
+            .unwrap()
+            .pty_mut()
+            .unwrap()
+            .input
+            .push_back(bytes.to_vec());
+        tabs.drain_ready(&[id], &mut buffer, |source, result| {
+            assert_eq!(source, id);
+            result.unwrap();
+        })
+        .unwrap();
+    };
+    // One full runtime read containing 4,096 queries used to fail on query 33.
+    feed(&mut tabs, &b"\x1b[?u".repeat(MAX_FEED_BYTES / 4));
+    tabs.enqueue_terminal_replies(id).unwrap();
+    let mut output = Vec::new();
+    let queue = &mut tabs.get_mut(id).unwrap().pty_mut().unwrap().queue;
+    while queue.wants_write() {
+        queue.flush(id, Some(&mut output)).unwrap();
+    }
+    assert_eq!(output, b"\x1b[?0u".repeat(MAX_FEED_BYTES / 4));
+    assert!(tabs.get(id).unwrap().terminal().grid().is_some());
+    assert!(
+        tabs.get_mut(id)
+            .unwrap()
+            .terminal_mut()
+            .take_keyboard_reply()
+            .is_none()
+    );
+
+    // Query completion order crosses all three parser dispatches, main/alt and reset.
+    let query = b"\x1b[5n\x1b[=31u\x1b[?u\x1b]4;1;?\x07\x1b[?u\x1b[18t\x1b[?2026$p\x1b[?1049h\x1b[>31u\x1b[?u\x1b[?1049l\x1bc\x1b[?u";
+    let replies = b"\x1b[0n\x1b[?0u\x1b]4;1;rgb:cccc/0000/0000\x07\x1b[?0u\x1b[8;4;16t\x1b[?2026;2$y\x1b[?0u\x1b[?0u";
+    let queue = &mut tabs.get_mut(id).unwrap().pty_mut().unwrap().queue;
+    queue.enqueue(id, true, b"before").unwrap();
+    queue.reserve_paste(id, true).unwrap();
+    for split in 0..=query.len() {
+        feed(&mut tabs, &query[..split]);
+        tabs.enqueue_terminal_replies(id).unwrap();
+        feed(&mut tabs, &query[split..]);
+        tabs.enqueue_terminal_replies(id).unwrap();
+        tabs.enqueue_terminal_replies(id).unwrap(); // No duplicate drain.
+    }
+    for byte in query {
+        feed(&mut tabs, std::slice::from_ref(byte));
+    }
+    tabs.enqueue_terminal_replies(id).unwrap();
+    let queue = &mut tabs.get_mut(id).unwrap().pty_mut().unwrap().queue;
+    let mut writer = FakeWriter::new([interrupted(), Step::Accept(2), blocked(), Step::Accept(99)]);
+    queue.flush(id, Some(&mut writer)).unwrap();
+    assert_eq!(
+        queue.flush(id, Some(&mut writer)).unwrap().status,
+        PtyWriteStatus::WouldBlock
+    );
+    queue.flush(id, Some(&mut writer)).unwrap();
+    assert!(!queue.wants_write());
+    queue
+        .enqueue_paste(id, true, &mut b"\x1b[200~paste\x1b[201~".to_vec(), true)
+        .unwrap();
+    queue.enqueue(id, true, b"after").unwrap();
+    writer
+        .steps
+        .extend(std::iter::repeat_with(|| Step::Accept(1)).take(queue.pending()));
+    while queue.wants_write() {
+        queue.flush(id, Some(&mut writer)).unwrap();
+    }
+    assert_eq!(
+        writer.output,
+        [
+            b"before\x1b[200~paste\x1b[201~".as_slice(),
+            &replies.repeat(query.len() + 2),
+            b"after"
+        ]
+        .concat()
+    );
+    assert!(queue.bytes.capacity() <= MAX_PTY_PENDING_BYTES);
+
+    queue
+        .enqueue(id, true, &vec![b'k'; MAX_PTY_PENDING_BYTES])
+        .unwrap();
+    feed(&mut tabs, &b"\x1b[?u".repeat(64));
+    assert!(tabs.enqueue_terminal_replies(id).is_err());
+    assert!(tabs.enqueue_terminal_replies(id).is_ok());
+    let queue = &mut tabs.get_mut(id).unwrap().pty_mut().unwrap().queue;
+    output.clear();
+    while queue.wants_write() {
+        queue.flush(id, Some(&mut output)).unwrap();
+    }
+    assert_eq!(output, vec![b'k'; MAX_PTY_PENDING_BYTES]);
+    feed(&mut tabs, b"alive\x1b[?u");
+    tabs.enqueue_terminal_replies(id).unwrap();
+    output.clear();
+    tabs.get_mut(id)
+        .unwrap()
+        .pty_mut()
+        .unwrap()
+        .queue
+        .flush(id, Some(&mut output))
+        .unwrap();
+    assert_eq!(output, b"\x1b[?0u");
+    assert!(tabs.get(id).unwrap().terminal().grid().is_some());
+    assert_eq!(tabs.active(), Some(TabId(1)));
+    assert_eq!(
+        tabs.get(TabId(1)).unwrap().pty().unwrap().queue.pending(),
+        0
+    );
+    tabs.close(id);
+    assert!(tabs.enqueue_terminal_replies(id).is_err());
+    assert_eq!(
+        tabs.get(TabId(1)).unwrap().pty().unwrap().queue.pending(),
+        0
+    );
+}
