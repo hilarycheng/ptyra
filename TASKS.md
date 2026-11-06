@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（147 已勾選；TASK-129、TASK-149–199 共 52 項未勾選）。
+**Total:** 199 atomic TASKS（148 已勾選；TASK-129、TASK-150–199 共 51 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -664,7 +664,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-048`, `TASK-052`, `TASK-055`, `TASK-145` | **Unit Test:** `runtime_clipboard_offers_ignore_stale_objects`
   - **Done:** MIME events、selection replacement/None、owner 消失同 object destroy 更新正確 offer ID；用固定 text MIME 次序；未知、非文字或 stale offer 不誤當新 Clipboard。
 
-- [ ] **TASK-149 — Paste receive FD 接入有界非阻塞讀取**
+- [x] **TASK-149 — Paste receive FD 接入有界非阻塞讀取**
   - **Dependencies:** `TASK-053`, `TASK-054`, `TASK-055`, `TASK-148` | **Unit Test:** `runtime_clipboard_receive_is_bounded_and_cancellable`
   - **Done:** 發出正確 offer.receive，FD 由 poll 驅動；partial UTF-8/EOF/EINTR/EAGAIN、失效 offer 同 owner 消失有確定結果；使用 config clipboard cap，超額拒絕唔靜默截斷，取消後釋放 FD/payload。
 

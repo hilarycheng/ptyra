@@ -110,6 +110,8 @@ pub(super) struct Clipboard {
     source_generation: u64,
     sends: super::clipboard_send::SendQueue<std::fs::File>,
     pub ready_sends: Vec<u64>,
+    receive: super::clipboard_receive::Receive<std::fs::File>,
+    pub ready_receive: Option<u64>,
 }
 impl Clipboard {
     pub fn new(limit: usize) -> Self {
@@ -133,12 +135,50 @@ impl Clipboard {
             eprintln!("Ptyra copy: transfer failed");
         }
     }
+    pub fn receive_fd(&self) -> Option<(u64, &std::fs::File)> {
+        self.receive.fd()
+    }
+    pub fn cancel_receive(&mut self) {
+        self.receive.cancel();
+        self.ready_receive = None;
+    }
+    pub fn pump_receive(&mut self) {
+        match self.receive.pump(self.ready_receive.take(), &self.offers) {
+            Ok(Some(text)) => {
+                // PTY delivery and multiline safety are connected by TASK-150/151.
+                eprintln!(
+                    "Ptyra paste: received {} bytes; delivery unavailable",
+                    text.len()
+                );
+            }
+            Err(error) => eprintln!("Ptyra paste: {error}"),
+            Ok(None) => {}
+        }
+    }
+    fn start_receive(&mut self) -> super::Result<()> {
+        use std::os::fd::AsFd;
+        self.cancel_receive();
+        let (proxy, offer) = self.offers.selected().ok_or("clipboard has no offer")?;
+        let mime = offer
+            .preferred_text_mime()
+            .ok_or("clipboard has no text offer")?;
+        let (read, write) = nix::unistd::pipe2(nix::fcntl::OFlag::O_CLOEXEC)
+            .map_err(|_| "clipboard receive pipe unavailable")?;
+        let file = std::fs::File::from(read);
+        super::clipboard_send::nonblocking(&file)?;
+        self.receive.start(offer.id(), file, self.limit)?;
+        proxy.receive(mime.to_owned(), write.as_fd());
+        // The connection owns its queued SCM_RIGHTS copy; close our writer now.
+        Ok(())
+    }
     fn clear_offers(&mut self) {
+        self.cancel_receive();
         for offer in self.offers.clear() {
             offer.destroy();
         }
     }
     pub fn clear_external_offers(&mut self) {
+        self.cancel_receive();
         let retired = self.offers.clear_external();
         if !retired.is_empty()
             && std::env::var_os("PTYRA_TRACE_CLIPBOARD").as_deref()
@@ -164,6 +204,11 @@ impl Clipboard {
     }
 }
 impl Runtime {
+    pub(super) fn receive_clipboard(&mut self) -> super::Result<()> {
+        self.input.focus.target().ok_or("no keyboard focus")?;
+        self.clipboard.start_receive()
+    }
+
     pub(super) fn copy_selection(&mut self, qh: &QueueHandle<Self>) -> super::Result<()> {
         let target = self.input.focus.target().ok_or("no keyboard focus")?;
         let seat = SeatId(self.seat_name.ok_or("clipboard unavailable")?);

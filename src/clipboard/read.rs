@@ -136,6 +136,11 @@ impl<R: Read> ClipboardTransfer<R> {
         })
     }
 
+    /// Borrow the owned descriptor only for event-loop readiness registration.
+    pub fn reader(&self) -> Option<&R> {
+        self.reader.as_ref()
+    }
+
     pub fn cancel(&mut self) {
         self.reader = None;
         self.receive.cancel();

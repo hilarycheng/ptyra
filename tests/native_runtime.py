@@ -185,7 +185,7 @@ def main():
                 env["PTYRA_TRACE_POINTER"] = "1"
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
-            (root / "test.toml").write_text("[bindings]\ncopy='Ctrl+Shift+a'\n")
+            (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n")
             keyboard = Keyboard(display, keymap.read_bytes())
             with open(root / "app.log", "w") as log:
                 app = subprocess.Popen([binary, "--config", str(root / "test.toml")], env=env, stdout=log, stderr=log)
@@ -225,6 +225,25 @@ def main():
                 keyboard.tap(14)
                 keyboard.sync()
                 print("PASS: one tap = 1 press + 1 release + 0 repeats + 1 queued byte + 1 written byte")
+            if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE"):
+                def paste_fixture(payload, expected, mime="text/plain;charset=utf-8"):
+                    before = (root / "app.log").read_text().count(expected)
+                    subprocess.run(["wl-copy", "--type", mime], input=payload, env=env, check=True, timeout=5)
+                    time.sleep(0.1)
+                    keyboard.modifiers(5)
+                    keyboard.tap(47)
+                    keyboard.modifiers(0)
+                    keyboard.sync()
+                    wait_until(lambda: (root / "app.log").read_text().count(expected) > before)
+                    assert app.poll() is None
+                text = ("繁體e\u0301 \t\n" * 6000).encode()
+                paste_fixture(text, f"Ptyra paste: received {len(text)} bytes")
+                paste_fixture(b"x" * 131073, "Ptyra paste: clipboard receive exceeds limit")
+                paste_fixture(b"\xff", "Ptyra paste: clipboard receive is not UTF-8")
+                paste_fixture(b"nontext", "Ptyra paste: clipboard has no text offer", "application/octet-stream")
+                paste_fixture(b"recovered", "Ptyra paste: received 9 bytes", "text/plain")
+                assert "繁體" not in (root / "app.log").read_text()
+                print("PASS: native receive exact byte counts, configured cap, UTF-8 rejection and recovery")
             if os.environ.get("PTYRA_TEST_COPY_OWNER"):
                 subprocess.run(["wl-copy", "--type", "application/octet-stream", "sentinel"], env=env, check=True, timeout=5)
             keyboard.modifiers(5)

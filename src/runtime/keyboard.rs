@@ -164,6 +164,7 @@ impl Runtime {
         if !super::sessions::close_tab(&mut self.tabs, id) {
             return;
         }
+        self.clipboard.cancel_receive();
         self.cancel_pointer_drag();
         self.ready_pty.retain(|ready| *ready != id);
         if let Some(active) = self.tabs.active() {
@@ -180,6 +181,7 @@ impl Runtime {
     }
     pub(super) fn activate_tab(&mut self, id: TabId) {
         if self.tabs.activate(id) {
+            self.clipboard.cancel_receive();
             self.cancel_pointer_drag();
             self.input.retarget(id);
             self.pointer_input.retarget(id);
@@ -196,6 +198,11 @@ impl Runtime {
             BindingAction::Copy => {
                 if let Err(error) = self.copy_selection(qh) {
                     eprintln!("Ptyra copy: {error}");
+                }
+            }
+            BindingAction::Paste => {
+                if let Err(error) = self.receive_clipboard() {
+                    eprintln!("Ptyra paste: {error}");
                 }
             }
             BindingAction::NewTab => {
@@ -257,6 +264,7 @@ impl Runtime {
             wl_keyboard::Event::Enter { surface, .. }
                 if self.surface.as_ref() == Some(&surface) =>
             {
+                self.clipboard.cancel_receive();
                 self.cancel_pointer_drag();
                 self.input.clear_focus();
                 self.paint.dirty = true;

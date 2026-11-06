@@ -2,6 +2,7 @@
 mod bar;
 mod clipboard;
 mod clipboard_offers;
+mod clipboard_receive;
 mod clipboard_send;
 mod keyboard;
 mod pointer;
@@ -217,6 +218,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         app.sync_terminal()?;
         app.read_output()?;
         app.clipboard.pump_sends();
+        app.clipboard.pump_receive();
         if !app.running {
             break;
         }
@@ -296,6 +298,11 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             polled_sends.push(id);
             fds.push(PollFd::new(file.as_fd(), PollFlags::POLLOUT));
         }
+        let polled_receive = app.clipboard.receive_fd().map(|(id, file)| {
+            let index = fds.len();
+            fds.push(PollFd::new(file.as_fd(), PollFlags::POLLIN));
+            (id, index)
+        });
         let timeout = app
             .input
             .map
@@ -350,7 +357,20 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                     .then_some(id)
             })
             .collect();
+        let ready_receive = polled_receive.and_then(|(id, index)| {
+            fds[index]
+                .revents()
+                .unwrap_or(PollFlags::empty())
+                .intersects(
+                    PollFlags::POLLIN
+                        | PollFlags::POLLERR
+                        | PollFlags::POLLHUP
+                        | PollFlags::POLLNVAL,
+                )
+                .then_some(id)
+        });
         drop(fds);
+        app.clipboard.ready_receive = ready_receive;
         app.clipboard.ready_sends = ready_sends;
         if wayland_ready {
             match guard.read() {
