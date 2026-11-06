@@ -20,6 +20,7 @@ pub(super) struct Geometry {
 pub(super) struct SelectionInput {
     drag: Option<(TabId, Screen, u64)>,
     click: Option<Click>,
+    publish: bool,
 }
 struct Click {
     owner: (TabId, Screen, u64),
@@ -33,8 +34,12 @@ impl Click {
     }
 }
 impl SelectionInput {
+    pub fn take_publication(&mut self) -> bool {
+        std::mem::take(&mut self.publish)
+    }
     pub fn cancel<P: TabPty>(&mut self, tabs: &mut TabRegistry<P>) -> bool {
         self.click = None;
+        self.publish = false;
         if let Some((id, screen, _)) = self.drag.take() {
             if let Some(tab) = tabs.get_mut(id) {
                 tab.cancel_selection_drag(screen);
@@ -50,6 +55,7 @@ impl SelectionInput {
         geometry: Geometry,
         clock: &impl crate::clock::Clock,
     ) -> bool {
+        self.publish = false;
         if tabs.active() != Some(event.target.tab) {
             self.cancel(tabs);
             return false;
@@ -152,6 +158,10 @@ impl SelectionInput {
         if matches!(action, SelectionAction::Release) {
             self.drag = None;
         }
+        self.publish = matches!(
+            action,
+            SelectionAction::Release | SelectionAction::Word | SelectionAction::Line
+        );
         tabs.get_mut(event.target.tab)
             .unwrap()
             .select(screen, action, point)
@@ -210,6 +220,50 @@ mod tests {
                 serial: 2,
             },
         )
+    }
+    #[test]
+    fn primary_publication_waits_for_completed_selection() {
+        let mut tabs = TabRegistry::<Fake>::with_scrollback(0).unwrap();
+        tabs.insert(TabId(1), 3, 8).unwrap();
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(1), b"abc def")
+            .unwrap();
+        let geometry = Geometry {
+            origin: 20,
+            size: (80, 30),
+            cell: (10, 10),
+        };
+        let clock = crate::clock::FakeClock::default();
+        let mut input = SelectionInput::default();
+        input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock);
+        assert!(!input.take_publication());
+        input.route(
+            &mut tabs,
+            &event(1, 25., 25., Kind::Motion),
+            geometry,
+            &clock,
+        );
+        assert!(!input.take_publication());
+        let range = tabs.get(TabId(1)).unwrap().selection_range();
+        input.route(&mut tabs, &release(1, 25., 25.), geometry, &clock);
+        assert_eq!(tabs.get(TabId(1)).unwrap().selection_range(), range);
+        assert!(input.take_publication()); // Publish even if motion already set the final range.
+        assert!(!input.take_publication());
+        input.route(&mut tabs, &release(1, 25., 25.), geometry, &clock);
+        assert!(!input.take_publication());
+        clock.advance(std::time::Duration::from_secs(1)).unwrap();
+        for count in 1..=3 {
+            input.route(&mut tabs, &press(1, 15., 25.), geometry, &clock);
+            assert_eq!(input.take_publication(), count > 1);
+            input.route(&mut tabs, &release(1, 15., 25.), geometry, &clock);
+            assert_eq!(input.take_publication(), count == 1);
+        }
+        input.route(&mut tabs, &press(1, 15., 25.), geometry, &clock);
+        input.cancel(&mut tabs);
+        input.route(&mut tabs, &release(1, 15., 25.), geometry, &clock);
+        assert!(!input.take_publication());
     }
     #[test]
     fn runtime_click_count_selects_word_or_line() {

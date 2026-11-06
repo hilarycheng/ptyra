@@ -1,7 +1,7 @@
 //! Seat-owned Wayland Clipboard adapter. Payloads never appear in diagnostics.
 use super::Runtime;
 use crate::{
-    clipboard::{DataSourceRequest, InputSerialEvent, SeatId, SeatSerialState},
+    clipboard::{DataSourceRequest, InputSerialEvent, SeatId, SeatSerialState, SelectionKind},
     input::FocusTarget,
 };
 use wayland_client::{
@@ -17,13 +17,13 @@ pub(super) struct DeviceId {
 }
 #[derive(Default)]
 pub(super) struct Binding {
-    current: Option<DeviceId>,
+    pub(super) current: Option<DeviceId>,
     generation: u64,
     target: Option<FocusTarget>,
     pub serials: SeatSerialState,
 }
 impl Binding {
-    fn sync(&mut self, wanted: Option<(u32, SeatId)>) -> bool {
+    pub(super) fn sync(&mut self, wanted: Option<(u32, SeatId)>) -> bool {
         if self.current.map(|id| (id.manager, id.seat)) == wanted {
             return false;
         }
@@ -64,11 +64,11 @@ impl Binding {
         self.serials.record_event(seat, target, serial, event)
     }
 }
-struct CopyPlan {
-    text: String,
-    requests: [DataSourceRequest; 4],
+pub(super) struct CopyPlan {
+    pub text: String,
+    pub requests: [DataSourceRequest; 4],
 }
-fn prepare_copy<P>(
+pub(super) fn prepare_copy<P>(
     tab: &mut crate::tabs::Tab<P>,
     binding: &mut Binding,
     seat: SeatId,
@@ -195,7 +195,10 @@ impl Clipboard {
 }
 impl Runtime {
     pub(super) fn receive_clipboard(&mut self) -> super::Result<()> {
-        let paste = super::paste::Paste::capture(&self.input.focus)?;
+        self.receive_selection(SelectionKind::Clipboard)
+    }
+    pub(super) fn receive_selection(&mut self, selection: SelectionKind) -> super::Result<()> {
+        let paste = super::paste::Paste::capture_selection(&self.input.focus, selection)?;
         let pty = self
             .tabs
             .get(paste.target.tab)
@@ -205,7 +208,10 @@ impl Runtime {
             return Err("paste already in progress");
         }
         self.cancel_paste();
-        self.clipboard.start_receive()?;
+        match selection {
+            SelectionKind::Clipboard => self.clipboard.start_receive()?,
+            SelectionKind::Primary => self.primary.start_receive()?,
+        }
         let result = self
             .tabs
             .get_mut(paste.target.tab)
@@ -213,7 +219,7 @@ impl Runtime {
             .ok_or("paste target unavailable")?
             .reserve_paste();
         if result.is_err() {
-            self.clipboard.cancel_receive();
+            self.cancel_paste();
             return Err("paste target unavailable");
         }
         self.paste = Some(paste);
@@ -230,6 +236,7 @@ impl Runtime {
             pty.cancel_paste();
         }
         self.clipboard.cancel_receive();
+        self.primary.cancel_receive();
     }
     pub(super) fn pump_paste(&mut self) {
         if self
@@ -250,7 +257,12 @@ impl Runtime {
             }
             return;
         }
-        match self.clipboard.pump_receive() {
+        let received = match self.paste.as_ref().map(|paste| paste.selection) {
+            Some(SelectionKind::Clipboard) => self.clipboard.pump_receive(),
+            Some(SelectionKind::Primary) => self.primary.pump_receive(),
+            None => return,
+        };
+        match received {
             Ok(Some(text)) => {
                 eprintln!("Ptyra paste: received {} bytes", text.len());
                 let result = self
@@ -291,7 +303,11 @@ impl Runtime {
             return;
         };
         let Some(pending) = &mut paste.pending else {
-            if self.clipboard.receive_fd().is_none() {
+            let receiving = match paste.selection {
+                SelectionKind::Clipboard => self.clipboard.receive_fd().is_some(),
+                SelectionKind::Primary => self.primary.receive_fd().is_some(),
+            };
+            if !receiving {
                 self.cancel_paste();
             }
             return;

@@ -1,6 +1,8 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod bar;
 mod clipboard;
+mod primary;
+use crate::clipboard::SelectionKind;
 mod clipboard_offers;
 mod clipboard_receive;
 mod clipboard_send;
@@ -138,6 +140,7 @@ struct Runtime {
     pointer_input: pointer::PointerInput,
     selection_input: selection::SelectionInput,
     clipboard: clipboard::Clipboard,
+    primary: primary::Primary,
     paste: Option<paste::Paste>,
     presented_paste: Option<std::sync::Arc<()>>,
     trace_pointer: bool,
@@ -179,6 +182,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         pointer_input: pointer::PointerInput::default(),
         selection_input: selection::SelectionInput::default(),
         clipboard: clipboard::Clipboard::new(config.clipboard_bytes),
+        primary: primary::Primary::new(config.clipboard_bytes),
         paste: None,
         presented_paste: None,
         trace_pointer: std::env::var_os("PTYRA_TRACE_POINTER").as_deref()
@@ -223,6 +227,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         app.sync_terminal()?;
         app.read_output()?;
         app.clipboard.pump_sends();
+        app.primary.pump_sends();
         app.pump_paste();
         if !app.running {
             break;
@@ -299,15 +304,29 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         }
         let send_offset = fds.len();
         let mut polled_sends = Vec::new();
-        for (id, file) in app.clipboard.send_fds() {
-            polled_sends.push(id);
+        for (selection, id, file) in app
+            .clipboard
+            .send_fds()
+            .map(|(id, file)| (SelectionKind::Clipboard, id, file))
+            .chain(
+                app.primary
+                    .send_fds()
+                    .map(|(id, file)| (SelectionKind::Primary, id, file)),
+            )
+        {
+            polled_sends.push((selection, id));
             fds.push(PollFd::new(file.as_fd(), PollFlags::POLLOUT));
         }
-        let polled_receive = app.clipboard.receive_fd().map(|(id, file)| {
-            let index = fds.len();
-            fds.push(PollFd::new(file.as_fd(), PollFlags::POLLIN));
-            (id, index)
-        });
+        let mut polled_receives = Vec::new();
+        for (selection, receive) in [
+            (SelectionKind::Clipboard, app.clipboard.receive_fd()),
+            (SelectionKind::Primary, app.primary.receive_fd()),
+        ] {
+            if let Some((id, file)) = receive {
+                polled_receives.push((selection, id, fds.len()));
+                fds.push(PollFd::new(file.as_fd(), PollFlags::POLLIN));
+            }
+        }
         let timeout = app
             .input
             .map
@@ -347,7 +366,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                     .then_some(id)
             })
             .collect();
-        let ready_sends = polled_sends
+        let ready_sends: Vec<_> = polled_sends
             .into_iter()
             .zip(fds.iter().skip(send_offset))
             .filter_map(|(id, fd)| {
@@ -362,21 +381,34 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                     .then_some(id)
             })
             .collect();
-        let ready_receive = polled_receive.and_then(|(id, index)| {
-            fds[index]
-                .revents()
-                .unwrap_or(PollFlags::empty())
-                .intersects(
-                    PollFlags::POLLIN
-                        | PollFlags::POLLERR
-                        | PollFlags::POLLHUP
-                        | PollFlags::POLLNVAL,
-                )
-                .then_some(id)
-        });
+        let ready_receives: Vec<_> = polled_receives
+            .into_iter()
+            .filter_map(|(selection, id, index)| {
+                fds[index]
+                    .revents()
+                    .unwrap_or(PollFlags::empty())
+                    .intersects(
+                        PollFlags::POLLIN
+                            | PollFlags::POLLERR
+                            | PollFlags::POLLHUP
+                            | PollFlags::POLLNVAL,
+                    )
+                    .then_some((selection, id))
+            })
+            .collect();
         drop(fds);
-        app.clipboard.ready_receive = ready_receive;
-        app.clipboard.ready_sends = ready_sends;
+        for (selection, id) in ready_receives {
+            match selection {
+                SelectionKind::Clipboard => app.clipboard.ready_receive = Some(id),
+                SelectionKind::Primary => app.primary.ready_receive = Some(id),
+            }
+        }
+        for (selection, id) in ready_sends {
+            match selection {
+                SelectionKind::Clipboard => app.clipboard.ready_sends.push(id),
+                SelectionKind::Primary => app.primary.ready_sends.push(id),
+            }
+        }
         if wayland_ready {
             match guard.read() {
                 Ok(_) => {}
@@ -698,6 +730,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
                     state.clipboard.manager =
                         Some((name, registry.bind(name, version.min(3), qh, ())));
                 }
+                "zwp_primary_selection_device_manager_v1"
+                    if version >= 1 && state.primary.manager.is_none() =>
+                {
+                    state.primary.manager = Some((name, registry.bind(name, 1, qh, ())));
+                }
                 _ => {}
             },
             wl_registry::Event::GlobalRemove { name } if state.globals.contains(&name) => {
@@ -705,6 +742,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
             }
             wl_registry::Event::GlobalRemove { name } if state.seat_name == Some(name) => {
                 state.remove_clipboard_device();
+                state.remove_primary_device();
                 state.remove_keyboard();
                 state.remove_pointer();
                 if let Some(seat) = state.seat.take() {
@@ -721,9 +759,19 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
             {
                 state.clipboard.remove_manager();
             }
+            wl_registry::Event::GlobalRemove { name }
+                if state
+                    .primary
+                    .manager
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == name) =>
+            {
+                state.primary.remove_manager();
+            }
             _ => {}
         }
         state.bind_clipboard(qh);
+        state.bind_primary(qh);
     }
 }
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for Runtime {

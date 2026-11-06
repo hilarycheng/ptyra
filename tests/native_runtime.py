@@ -151,7 +151,7 @@ def main():
         subprocess.run(["tic", "-o", str(root / "terminfo"), str(assets / "ptyra.terminfo")], check=True)
         assert (root / "terminfo/p/ptyra").read_bytes() == (assets / "ptyra.terminfo.bin").read_bytes()
         config = root / "sway.conf"
-        config.write_text("output * mode 800x600\nseat seat0 fallback true\n")
+        config.write_text("output * mode 800x600\nseat seat0 fallback true\n" + ("primary_selection disabled\n" if os.environ.get("PTYRA_TEST_NO_PRIMARY") else ""))
         keymap = root / "keymap.xkb"
         source = 'xkb_keymap { xkb_keycodes { include "evdev+aliases(qwerty)" }; xkb_types { include "complete" }; xkb_compatibility { include "complete" }; xkb_symbols { include "pc+us+inet(evdev)" }; };'
         subprocess.run(["xkbcomp", "-xkb", "-", str(keymap)], input=source.encode(), capture_output=True, check=True)
@@ -183,7 +183,7 @@ def main():
                 env["PTYRA_TRACE_INPUT"] = "1"
             if os.environ.get("PTYRA_TEST_POINTER") or os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE"):
                 env["PTYRA_TRACE_POINTER"] = "1"
-            if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE"):
+            if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE") or os.environ.get("PTYRA_TEST_PRIMARY") or os.environ.get("PTYRA_TEST_NO_PRIMARY"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
             (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n")
             keyboard = Keyboard(display, keymap.read_bytes())
@@ -225,8 +225,23 @@ def main():
                 keyboard.tap(14)
                 keyboard.sync()
                 print("PASS: one tap = 1 press + 1 release + 0 repeats + 1 queued byte + 1 written byte")
+            primary_pointer = None
+            def middle_click():
+                nonlocal primary_pointer
+                if primary_pointer is None:
+                    manager = keyboard.bind("zwlr_virtual_pointer_manager_v1")
+                    primary_pointer = keyboard.allocate()
+                    keyboard.send(manager, 0, u32(0, primary_pointer))
+                    keyboard.send(primary_pointer, 1, u32(0, 150, 80, 800, 600))
+                    keyboard.send(primary_pointer, 4)
+                    keyboard.sync()
+                    time.sleep(0.1)
+                keyboard.send(primary_pointer, 2, u32(0, 274, 1))
+                keyboard.send(primary_pointer, 2, u32(0, 274, 0))
+                keyboard.send(primary_pointer, 4)
+                keyboard.sync()
             if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE"):
-                def paste_fixture(payload, expected, mime="text/plain;charset=utf-8", capture=False, bracketed=True, tail=b"", decision=None):
+                def paste_fixture(payload, expected, mime="text/plain;charset=utf-8", capture=False, bracketed=True, tail=b"", decision=None, primary=False, unavailable=False):
                     received = root / "paste-received"
                     observed = root / "paste-observed"
                     if observed.exists():
@@ -235,7 +250,7 @@ def main():
                         if received.exists():
                             received.unlink()
                         framed = b"\x1b[200~" + payload + b"\x1b[201~" if bracketed else payload
-                        wanted = b"z" if decision in ("cancel", "focus") else framed + tail
+                        wanted = b"z" if unavailable or decision in ("cancel", "focus") else framed + tail
                         mode = b"\x1b[?2004h" if bracketed else b"\x1b[?2004l"
                         script = root / "capture.py"
                         script.write_text("import os, select, termios, tty, time\nfrom pathlib import Path\nold=termios.tcgetattr(0)\ntry:\n tty.setraw(0)\n os.write(1, " + repr(mode + b"\x1b]2;Paste fixture\x07") + ")\n time.sleep(0.3)\n data=bytearray()\n end=time.monotonic()+8\n while len(data)<" + str(len(wanted)) + ":\n  assert time.monotonic()<end\n  if select.select([0],[],[],0.1)[0]: data.extend(os.read(0," + str(len(wanted)) + "-len(data))); Path(" + repr(str(observed)) + ").write_bytes(data)\nfinally:\n termios.tcsetattr(0,termios.TCSANOW,old)\n os.write(1,b'\\x1b[?2004l\\x1b]2;Terminal\\x07')\nPath(" + repr(str(received)) + ").write_bytes(data)\n")
@@ -260,11 +275,17 @@ def main():
                     before = (root / "app.log").read_text().count(expected)
                     queued = (root / "app.log").read_text().count("Ptyra paste: queued")
                     prompts = (root / "app.log").read_text().count("Ptyra paste: confirmation shown")
-                    subprocess.run(["wl-copy", "--type", mime], input=payload, env=env, check=True, timeout=5)
+                    if primary:
+                        subprocess.run(["wl-copy", "--type", "text/plain", "clipboard-sentinel"], env=env, check=True, timeout=5)
+                    if not unavailable:
+                        subprocess.run(["wl-copy"] + (["--primary"] if primary else []) + ["--type", mime], input=payload, env=env, check=True, timeout=5)
                     time.sleep(0.1)
-                    keyboard.modifiers(5)
-                    keyboard.tap(47)
-                    keyboard.modifiers(0)
+                    if primary:
+                        middle_click()
+                    else:
+                        keyboard.modifiers(5)
+                        keyboard.tap(47)
+                        keyboard.modifiers(0)
                     if capture and tail and not decision:
                         keyboard.text(tail.decode())
                     else:
@@ -301,8 +322,15 @@ def main():
                             assert (root / "app.log").read_text().count("Ptyra selection: updated") == selected, "dismissed prompt left a phantom selection drag"
                         if decision in ("cancel", "focus"):
                             keyboard.text("z")
+                    if unavailable:
+                        time.sleep(0.2)
+                        assert not observed.exists(), "missing Primary fell back to Clipboard"
+                        assert (root / "app.log").read_text().count("Ptyra paste: queued") == queued
+                        keyboard.text("z")
+                    if primary:
+                        assert subprocess.check_output(["wl-paste", "--type", "text/plain", "--no-newline"], env=env, timeout=5) == b"clipboard-sentinel"
                     if capture:
-                        if decision not in ("cancel", "focus"):
+                        if not unavailable and decision not in ("cancel", "focus"):
                             wait_until(lambda: (root / "app.log").read_text().count("Ptyra paste: queued") > queued)
                         wait_until(received.exists)
                         assert received.read_bytes() == wanted, "native paste bytes differ"
@@ -319,9 +347,29 @@ def main():
                 print("PASS: multiline native prompt, zero bytes before decision, accept/Escape/focus cancellation")
                 assert "繁體" not in (root / "app.log").read_text()
                 print("PASS: native receive cap/UTF-8 recovery and exact raw PTY paste, framing, backpressure and later-key order")
+                if os.environ.get("PTYRA_TEST_NO_PRIMARY"):
+                    assert "zwp_primary_selection_device_manager_v1" not in keyboard.globals
+                    paste_fixture(b"ignored", "Ptyra paste: primary selection unavailable", capture=True, primary=True, unavailable=True)
+                    print("PASS: missing Primary protocol never pastes Clipboard; ordinary Clipboard still works")
+                if os.environ.get("PTYRA_TEST_PRIMARY"):
+                    assert "zwp_primary_selection_device_manager_v1" in keyboard.globals
+                    wait_until(lambda: "Ptyra primary: device bound" in (root / "app.log").read_text())
+                    paste_fixture(text, f"Ptyra paste: received {len(text)} bytes", capture=True, tail=b"z", primary=True)
+                    paste_fixture(b"x" * 131073, "Ptyra paste: clipboard receive exceeds limit", primary=True)
+                    paste_fixture(b"\xff", "Ptyra paste: clipboard receive is not UTF-8", primary=True)
+                    paste_fixture(b"nontext", "Ptyra paste: primary has no text offer", "application/octet-stream", primary=True)
+                    subprocess.run(["wl-copy", "--primary", "--clear"], env=env, check=True, timeout=5)
+                    time.sleep(0.1)
+                    paste_fixture(b"ignored", "Ptyra paste: primary has no offer", capture=True, primary=True, unavailable=True)
+                    paste_fixture(b"primary-recovered", "Ptyra paste: received 17 bytes", capture=True, bracketed=False, primary=True)
+                    paste_fixture(b"ordinary", "Ptyra paste: received 8 bytes", capture=True, bracketed=False)
+                    assert subprocess.check_output(["wl-paste", "--primary", "--no-newline"], env=env, timeout=5) == b"primary-recovered"
+                    for decision in ("accept", "cancel", "focus"):
+                        paste_fixture(b"unsafe\ntext", "Ptyra paste: received 11 bytes", capture=True, bracketed=False, decision=decision, primary=True)
+                    print("PASS: native Primary middle paste exact bytes, independent Clipboard, cap/UTF-8 recovery and multiline safety")
             if os.environ.get("PTYRA_TEST_PASTE_CANCEL"):
                 assert not os.environ.get("PTYRA_TEST_MULTI_PTY"), "run paste cancellation fixture separately"
-                for change in ("focus", "tab"):
+                for primary, change in [(primary, change) for primary in ([False, True] if os.environ.get("PTYRA_TEST_PRIMARY") else [False]) for change in ("focus", "tab")]:
                     received = root / "cancel-received"
                     gate = root / "cancel-read"
                     for path in (received, gate):
@@ -334,11 +382,14 @@ def main():
                     keyboard.sync()
                     wait_until(lambda: any(n.get("app_id") == "ptyra" and n.get("name") == "Cancel fixture" for n in nodes(json.loads(ipc("-t", "get_tree")))))
                     before = (root / "app.log").read_text().count("Ptyra paste: queued")
-                    subprocess.run(["wl-copy", "--type", "text/plain;charset=utf-8"], input=b'x'*120000, env=env, check=True, timeout=5)
+                    subprocess.run(["wl-copy"] + (["--primary"] if primary else []) + ["--type", "text/plain;charset=utf-8"], input=b'x'*120000, env=env, check=True, timeout=5)
                     time.sleep(0.1)
-                    keyboard.modifiers(5)
-                    keyboard.tap(47)
-                    keyboard.modifiers(0)
+                    if primary:
+                        middle_click()
+                    else:
+                        keyboard.modifiers(5)
+                        keyboard.tap(47)
+                        keyboard.modifiers(0)
                     keyboard.text("z")
                     wait_until(lambda: (root / "app.log").read_text().count("Ptyra paste: queued") > before)
                     time.sleep(0.1)  # The raw reader is gated, forcing real PTY backpressure.
@@ -373,7 +424,7 @@ def main():
                     assert data[6:-7] == b'x'*(len(data)-13), "cancelled bytes or other Tab input leaked"
                     assert app.poll() is None
                     time.sleep(0.2)
-                print("PASS: native focus/Tab cancellation drops unsent payload, closes original framing, preserves tail and other Shell")
+                print("PASS: native focus/Tab cancellation drops unsent payload, closes original framing, preserves tail and other Shell" + (" for Clipboard and Primary" if os.environ.get("PTYRA_TEST_PRIMARY") else ""))
             if os.environ.get("PTYRA_TEST_COPY_OWNER"):
                 subprocess.run(["wl-copy", "--type", "application/octet-stream", "sentinel"], env=env, check=True, timeout=5)
             keyboard.modifiers(5)
@@ -476,6 +527,9 @@ def main():
                 keyboard.tap(28)
                 keyboard.sync()
                 time.sleep(0.2)
+                def primary_value(mime="text/plain;charset=utf-8"):
+                    result = subprocess.run(["wl-paste", "--primary", "--type", mime, "--no-newline"], env=env, timeout=5, capture_output=True)
+                    return result.stdout if result.returncode == 0 else None
                 def click_cell(column):
                     x = rect["x"] + window["x"] + column * cw + cw // 2
                     y = rect["y"] + window["y"] + origin + ch // 2
@@ -486,14 +540,42 @@ def main():
                     keyboard.send(pointer, 4)
                     keyboard.sync()
                     wait_until(lambda: len(re.findall(pattern, (root / "app.log").read_text())) > before)
+                if os.environ.get("PTYRA_TEST_PRIMARY"):
+                    subprocess.run(["wl-copy", "--type", "text/plain", "publication-sentinel"], env=env, check=True, timeout=5)
+                    # Release at the same endpoint as the last motion must still publish.
+                    y = rect["y"] + window["y"] + origin + ch // 2
+                    x = rect["x"] + window["x"] + cw // 2
+                    keyboard.send(pointer, 1, u32(0, x, y, 800, 600))
+                    keyboard.send(pointer, 2, u32(0, 272, 1))
+                    keyboard.send(pointer, 1, u32(0, x + 2*cw, y, 800, 600))
+                    keyboard.send(pointer, 2, u32(0, 272, 0))
+                    keyboard.send(pointer, 4)
+                    keyboard.sync()
+                    wait_until(lambda: selected()[:4] == (0, 0, 0, 2))
+                    wait_until(lambda: primary_value() == b"abc")
+                    time.sleep(0.45)
                 click_cell(1)
                 click_cell(1)
                 assert selected()[:4] == (0, 0, 0, 2), selected()
+                if os.environ.get("PTYRA_TEST_PRIMARY"):
+                    wait_until(lambda: primary_value() == b"abc")
                 click_cell(1)
                 assert selected()[0:2] == (0, 0) and selected()[2] > 0, selected()
+                if os.environ.get("PTYRA_TEST_PRIMARY"):
+                    wait_until(lambda: (copied := primary_value()) and copied.startswith("abc 中e\u0301".encode()) and b"z" * 200 in copied)
                 click_cell(5)
                 click_cell(5)
                 assert selected()[:4] == (0, 4, 0, 5), selected()
+                if os.environ.get("PTYRA_TEST_PRIMARY"):
+                    for mime in ("text/plain", "text/plain;charset=utf-8"):
+                        wait_until(lambda: primary_value(mime) == "中".encode())
+                    assert subprocess.check_output(["wl-paste", "--type", "text/plain", "--no-newline"], env=env, timeout=5) == b"publication-sentinel"
+                    ipc("workspace number 2")
+                    time.sleep(0.1)
+                    assert subprocess.check_output(["wl-paste", "--primary", "--no-newline"], env=env, timeout=5) == "中".encode()
+                    ipc("workspace number 1")
+                    time.sleep(0.1)
+                    print("PASS: native automatic Primary publication preserves Clipboard and survives focus loss")
                 print("PASS: native double/triple click selects ASCII, whole CJK and soft-wrapped logical lines")
                 if os.environ.get("PTYRA_TEST_COPY_OWNER"):
                     keyboard.modifiers(5)

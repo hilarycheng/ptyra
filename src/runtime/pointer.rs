@@ -102,6 +102,7 @@ impl PointerInput {
 impl Runtime {
     pub(super) fn cancel_pointer_drag(&mut self) {
         self.clipboard.binding.focus(None);
+        self.primary.binding.focus(None);
         self.pointer_input.cancel_drag();
         self.paint.dirty |= self.selection_input.cancel(&mut self.tabs);
     }
@@ -112,7 +113,7 @@ impl Runtime {
         }
         self.pointer_input.clear();
     }
-    pub(super) fn route_pointer(&mut self, event: Routed) {
+    pub(super) fn route_pointer(&mut self, event: Routed, qh: &QueueHandle<Self>) {
         if self.tabs.active() != Some(event.target.tab) {
             return;
         }
@@ -124,6 +125,12 @@ impl Runtime {
             && let Some(seat) = self.seat_name
         {
             self.clipboard.binding.record(
+                SeatId(seat),
+                event.target,
+                serial,
+                InputSerialEvent::PointerButtonPress,
+            );
+            self.primary.binding.record(
                 SeatId(seat),
                 event.target,
                 serial,
@@ -165,6 +172,24 @@ impl Runtime {
             return;
         }
         let (origin, size) = self.content_geometry();
+        if matches!(
+            event.kind,
+            Kind::Button {
+                button: 274,
+                pressed: true,
+                ..
+            }
+        ) && event.position.x() >= 0.
+            && event.position.x() < f64::from(size.0)
+            && event.position.y() >= f64::from(origin)
+            && event.position.y() < f64::from(origin + size.1)
+            && self.input.focus.target() == Some(event.target)
+        {
+            if let Err(error) = self.receive_selection(crate::clipboard::SelectionKind::Primary) {
+                eprintln!("Ptyra paste: {error}");
+            }
+            return;
+        }
         let selection_changed = self.selection_input.route(
             &mut self.tabs,
             &event,
@@ -175,6 +200,12 @@ impl Runtime {
             },
             &self.clock,
         );
+        if self.selection_input.take_publication()
+            && self.primary.manager.is_some()
+            && let Err(error) = self.publish_primary(qh)
+        {
+            eprintln!("Ptyra primary: {error}");
+        }
         self.paint.dirty |= selection_changed;
         if selection_changed && self.trace_pointer {
             eprintln!("Ptyra selection: updated");
@@ -213,7 +244,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for Runtime {
         event: wl_pointer::Event,
         _: &(),
         _: &Connection,
-        _: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         if state.pointer.as_ref() != Some(pointer) {
             return;
@@ -277,7 +308,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for Runtime {
             _ => None,
         };
         if let Some(event) = routed {
-            state.route_pointer(event);
+            state.route_pointer(event, qh);
         }
     }
 }

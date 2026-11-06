@@ -406,3 +406,12 @@ combining marks、hyperlinks、title stack 同 parser storage 仍有各自開銷
 Runtime 唔需要 `tic`；每個 PTY session 寫入 embedded entry，只替 child 設 `TERM=ptyra` 同 `TERMINFO`。
 Session drop 會刪除自己嘅 entry 同空 directory；異常強制終止可能留下幾百 bytes 暫存檔。
 冇改全域環境、現有 terminfo database、Shell config 或 Sway 設定。
+
+## Primary Selection protocol — TASK-153 (2026-11-06)
+
+Enable the existing pinned `wayland-protocols =0.32.13` `unstable` feature for
+`wp::primary_selection::zv1`. This only enables generated protocol bindings;
+no package/version/lockfile change, new native library, app unsafe or thread.
+License and maintenance remain those of the previously reviewed MIT crate.
+The optional protocol is bound at version 1; absence never falls back to Clipboard.
+This feature does not itself implement or claim acceptance of other unstable protocols.

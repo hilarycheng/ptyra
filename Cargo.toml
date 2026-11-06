@@ -17,4 +17,4 @@ unicode-width = { version = "=0.2.3", default-features = false }
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { version = "=0.31.3", default-features = false, features = ["feature", "fs", "poll", "process", "signal", "term"] }
 wayland-client = { version = "=0.31.15", default-features = false }
-wayland-protocols = { version = "=0.32.13", default-features = false, features = ["client"] }
+wayland-protocols = { version = "=0.32.13", default-features = false, features = ["client", "unstable"] }

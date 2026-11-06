@@ -14,6 +14,12 @@ impl<K> Default for Offers<K> {
     }
 }
 impl<K: Eq> Offers<K> {
+    pub fn new_primary() -> Self {
+        Self {
+            state: ClipboardState::new_primary(),
+            entries: Vec::new(),
+        }
+    }
     pub fn created(&mut self, key: K) -> Result<(), K> {
         if self.entries.len() == MAX_OFFERS
             || self.entries.iter().any(|(old, _)| old == &key)
@@ -105,6 +111,40 @@ impl<K: Eq> Offers<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runtime_primary_selection_never_uses_clipboard_offer() {
+        use super::super::clipboard_receive::Receive;
+        use std::io::Cursor;
+        let mut clipboard = Offers::default();
+        clipboard.created(1).unwrap();
+        clipboard.advertise(&1, "text/plain").unwrap();
+        clipboard.select(Some(&1));
+        let ordinary = clipboard.selected().unwrap().1.id();
+        let mut primary = Offers::new_primary();
+        assert!(primary.selected().is_none()); // No fallback, including missing protocol.
+        primary.created(1).unwrap();
+        primary.advertise(&1, "text/plain;charset=utf-8").unwrap();
+        primary.select(Some(&1));
+        let selected = primary.selected().unwrap().1.id();
+        assert_ne!(selected, ordinary); // Even identical generations belong to distinct selections.
+        let mut receive = Receive::default();
+        let id = receive
+            .start(selected, Cursor::new(b"primary"), 16)
+            .unwrap();
+        assert!(receive.pump(Some(id), &clipboard).is_err());
+        let id = receive
+            .start(selected, Cursor::new(b"primary"), 16)
+            .unwrap();
+        assert!(receive.pump(Some(id), &primary).unwrap().is_none());
+        assert_eq!(
+            receive.pump(Some(id), &primary).unwrap().as_deref(),
+            Some("primary")
+        );
+        primary.clear();
+        primary.state.set_local_owner(crate::TabId(7));
+        assert_eq!(clipboard.selected().unwrap().1.id(), ordinary);
+        assert!(primary.selected().is_none());
+    }
     #[test]
     fn focus_loss_retires_external_but_preserves_local_owner() {
         let mut offers = Offers::default();

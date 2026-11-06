@@ -7,14 +7,23 @@ use crate::{
 use std::sync::Arc;
 pub(super) struct Paste {
     pub target: FocusTarget,
+    pub selection: SelectionKind,
     epoch: Arc<()>,
     identity: Arc<()>,
     pub pending: Option<PendingPaste>,
     pub queued: bool,
 }
 impl Paste {
+    #[cfg(test)]
     pub fn capture(focus: &KeyboardFocus) -> super::Result<Self> {
+        Self::capture_selection(focus, SelectionKind::Clipboard)
+    }
+    pub fn capture_selection(
+        focus: &KeyboardFocus,
+        selection: SelectionKind,
+    ) -> super::Result<Self> {
         Ok(Self {
+            selection,
             target: focus.target().ok_or("no keyboard focus")?,
             epoch: focus.epoch(),
             identity: Arc::new(()),
@@ -51,7 +60,7 @@ impl Paste {
             return Err("paste target changed");
         }
         self.pending = Some(
-            PasteIntent::for_target(self.target, SelectionKind::Clipboard)
+            PasteIntent::for_target(self.target, self.selection)
                 .with_payload(
                     PastePayload::new(text).map_err(|_| "paste payload exceeds limit")?,
                     terminal,
@@ -233,6 +242,32 @@ mod tests {
         assert!(other.complete(&focus, &wrong, "wrong tab".into()).is_err());
         focus.clear();
         assert!(!other.valid(&focus));
+    }
+    #[test]
+    fn primary_paste_keeps_focus_and_confirmation_safety() {
+        let mut focus = KeyboardFocus::default();
+        focus.enter(WindowId(1), TabId(1));
+        let mut terminal = Terminal::new(TabId(1), 2, 8).unwrap();
+        let mut paste = Paste::capture_selection(&focus, SelectionKind::Primary).unwrap();
+        assert_eq!(paste.selection, SelectionKind::Primary);
+        paste
+            .complete(&focus, &terminal, "primary\ntext".into())
+            .unwrap();
+        assert!(paste.pending.as_mut().unwrap().ready_bytes().is_none());
+        let token = paste.prompt_token(&focus).unwrap();
+        focus.enter(WindowId(1), TabId(2));
+        assert!(!paste.decide(&focus, &token, true));
+        focus.enter(WindowId(1), TabId(1));
+        assert!(!paste.valid(&focus));
+        terminal.feed(TabId(1), b"\x1b[?2004h").unwrap();
+        let mut paste = Paste::capture_selection(&focus, SelectionKind::Primary).unwrap();
+        paste
+            .complete(&focus, &terminal, " 繁體\r\n".into())
+            .unwrap();
+        assert_eq!(
+            paste.pending.as_mut().unwrap().ready_bytes().unwrap(),
+            "\x1b[200~ 繁體\r\n\x1b[201~".as_bytes()
+        );
     }
     #[test]
     fn runtime_multiline_paste_waits_for_user_decision() {

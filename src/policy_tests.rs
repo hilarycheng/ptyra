@@ -9,7 +9,7 @@ fn reviewed_dependencies(manifest: &toml::Table) -> bool {
                     "base64" => ("=0.22.1", &["alloc"]),
                     "png" => ("=0.18.1", &[]),
                     "wayland-client" => ("=0.31.15", &[]),
-                    "wayland-protocols" => ("=0.32.13", &["client"]),
+                    "wayland-protocols" => ("=0.32.13", &["client", "unstable"]),
                     "unicode-width" => ("=0.2.3", &[]),
                     "alacritty_terminal" => ("=0.26.0", &[]),
                     "kbvm" => ("=0.2.0", &[]),
