@@ -25,8 +25,8 @@ mod tests {
         let fields: Vec<_> = fields.collect();
         let allowed = [
             "am", "xenl", "cols", "lines", "colors", "pairs", "clear", "cup", "el", "ed", "cr",
-            "ind", "cuu1", "cud1", "cub1", "cuf1", "sgr0", "rev", "setaf", "setab", "smcup",
-            "rmcup",
+            "ind", "cuu1", "cud1", "cub1", "cuf1", "sgr0", "bold", "rev", "op", "setaf", "setab",
+            "smcup", "rmcup",
         ];
         let mut seen = std::collections::BTreeSet::new();
         for field in &fields {
@@ -35,8 +35,8 @@ mod tests {
             assert!(seen.insert(name), "duplicate capability: {name}");
         }
         assert_eq!(seen.len(), allowed.len());
-        assert!(fields.contains(&"colors#8"));
-        assert!(fields.contains(&"pairs#64"));
+        assert!(fields.contains(&"colors#16"));
+        assert!(fields.contains(&"pairs#256"));
         let value = |name: &str| {
             fields
                 .iter()
@@ -79,9 +79,57 @@ mod tests {
         send(&mut terminal, "\x1b[2;3H");
         assert_eq!(terminal.grid().unwrap().cursor.point.line, Line(1));
         assert_eq!(terminal.grid().unwrap().cursor.point.column, Column(2));
-        assert_eq!(value("setaf"), "\\E[3%p1%dm");
-        assert_eq!(value("setab"), "\\E[4%p1%dm");
-        send(&mut terminal, "\x1b[31m\x1b[44m");
+        assert_eq!(value("setaf"), "\\E[%?%p1%{8}%<%t3%p1%d%e9%p1%{8}%-%d%;m");
+        assert_eq!(value("setab"), "\\E[%?%p1%{8}%<%t4%p1%d%e10%p1%{8}%-%d%;m");
+        assert_eq!(value("op"), "\\E[39;49m");
+        assert_eq!(value("bold"), "\\E[1m");
+        // Every advertised ANSI color, including bright black, has a distinct core index.
+        let names = [
+            NamedColor::Black,
+            NamedColor::Red,
+            NamedColor::Green,
+            NamedColor::Yellow,
+            NamedColor::Blue,
+            NamedColor::Magenta,
+            NamedColor::Cyan,
+            NamedColor::White,
+            NamedColor::BrightBlack,
+            NamedColor::BrightRed,
+            NamedColor::BrightGreen,
+            NamedColor::BrightYellow,
+            NamedColor::BrightBlue,
+            NamedColor::BrightMagenta,
+            NamedColor::BrightCyan,
+            NamedColor::BrightWhite,
+        ];
+        for (index, name) in names.into_iter().enumerate() {
+            let fg = if index < 8 {
+                30 + index
+            } else {
+                90 + index - 8
+            };
+            let bg = if index < 8 {
+                40 + index
+            } else {
+                100 + index - 8
+            };
+            send(&mut terminal, &format!("\x1b[H\x1b[{fg};{bg}mX"));
+            let cell = &terminal.grid().unwrap()[Line(0)][Column(0)];
+            assert_eq!(cell.fg, Color::Named(name));
+            assert_eq!(cell.bg, Color::Named(name));
+        }
+        send(&mut terminal, &sequence("bold"));
+        send(&mut terminal, &sequence("op"));
+        send(&mut terminal, "Y");
+        let cell = &terminal.grid().unwrap()[Line(0)][Column(1)];
+        assert_eq!(cell.fg, Color::Named(NamedColor::Foreground));
+        assert_eq!(cell.bg, Color::Named(NamedColor::Background));
+        assert!(
+            cell.flags.contains(Flags::BOLD),
+            "op resets colors, not attributes"
+        );
+        send(&mut terminal, &sequence("sgr0"));
+        send(&mut terminal, "\x1b[2;3H\x1b[31m\x1b[44m");
         send(&mut terminal, &sequence("rev"));
         send(&mut terminal, "X");
         let cell = &terminal.grid().unwrap()[Line(1)][Column(2)];
