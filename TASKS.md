@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（128 已勾選；TASK-129 同新增 TASK-130–199 共 71 項未勾選）。
+**Total:** 199 atomic TASKS（129 已勾選；TASK-129、TASK-131–199 共 70 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -582,7 +582,7 @@
 
 ## O. Runtime Shortcuts / Native GUI Tabs
 
-- [ ] **TASK-130 — 將已設定 shortcuts 接入 runtime action router**
+- [x] **TASK-130 — 將已設定 shortcuts 接入 runtime action router**
   - **Dependencies:** `TASK-096`, `TASK-128` | **Unit Test:** `runtime_bindings_route_actions_once`
   - **Done:** 使用 config bindings 產生 Copy/Paste/New/Close/Next/Previous action；press 只觸發一次，相關 release/repeat 唔漏入 Shell；未匹配按鍵保留原路徑；IME toggle 仍由 compositor/IME 擁有。未接通 action 要明確不可用，唔假裝成功。
 

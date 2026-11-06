@@ -177,9 +177,10 @@ def main():
             env["SHELL"] = str(wrapper)
             if os.environ.get("PTYRA_TEST_TRACE"):
                 env["PTYRA_TRACE_INPUT"] = "1"
+            (root / "test.toml").write_text("[bindings]\ncopy='Ctrl+Shift+a'\n")
             keyboard = Keyboard(display, keymap.read_bytes())
             with open(root / "app.log", "w") as log:
-                app = subprocess.Popen([binary, "--config", str(root / "missing.toml")], env=env, stdout=log, stderr=log)
+                app = subprocess.Popen([binary, "--config", str(root / "test.toml")], env=env, stdout=log, stderr=log)
             def ipc(*args):
                 return subprocess.check_output(["swaymsg", "-s", str(ipc_path), *args], text=True)
             wait_until(lambda: any(n.get("app_id") == "ptyra" for n in nodes(json.loads(ipc("-t", "get_tree")))))
@@ -195,6 +196,15 @@ def main():
                 keyboard.tap(14)
                 keyboard.sync()
                 print("PASS: one tap = 1 press + 1 release + 0 repeats + 1 queued byte + 1 written byte")
+            keyboard.modifiers(5)
+            keyboard.key(30)
+            keyboard.sync()
+            wait_until(lambda: "Ptyra action unavailable: Copy" in (root / "app.log").read_text())
+            time.sleep(0.7)  # Holding a shortcut must not repeat or leak into the Shell.
+            keyboard.modifiers(0)
+            keyboard.key(30, False)
+            keyboard.sync()
+            assert (root / "app.log").read_text().count("Ptyra action unavailable: Copy") == 1
             proof = root / "proof"
             keyboard.text("echo wrongx")
             keyboard.tap(14)  # Backspace
@@ -257,7 +267,7 @@ def main():
             # Reconnect against the same compositor/keymap, catching shared FD offset regressions.
             for _ in range(2):
                 with open(root / "app.log", "w") as log:
-                    app = subprocess.Popen([binary, "--config", str(root / "missing.toml")], env=env, stdout=log, stderr=log)
+                    app = subprocess.Popen([binary, "--config", str(root / "test.toml")], env=env, stdout=log, stderr=log)
                 wait_until(lambda: any(n.get("pid") == app.pid for n in nodes(json.loads(ipc("-t", "get_tree")))))
                 time.sleep(0.2)
                 assert app.poll() is None, (root / "app.log").read_text()

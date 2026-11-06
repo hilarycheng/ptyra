@@ -19,11 +19,16 @@ pub(super) struct KeyboardInput {
     pub focus: KeyboardFocus,
     pub map: Option<Keymap>,
     pub repeat: RepeatScheduler,
+    pub bindings: crate::config::bindings::Bindings,
+    pub action: Option<crate::config::bindings::BindingAction>,
+    pub(super) consumed: std::collections::HashSet<u32>,
 }
 impl KeyboardInput {
     pub fn clear_focus(&mut self) {
         self.focus.clear();
         self.repeat.cancel();
+        self.consumed.clear();
+        self.action = None;
     }
     pub fn key(
         &mut self,
@@ -69,6 +74,36 @@ impl KeyboardInput {
         application_cursor: bool,
         clock: &impl Clock,
     ) -> Result<Option<Vec<u8>>> {
+        use crate::config::bindings::BindingAction;
+        use crate::keymap::KeyState;
+        if self.consumed.contains(&key.physical_code) {
+            if key.state == KeyState::Released {
+                self.consumed.remove(&key.physical_code);
+            }
+            return Ok(None);
+        }
+        if key.state == KeyState::Pressed {
+            let action = [
+                BindingAction::Copy,
+                BindingAction::Paste,
+                BindingAction::NewTab,
+                BindingAction::CloseTab,
+                BindingAction::NextTab,
+                BindingAction::PreviousTab,
+            ]
+            .into_iter()
+            .find(|action| {
+                key.keysyms
+                    .iter()
+                    .any(|symbol| self.bindings.get(*action).matches(key.modifiers, *symbol))
+            });
+            if let Some(action) = action {
+                self.repeat.cancel();
+                self.consumed.insert(key.physical_code);
+                self.action = Some(action);
+                return Ok(None);
+            }
+        }
         let encoder = KeyEncoder {
             flags: KeyboardFlags::empty(),
             application_cursor,
@@ -101,6 +136,9 @@ fn read_keymap(file: &File, size: usize) -> Result<Keymap> {
 }
 
 impl Runtime {
+    fn dispatch_action(&mut self, action: crate::config::bindings::BindingAction) {
+        eprintln!("Ptyra action unavailable: {action:?}");
+    }
     pub(super) fn remove_keyboard(&mut self) {
         if let Some(keyboard) = self.keyboard.take() {
             keyboard.release();
@@ -167,6 +205,9 @@ impl Runtime {
                     .input
                     .key(key, pressed, self.application_cursor(), &self.clock)?;
                 self.enqueue_input(bytes)?;
+                if let Some(action) = self.input.action.take() {
+                    self.dispatch_action(action);
+                }
             }
             _ => {}
         }
@@ -225,6 +266,43 @@ mod tests {
         clock::FakeClock,
         keymap::{Keymap, Modifiers},
     };
+    #[test]
+    fn runtime_bindings_route_actions_once() {
+        use crate::config::{Config, bindings::BindingAction};
+        let clock = FakeClock::default();
+        let mut input = KeyboardInput {
+            bindings: Config::from_toml(Some("[bindings]\nnew_tab='Ctrl+Shift+a'"))
+                .unwrap()
+                .bindings,
+            map: Some(
+                Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap(),
+            ),
+            ..Default::default()
+        };
+        input.focus.enter(WindowId(1), TabId(1));
+        input.repeat.configure(25, 200).unwrap();
+        input.map.as_mut().unwrap().update_modifiers(Modifiers {
+            depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,
+            ..Default::default()
+        });
+        assert!(input.key(30, true, false, &clock).unwrap().is_none());
+        assert_eq!(input.action.take(), Some(BindingAction::NewTab));
+        assert!(input.key(30, true, false, &clock).unwrap().is_none());
+        assert!(input.action.take().is_none());
+        clock.advance(std::time::Duration::from_secs(1)).unwrap();
+        assert!(input.tick(false, &clock).unwrap().is_none());
+        input
+            .map
+            .as_mut()
+            .unwrap()
+            .update_modifiers(Modifiers::default());
+        assert!(input.key(30, false, false, &clock).unwrap().is_none());
+        assert!(input.action.take().is_none());
+        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
+        input.clear_focus();
+        assert!(input.action.is_none());
+        assert!(input.consumed.is_empty());
+    }
     #[test]
     fn runtime_keymap_reads_shared_fd_from_zero() {
         use std::io::{Seek, SeekFrom, Write};

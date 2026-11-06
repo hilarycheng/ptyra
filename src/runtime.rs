@@ -156,7 +156,10 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         seat: None,
         seat_name: None,
         keyboard: None,
-        input: keyboard::KeyboardInput::default(),
+        input: keyboard::KeyboardInput {
+            bindings: config.bindings,
+            ..Default::default()
+        },
         clock: crate::clock::MonotonicClock::default(),
         input_trace: (std::env::var_os("PTYRA_TRACE_INPUT").as_deref()
             == Some(std::ffi::OsStr::new("1")))
