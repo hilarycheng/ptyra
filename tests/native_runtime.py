@@ -337,6 +337,11 @@ def main():
                     wait_until(lambda: "Ptyra copy: published" in (root / "app.log").read_text())
                     formats = subprocess.check_output(["wl-paste", "--list-types"], env=env, timeout=5).decode().splitlines()
                     assert set(formats) == {"text/plain;charset=utf-8", "text/plain"}, formats
+                    if os.environ.get("PTYRA_TEST_COPY_TRANSFER"):
+                        for mime in formats:
+                            assert subprocess.check_output(["wl-paste", "--no-newline", "--type", mime], env=env, timeout=5) == "中".encode()
+                        print("PASS: native nonblocking Copy sends exact UTF-8 bytes for both advertised MIME types")
+
                     subprocess.run(["wl-copy", "--type", "application/octet-stream", "replacement"], env=env, check=True, timeout=5)
                     wait_until(lambda: "Ptyra copy: cancelled" in (root / "app.log").read_text())
                     print("PASS: Copy preserves an external owner without selection, publishes exact text MIME, and handles cancellation")

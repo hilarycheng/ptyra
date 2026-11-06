@@ -94,9 +94,10 @@ fn prepare_copy<P>(
     Ok(CopyPlan { text, requests })
 }
 struct Source {
+    id: u64,
     proxy: wl_data_source::WlDataSource,
     tab: crate::TabId,
-    _text: String,
+    text: String,
 }
 #[derive(Default)]
 pub(super) struct Clipboard {
@@ -106,6 +107,9 @@ pub(super) struct Clipboard {
     state: ClipboardState,
     source: Option<Source>,
     limit: usize,
+    source_generation: u64,
+    sends: super::clipboard_send::SendQueue<std::fs::File>,
+    pub ready_sends: Vec<u64>,
 }
 impl Clipboard {
     pub fn new(limit: usize) -> Self {
@@ -116,8 +120,17 @@ impl Clipboard {
     }
     fn remove_source(&mut self) {
         if let Some(source) = self.source.take() {
+            self.sends.cancel_source(source.id);
             source.proxy.destroy();
             self.state.cancel_local_owner(source.tab);
+        }
+    }
+    pub fn send_fds(&self) -> impl Iterator<Item = (u64, &std::fs::File)> {
+        self.sends.fds()
+    }
+    pub fn pump_sends(&mut self) {
+        if self.sends.pump(&std::mem::take(&mut self.ready_sends)) > 0 {
+            eprintln!("Ptyra copy: transfer failed");
         }
     }
     fn remove_device(&mut self) {
@@ -158,6 +171,12 @@ impl Runtime {
             target,
             self.clipboard.limit,
         )?;
+        let source_id = self
+            .clipboard
+            .source_generation
+            .checked_add(1)
+            .ok_or("clipboard source identity exhausted")?;
+        self.clipboard.source_generation = source_id;
         self.clipboard.remove_source();
         if !self.clipboard.state.set_local_owner(target.tab) {
             return Err("clipboard identity exhausted");
@@ -173,9 +192,10 @@ impl Runtime {
             }
         }
         self.clipboard.source = Some(Source {
+            id: source_id,
             proxy,
             tab: target.tab,
-            _text: plan.text,
+            text: plan.text,
         });
         eprintln!("Ptyra copy: published");
         Ok(())
@@ -257,10 +277,22 @@ impl Dispatch<wl_data_source::WlDataSource, crate::TabId> for Runtime {
                 state.clipboard.remove_source();
                 eprintln!("Ptyra copy: cancelled");
             }
-            // FD streaming is TASK-147; never perform a blocking write in a Wayland callback.
-            wl_data_source::Event::Send { fd, .. } => {
-                drop(fd);
-                eprintln!("Ptyra copy: transfer unavailable");
+            wl_data_source::Event::Send { fd, mime_type } => {
+                if !matches!(
+                    mime_type.as_str(),
+                    "text/plain;charset=utf-8" | "text/plain"
+                ) {
+                    return;
+                }
+                let file = std::fs::File::from(fd);
+                if let Err(error) = super::clipboard_send::nonblocking(&file) {
+                    eprintln!("Ptyra copy: {error}");
+                    return;
+                }
+                let source = state.clipboard.source.as_ref().unwrap();
+                if let Err(error) = state.clipboard.sends.start(source.id, &source.text, file) {
+                    eprintln!("Ptyra copy: {error}");
+                }
             }
             _ => {}
         }

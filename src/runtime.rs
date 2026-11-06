@@ -1,6 +1,7 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod bar;
 mod clipboard;
+mod clipboard_send;
 mod keyboard;
 mod pointer;
 mod raster;
@@ -214,6 +215,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         }
         app.sync_terminal()?;
         app.read_output()?;
+        app.clipboard.pump_sends();
         if !app.running {
             break;
         }
@@ -287,6 +289,12 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                 ));
             }
         }
+        let send_offset = fds.len();
+        let mut polled_sends = Vec::new();
+        for (id, file) in app.clipboard.send_fds() {
+            polled_sends.push(id);
+            fds.push(PollFd::new(file.as_fd(), PollFlags::POLLOUT));
+        }
         let timeout = app
             .input
             .map
@@ -326,7 +334,23 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                     .then_some(id)
             })
             .collect();
+        let ready_sends = polled_sends
+            .into_iter()
+            .zip(fds.iter().skip(send_offset))
+            .filter_map(|(id, fd)| {
+                fd.revents()
+                    .unwrap_or(PollFlags::empty())
+                    .intersects(
+                        PollFlags::POLLOUT
+                            | PollFlags::POLLERR
+                            | PollFlags::POLLHUP
+                            | PollFlags::POLLNVAL,
+                    )
+                    .then_some(id)
+            })
+            .collect();
         drop(fds);
+        app.clipboard.ready_sends = ready_sends;
         if wayland_ready {
             match guard.read() {
                 Ok(_) => {}
