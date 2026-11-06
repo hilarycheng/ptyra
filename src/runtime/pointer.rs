@@ -100,7 +100,12 @@ impl PointerInput {
     }
 }
 impl Runtime {
+    pub(super) fn cancel_pointer_drag(&mut self) {
+        self.pointer_input.cancel_drag();
+        self.paint.dirty |= self.selection_input.cancel(&mut self.tabs);
+    }
     pub(super) fn remove_pointer(&mut self) {
+        self.cancel_pointer_drag();
         if let Some(pointer) = self.pointer.take() {
             pointer.release();
         }
@@ -132,9 +137,23 @@ impl Runtime {
                 .as_ref()
                 .and_then(|layout| layout.tab_at(&self.tabs, self.paint.size, event.position))
         {
-            self.pointer_input.cancel_drag();
+            self.cancel_pointer_drag();
             self.activate_tab(id);
             return;
+        }
+        let (origin, size) = self.content_geometry();
+        let selection_changed = self.selection_input.route(
+            &mut self.tabs,
+            &event,
+            super::selection::Geometry {
+                origin,
+                size,
+                cell: (self.raster.cell_width, self.raster.cell_height),
+            },
+        );
+        self.paint.dirty |= selection_changed;
+        if selection_changed && self.trace_pointer {
+            eprintln!("Ptyra selection: updated");
         }
         match event.kind {
             Kind::Button { button, serial, .. } => {

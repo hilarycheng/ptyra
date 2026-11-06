@@ -3,6 +3,7 @@ mod bar;
 mod keyboard;
 mod pointer;
 mod raster;
+mod selection;
 mod sessions;
 use crate::pty::{PtyReadStatus, PtySession, PtySize, PtySpawnRequest};
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
@@ -129,6 +130,7 @@ struct Runtime {
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wayland_client::protocol::wl_pointer::WlPointer>,
     pointer_input: pointer::PointerInput,
+    selection_input: selection::SelectionInput,
     trace_pointer: bool,
     input: keyboard::KeyboardInput,
     clock: crate::clock::MonotonicClock,
@@ -166,6 +168,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         keyboard: None,
         pointer: None,
         pointer_input: pointer::PointerInput::default(),
+        selection_input: selection::SelectionInput::default(),
         trace_pointer: std::env::var_os("PTYRA_TRACE_POINTER").as_deref()
             == Some(std::ffi::OsStr::new("1")),
         input: keyboard::KeyboardInput {

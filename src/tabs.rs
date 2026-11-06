@@ -5,7 +5,9 @@ pub mod output;
 mod render;
 mod resize;
 mod routing;
+mod selection;
 pub use routing::ImeRouteError;
+pub(crate) use selection::SelectionAction;
 mod title;
 use crate::{
     TabId,

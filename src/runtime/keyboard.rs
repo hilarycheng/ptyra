@@ -164,6 +164,7 @@ impl Runtime {
         if !super::sessions::close_tab(&mut self.tabs, id) {
             return;
         }
+        self.cancel_pointer_drag();
         self.ready_pty.retain(|ready| *ready != id);
         if let Some(active) = self.tabs.active() {
             if previous != Some(active) {
@@ -171,7 +172,7 @@ impl Runtime {
                 self.pointer_input.retarget(active);
             }
         } else {
-            self.pointer_input.cancel_drag();
+            self.cancel_pointer_drag();
             self.input.clear_focus();
             self.running = false;
         }
@@ -179,6 +180,7 @@ impl Runtime {
     }
     pub(super) fn activate_tab(&mut self, id: TabId) {
         if self.tabs.activate(id) {
+            self.cancel_pointer_drag();
             self.input.retarget(id);
             self.pointer_input.retarget(id);
             self.paint.dirty = true;
@@ -224,7 +226,7 @@ impl Runtime {
         if let Some(keyboard) = self.keyboard.take() {
             keyboard.release();
         }
-        self.pointer_input.cancel_drag();
+        self.cancel_pointer_drag();
         self.input.clear_focus();
         self.input.map = None;
         self.paint.dirty = true;
@@ -245,7 +247,7 @@ impl Runtime {
             wl_keyboard::Event::Enter { surface, .. }
                 if self.surface.as_ref() == Some(&surface) =>
             {
-                self.pointer_input.cancel_drag();
+                self.cancel_pointer_drag();
                 self.input.clear_focus();
                 self.paint.dirty = true;
                 if let Some(id) = self.tabs.active() {
@@ -253,7 +255,7 @@ impl Runtime {
                 }
             }
             wl_keyboard::Event::Leave { .. } => {
-                self.pointer_input.cancel_drag();
+                self.cancel_pointer_drag();
                 self.input.clear_focus();
                 self.paint.dirty = true;
             }

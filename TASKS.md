@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（139 已勾選；TASK-129、TASK-141–199 共 60 項未勾選）。
+**Total:** 199 atomic TASKS（140 已勾選；TASK-129、TASK-142–199 共 59 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -580,7 +580,7 @@
 
 每個新增 TASK 只交付列明行為，重用現有模組；Unit Test 名稱係待實作測試，**唔係已存在或已通過**。Dependencies 係必要條件，唔係批量實作授權。涉及 native 路徑嘅 Done 同時需要對應隔離 integration evidence；最終 desktop gates 仍獨立保留。Kitty Keyboard / Graphics 依 `SCOPE.md` 喺基本 Terminal、Clipboard、IME 同 Tabs 完成後先實作，唔阻擋基本功能交付。
 
-TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐項 commit；驗證紀錄見 `VERIFICATION.md`。TASK-129 保持未完成，新增 TASK-141–199 未包含喺本批授權。
+TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐項 commit；驗證紀錄見 `VERIFICATION.md`。TASK-129 保持未完成。TASK-141–199 其後亦獲使用者明確 APPROVE 實作、更新 checkbox 同逐項 commit；只在各自依賴同驗證完成後勾選，真 desktop acceptance 仍獨立保留。
 
 ## O. Runtime Shortcuts / Native GUI Tabs
 
@@ -630,7 +630,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-014`, `TASK-049`, `TASK-125` | **Unit Test:** `runtime_pointer_lifecycle_preserves_serials`
   - **Done:** seat pointer capability 加入/移除、enter/leave、motion/button/axis 轉成有 target 嘅 events；保留有效 input serial，正確轉換 surface coordinates；移除/失焦取消 drag，stale surface event 不操作新 target。
 
-- [ ] **TASK-141 — 拖曳選取接入目前 Tab / Screen**
+- [x] **TASK-141 — 拖曳選取接入目前 Tab / Screen**
   - **Dependencies:** `TASK-039`, `TASK-040`, `TASK-045`, `TASK-046`, `TASK-140` | **Unit Test:** `runtime_drag_selects_whole_glyphs`
   - **Done:** 真 press/motion/release 更新原 target selection，正反方向同 CJK/combining 結果一致；拖出邊界有明確 clip/cancel 行為，唔產生 PTY text 或跨 Tab 選區。
 

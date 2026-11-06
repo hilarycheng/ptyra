@@ -274,6 +274,16 @@ def main():
                 assert "Ptyra pointer: press" in (root / "app.log").read_text()
                 assert "Ptyra pointer: release" in (root / "app.log").read_text()
                 print("PASS: real Wayland pointer enter/button/axis events reach the targeted adapter")
+                if os.environ.get("PTYRA_TEST_SELECTION"):
+                    before = (root / "app.log").read_text().count("Ptyra selection: updated")
+                    keyboard.send(pointer, 2, u32(0, 272, 1))
+                    keyboard.send(pointer, 1, u32(0, 500, 300, 800, 600))
+                    keyboard.send(pointer, 2, u32(0, 272, 0))
+                    keyboard.send(pointer, 4)
+                    keyboard.sync()
+                    wait_until(lambda: (root / "app.log").read_text().count("Ptyra selection: updated") >= before + 3)
+                    print("PASS: real Wayland press/motion/release update the selected grid range")
+
             if os.environ.get("PTYRA_TEST_TAB_CLICK"):
                 node = next(n for n in nodes(json.loads(ipc("-t", "get_tree"))) if n.get("app_id") == "ptyra")
                 rect, window = node["rect"], node["window_rect"]
