@@ -11,8 +11,12 @@ pub enum BindingAction {
     CloseTab,
     NextTab,
     PreviousTab,
+    ScrollPageUp,
+    ScrollPageDown,
+    ScrollTop,
+    ScrollBottom,
 }
-const NAMES: [&str; 7] = [
+const NAMES: [&str; 11] = [
     "copy",
     "paste",
     "ime_toggle",
@@ -20,6 +24,10 @@ const NAMES: [&str; 7] = [
     "close_tab",
     "next_tab",
     "previous_tab",
+    "scroll_page_up",
+    "scroll_page_down",
+    "scroll_top",
+    "scroll_bottom",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,7 +79,7 @@ impl Shortcut {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Bindings([Shortcut; 7]);
+pub struct Bindings([Shortcut; 11]);
 
 impl Default for Bindings {
     fn default() -> Self {
@@ -84,6 +92,10 @@ impl Default for Bindings {
                 "Ctrl+Shift+w",
                 "Ctrl+Page_Down",
                 "Ctrl+Page_Up",
+                "Shift+Page_Up",
+                "Shift+Page_Down",
+                "Shift+Home",
+                "Shift+End",
             ]
             .map(|text| Shortcut::parse(text).expect("built-in shortcut")),
         )
@@ -133,6 +145,8 @@ mod tests {
     use crate::config::Config;
     #[test]
     fn config_detects_duplicate_shortcuts() {
+        assert!(Config::from_toml(Some("[bindings]\nscroll_top=\"Alt+Home\"")).is_ok());
+        assert!(Config::from_toml(Some("[bindings]\nscroll_bottom=\"Ctrl+Space\"")).is_err());
         let binding = super::Bindings::default().get(super::BindingAction::Paste);
         let mods = crate::keymap::Modifiers {
             depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,

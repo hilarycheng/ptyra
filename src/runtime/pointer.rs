@@ -102,6 +102,7 @@ impl PointerInput {
 impl Runtime {
     pub(super) fn cancel_pointer_drag(&mut self) {
         self.clear_clipboard_notice();
+        self.wheel.reset();
         self.clipboard.binding.focus(None);
         self.primary.binding.focus(None);
         self.pointer_input.cancel_drag();
@@ -117,6 +118,9 @@ impl Runtime {
     pub(super) fn route_pointer(&mut self, event: Routed, qh: &QueueHandle<Self>) {
         if self.tabs.active() != Some(event.target.tab) {
             return;
+        }
+        if matches!(event.kind, Kind::Enter | Kind::Leave) {
+            self.wheel.reset();
         }
         if let Kind::Button {
             pressed: true,
@@ -176,6 +180,21 @@ impl Runtime {
             return;
         }
         let (origin, size) = self.content_geometry();
+        if let Kind::Axis { axis, value } = event.kind {
+            if event.position.x() >= 0.
+                && event.position.x() < f64::from(size.0)
+                && event.position.y() >= f64::from(origin)
+                && event.position.y() < f64::from(origin + size.1)
+                && let Some(mode) = self
+                    .tabs
+                    .get(event.target.tab)
+                    .and_then(|tab| tab.terminal().mode())
+                && let Some(scroll) = self.wheel.input(event.target.tab, *mode, axis, value)
+            {
+                self.scroll_active(scroll);
+            }
+            return;
+        }
         if matches!(
             event.kind,
             Kind::Button {

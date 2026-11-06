@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（155 已勾選；TASK-129、TASK-157–199 共 44 項未勾選）。
+**Total:** 199 atomic TASKS（156 已勾選；TASK-129、TASK-158–199 共 43 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -698,7 +698,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-029`, `TASK-030` | **Unit Test:** `terminal_viewport_scroll_clamps_to_history`
   - **Done:** 以 core API 移動 display offset，page/top/bottom 操作有確定邊界；history=0、alt screen 同淘汰舊行唔越界；操作只移 viewport，唔改 Shell cursor 或 PTY bytes。
 
-- [ ] **TASK-157 — Wheel / scroll shortcuts 驅動 viewport**
+- [x] **TASK-157 — Wheel / scroll shortcuts 驅動 viewport**
   - **Dependencies:** `TASK-130`, `TASK-133`, `TASK-140`, `TASK-156` | **Unit Test:** `runtime_scroll_input_targets_active_viewport`
   - **Done:** 無 application mouse ownership 時 wheel 同明確可設定 scroll bindings 操作 active history；新增 bindings 參與 conflict 驗證；按鍵輸入/新 output 時 follow-bottom policy 有記錄，其他 Tab offset 不變。
 

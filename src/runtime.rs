@@ -12,6 +12,7 @@ mod keyboard;
 mod paste;
 mod pointer;
 mod raster;
+mod scroll;
 mod selection;
 mod selection_overlay;
 mod sessions;
@@ -141,6 +142,7 @@ struct Runtime {
     pointer: Option<wayland_client::protocol::wl_pointer::WlPointer>,
     pointer_input: pointer::PointerInput,
     selection_input: selection::SelectionInput,
+    wheel: scroll::Wheel,
     clipboard: clipboard::Clipboard,
     primary: primary::Primary,
     paste: Option<paste::Paste>,
@@ -184,6 +186,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         pointer: None,
         pointer_input: pointer::PointerInput::default(),
         selection_input: selection::SelectionInput::default(),
+        wheel: scroll::Wheel::default(),
         clipboard: clipboard::Clipboard::new(config.clipboard_bytes),
         primary: primary::Primary::new(config.clipboard_bytes),
         paste: None,
@@ -443,7 +446,7 @@ impl Runtime {
             .is_some_and(|mode| mode.contains(alacritty_terminal::term::TermMode::APP_CURSOR))
     }
     fn enqueue_input(&mut self, bytes: Option<Vec<u8>>) -> Result<()> {
-        if let Some(bytes) = bytes
+        if let Some(bytes) = bytes.filter(|bytes| !bytes.is_empty())
             && let Some(pty) = self
                 .tabs
                 .active()
@@ -455,6 +458,9 @@ impl Runtime {
             if let Some(trace) = &mut self.input_trace {
                 trace.add(3, bytes.len());
             }
+            self.wheel.reset();
+            // Accepted keyboard input follows the live cursor; output alone preserves history.
+            self.scroll_active(alacritty_terminal::grid::Scroll::Bottom);
         }
         Ok(())
     }

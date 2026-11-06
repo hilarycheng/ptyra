@@ -96,6 +96,10 @@ impl KeyboardInput {
                 BindingAction::CloseTab,
                 BindingAction::NextTab,
                 BindingAction::PreviousTab,
+                BindingAction::ScrollPageUp,
+                BindingAction::ScrollPageDown,
+                BindingAction::ScrollTop,
+                BindingAction::ScrollBottom,
             ];
             let matches = |action, symbols: &[u32]| {
                 symbols
@@ -243,6 +247,20 @@ impl Runtime {
                     };
                     self.activate_tab(ids[next]);
                 }
+            }
+            BindingAction::ScrollPageUp
+            | BindingAction::ScrollPageDown
+            | BindingAction::ScrollTop
+            | BindingAction::ScrollBottom => {
+                use alacritty_terminal::grid::Scroll;
+                let scroll = match action {
+                    BindingAction::ScrollPageUp => Scroll::PageUp,
+                    BindingAction::ScrollPageDown => Scroll::PageDown,
+                    BindingAction::ScrollTop => Scroll::Top,
+                    _ => Scroll::Bottom,
+                };
+                self.wheel.reset();
+                self.scroll_active(scroll);
             }
             _ => eprintln!("Ptyra action unavailable: {action:?}"),
         }
@@ -450,6 +468,10 @@ mod tests {
             ("close_tab", BindingAction::CloseTab),
             ("next_tab", BindingAction::NextTab),
             ("previous_tab", BindingAction::PreviousTab),
+            ("scroll_page_up", BindingAction::ScrollPageUp),
+            ("scroll_page_down", BindingAction::ScrollPageDown),
+            ("scroll_top", BindingAction::ScrollTop),
+            ("scroll_bottom", BindingAction::ScrollBottom),
         ] {
             let mut input = KeyboardInput {
                 bindings: Config::from_toml(Some(&format!("[bindings]\n{name}='Ctrl+Shift+Tab'")))

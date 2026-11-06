@@ -183,11 +183,11 @@ def main():
             env["SHELL"] = str(wrapper)
             if os.environ.get("PTYRA_TEST_TRACE"):
                 env["PTYRA_TRACE_INPUT"] = "1"
-            if os.environ.get("PTYRA_TEST_POINTER") or os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE"):
+            if os.environ.get("PTYRA_TEST_POINTER") or os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") or os.environ.get("PTYRA_TEST_SCROLL"):
                 env["PTYRA_TRACE_POINTER"] = "1"
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE") or os.environ.get("PTYRA_TEST_PRIMARY") or os.environ.get("PTYRA_TEST_NO_PRIMARY"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
-            (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else ("clipboard_bytes=16\n" if os.environ.get("PTYRA_TEST_OSC52") or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "")) + ("osc52_write=true\n" if os.environ.get("PTYRA_TEST_OSC52") == "enabled" or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n")
+            (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else ("clipboard_bytes=16\n" if os.environ.get("PTYRA_TEST_OSC52") or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "")) + ("osc52_write=true\n" if os.environ.get("PTYRA_TEST_OSC52") == "enabled" or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n" + ("scroll_top='Alt+Home'\n" if os.environ.get("PTYRA_TEST_SCROLL") else ""))
             keyboard = Keyboard(display, keymap.read_bytes())
             with open(root / "app.log", "w") as log:
                 app = subprocess.Popen([binary, "--config", str(root / "test.toml")], env=env, stdout=log, stderr=log)
@@ -245,6 +245,9 @@ def main():
                 keyboard.send(primary_pointer, 2, u32(0, 274, 0))
                 keyboard.send(primary_pointer, 4)
                 keyboard.sync()
+            if os.environ.get("PTYRA_TEST_SCROLL"):
+                from native_scroll import check_scroll
+                check_scroll(root, env, keyboard, app, wait_until, u32)
             if os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE"):
                 from native_notice import check_notices
                 check_notices(root, env, keyboard, app, wait_until, ipc, Keyboard, u32, string)
