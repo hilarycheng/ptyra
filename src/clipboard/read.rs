@@ -84,7 +84,17 @@ impl ClipboardReceive {
                             io::ErrorKind::FileTooLarge,
                         ));
                     }
-                    if self.bytes.try_reserve(n).is_err() {
+                    // Grow geometrically only within the configured retained-byte cap.
+                    let needed = self.bytes.len() + n;
+                    let capacity = needed
+                        .max(self.bytes.capacity().saturating_mul(2))
+                        .min(self.limit);
+                    if needed > self.bytes.capacity()
+                        && self
+                            .bytes
+                            .try_reserve_exact(capacity - self.bytes.len())
+                            .is_err()
+                    {
                         self.close();
                         return Err(AppError::new(
                             Component::Clipboard,
@@ -174,3 +184,30 @@ impl<R: Read> ClipboardTransfer<R> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+    #[test]
+    fn runtime_resource_caps_apply_to_actual_owners() {
+        let config = crate::config::Config::from_toml(Some("clipboard_bytes=20000")).unwrap();
+        let mut receive = config.clipboard_receiver().unwrap();
+        let mut input = io::Cursor::new(vec![b'x'; config.clipboard_bytes]);
+        assert!(matches!(
+            receive.read_ready(&mut input).unwrap(),
+            ReadProgress::Read(16384)
+        ));
+        assert!(matches!(
+            receive.read_ready(&mut input).unwrap(),
+            ReadProgress::Read(3616)
+        ));
+        assert!(
+            receive.bytes.capacity() <= config.clipboard_bytes,
+            "receive allocation {} exceeds configured {}",
+            receive.bytes.capacity(),
+            config.clipboard_bytes
+        );
+        receive.cancel();
+        assert_eq!(receive.bytes.capacity(), 0);
+    }
+}

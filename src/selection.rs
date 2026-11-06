@@ -311,12 +311,34 @@ fn copy_lines_at_stops(
     range: SelectionRange,
     is_stop: impl Fn(usize) -> bool,
 ) -> Option<Vec<String>> {
-    let range = whole_glyph_range(grid, range)?;
-    let columns = grid.columns();
-    let last = Column(columns.checked_sub(1)?);
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut bytes = 0usize;
+    copy_chars_at_stops(grid, range, &is_stop, |c| {
+        bytes = bytes.checked_add(c.len_utf8())?;
+        if bytes > MAX_COPY_BYTES {
+            return None;
+        }
+        if c == '\n' {
+            lines.push(std::mem::take(&mut current));
+        } else {
+            current.push(c);
+        }
+        Some(())
+    })?;
+    lines.push(current);
+    Some(lines)
+}
+
+fn copy_chars_at_stops(
+    grid: &Grid<Cell>,
+    range: SelectionRange,
+    is_stop: &impl Fn(usize) -> bool,
+    mut emit: impl FnMut(char) -> Option<()>,
+) -> Option<()> {
+    let range = whole_glyph_range(grid, range)?;
+    let columns = grid.columns();
+    let last = Column(columns.checked_sub(1)?);
     for row in range.start.line.0..=range.end.line.0 {
         let line = Line(row);
         if line > range.start.line
@@ -324,7 +346,7 @@ fn copy_lines_at_stops(
                 .flags
                 .contains(Flags::WRAPLINE)
         {
-            lines.push(std::mem::take(&mut current));
+            emit('\n')?;
         }
         let first = if line == range.start.line {
             range.start.column.0
@@ -360,16 +382,11 @@ fn copy_lines_at_stops(
             }
             for c in std::iter::once(cell.c).chain(cell.zerowidth().into_iter().flatten().copied())
             {
-                bytes = bytes.checked_add(c.len_utf8())?;
-                if bytes > MAX_COPY_BYTES {
-                    return None;
-                }
-                current.push(c);
+                emit(c)?;
             }
         }
     }
-    lines.push(current);
-    Some(lines)
+    Some(())
 }
 
 /// Render selected logical lines as Copy text, separating only hard breaks.
@@ -381,14 +398,38 @@ pub(crate) fn copy_text_with_tabstops(
     grid: &Grid<Cell>,
     range: SelectionRange,
     stops: &[bool],
+    limit: usize,
 ) -> Option<String> {
     if stops.len() != grid.columns() {
         return None;
     }
-    join_logical_lines(
-        &copy_lines_at_stops(grid, range, |column| stops[column])?,
-        MAX_COPY_BYTES,
+    copy_text_at_stops(
+        grid,
+        range,
+        |column| stops[column],
+        limit.min(MAX_COPY_BYTES),
     )
+}
+
+fn copy_text_at_stops(
+    grid: &Grid<Cell>,
+    range: SelectionRange,
+    is_stop: impl Fn(usize) -> bool,
+    limit: usize,
+) -> Option<String> {
+    // Count before allocating; both passes borrow the same unchanged grid.
+    let mut bytes = 0usize;
+    copy_chars_at_stops(grid, range, &is_stop, |c| {
+        bytes = bytes.checked_add(c.len_utf8())?;
+        (bytes <= limit).then_some(())
+    })?;
+    let mut text = String::new();
+    text.try_reserve_exact(bytes).ok()?;
+    copy_chars_at_stops(grid, range, &is_stop, |c| {
+        text.push(c);
+        Some(())
+    })?;
+    Some(text)
 }
 
 fn join_logical_lines(lines: &[String], limit: usize) -> Option<String> {

@@ -786,7 +786,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## V. Runtime Resource / Failure Boundaries
 
-- [ ] **TASK-177 — Runtime budgets 接入所有資源 owner**
+- [x] **TASK-177 — Runtime budgets 接入所有資源 owner**
   - **Dependencies:** `TASK-097`, `TASK-105`, `TASK-131`, `TASK-149`, `TASK-168` | **Unit Test:** `runtime_resource_caps_apply_to_actual_owners`
   - **Done:** 核對並接通 config caps 同跨 Tab reservation，glyph/font cache 按 Window 共用；clipboard payload/transfer count、PTY queues、grid/history 同 frame buffers 有明確總上限；新增/關閉/resize 會正確保留或回收 budget，不只測孤立 counter。
 

@@ -11,12 +11,19 @@ struct Job<W> {
 pub(super) struct SendQueue<W> {
     jobs: Vec<Job<W>>,
     next: u64,
+    limit: usize,
 }
 impl<W> Default for SendQueue<W> {
     fn default() -> Self {
+        Self::new(crate::clipboard::write::MAX_CLIPBOARD_BYTES)
+    }
+}
+impl<W> SendQueue<W> {
+    pub fn new(limit: usize) -> Self {
         Self {
             jobs: Vec::new(),
             next: 0,
+            limit,
         }
     }
 }
@@ -25,7 +32,7 @@ impl<W: Write> SendQueue<W> {
         if self.jobs.len() == MAX_SENDS {
             return Err("too many clipboard transfers");
         }
-        if text.len() > crate::clipboard::write::MAX_CLIPBOARD_BYTES {
+        if text.len() > self.limit.min(crate::clipboard::write::MAX_CLIPBOARD_BYTES) {
             return Err("clipboard transfer exceeds limit");
         }
         let id = self
@@ -111,6 +118,41 @@ mod tests {
     impl Drop for Writer {
         fn drop(&mut self) {
             *self.dropped.borrow_mut() += 1;
+        }
+    }
+    #[test]
+    fn runtime_resource_caps_apply_to_actual_owners() {
+        let config = crate::config::Config::from_toml(Some("clipboard_bytes=20000")).unwrap();
+        let mut queues = [
+            SendQueue::new(config.clipboard_bytes),
+            SendQueue::new(config.clipboard_bytes),
+        ];
+        let text = "x".repeat(config.clipboard_bytes);
+        for queue in &mut queues {
+            assert!(queue.start(1, &(text.clone() + "x"), io::sink()).is_err());
+            for source in 1..=4 {
+                queue.start(source, &text, io::sink()).unwrap();
+            }
+            assert!(queue.start(5, &text, io::sink()).is_err());
+        }
+        assert_eq!(
+            queues
+                .iter()
+                .map(|q| q.jobs.iter().map(|j| j.send.pending()).sum::<usize>())
+                .sum::<usize>(),
+            8 * config.clipboard_bytes
+        );
+        for queue in &mut queues {
+            let ids: Vec<_> = queue.fds().map(|(id, _)| id).collect();
+            queue.pump(&ids); // Partial sends retain their full original allocation.
+            assert_eq!(queue.fds().count(), 4);
+            queue.cancel_source(1);
+            assert_eq!(queue.fds().count(), 3);
+            queue.start(5, &text, io::sink()).unwrap();
+            for source in 1..=5 {
+                queue.cancel_source(source);
+            }
+            assert_eq!(queue.fds().count(), 0);
         }
     }
     #[test]

@@ -34,7 +34,7 @@ fn prepare(
     let requests = crate::clipboard::plan_data_source(&mut binding.serials, seat, target)
         .ok_or("no valid input serial")?;
     Ok(CopyPlan {
-        text: write.text,
+        text: write.text.into_boxed_str().into_string(),
         requests,
     })
 }

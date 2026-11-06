@@ -81,13 +81,10 @@ pub(super) fn prepare_copy<P>(
     let range = tab.selection_range().ok_or("no valid selection")?;
     let text = tab
         .terminal_mut()
-        .copy_range_text(range)
-        .ok_or("selection unavailable")?;
+        .copy_range_text_with_limit(range, limit)
+        .ok_or("selection exceeds clipboard limit")?;
     if text.is_empty() {
         return Err("no valid selection");
-    }
-    if text.len() > limit {
-        return Err("selection exceeds clipboard limit");
     }
     let requests = crate::clipboard::plan_data_source(&mut binding.serials, seat, target)
         .ok_or("no valid input serial")?;
@@ -117,6 +114,7 @@ impl Clipboard {
     pub fn new(limit: usize) -> Self {
         Self {
             limit,
+            sends: super::clipboard_send::SendQueue::new(limit),
             ..Self::default()
         }
     }
@@ -568,6 +566,61 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for Runtime {
 mod tests {
     use super::*;
     use crate::{TabId, WindowId};
+    #[test]
+    fn runtime_resource_caps_apply_to_actual_owners() {
+        use crate::{
+            selection::Screen,
+            tabs::{SelectionAction, TabPty},
+        };
+        use alacritty_terminal::index::{Column, Line, Point};
+        struct Fake;
+        impl TabPty for Fake {
+            fn tab(&self) -> TabId {
+                TabId(1)
+            }
+        }
+        let config =
+            crate::config::Config::from_toml(Some("clipboard_bytes=10\nscrollback_lines=0"))
+                .unwrap();
+        let mut tabs = config.tab_registry::<Fake>().unwrap();
+        tabs.insert(TabId(1), 2, 8).unwrap();
+        let tab = tabs.get_mut(TabId(1)).unwrap();
+        tab.terminal_mut()
+            .feed(TabId(1), "中e\u{301}    \r\nZ".as_bytes())
+            .unwrap();
+        tab.select(
+            Screen::Main,
+            SelectionAction::Press,
+            Point::new(Line(0), Column(0)),
+        );
+        tab.select(
+            Screen::Main,
+            SelectionAction::Release,
+            Point::new(Line(1), Column(0)),
+        );
+        let target = FocusTarget {
+            window: WindowId(1),
+            tab: TabId(1),
+        };
+        let seat = SeatId(1);
+        let mut binding = Binding::default();
+        binding.sync(Some((1, seat)));
+        binding.record(seat, target, 1, InputSerialEvent::KeyPress);
+        assert!(prepare_copy(tab, &mut binding, seat, target, config.clipboard_bytes).is_err());
+        // Rejected copy does not consume the valid input serial or truncate text.
+        let copy = prepare_copy(tab, &mut binding, seat, target, 13).unwrap();
+        assert_eq!(copy.text, "中e\u{301}     \nZ");
+        assert_eq!(copy.text.capacity(), copy.text.len());
+        let mut clipboard = Clipboard::new(config.clipboard_bytes);
+        let (read, write) = nix::unistd::pipe().unwrap();
+        assert!(
+            clipboard
+                .sends
+                .start(1, &"x".repeat(11), std::fs::File::from(write))
+                .is_err()
+        );
+        drop(read);
+    }
     #[test]
     fn runtime_copy_publishes_selected_text_only() {
         use crate::{

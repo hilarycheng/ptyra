@@ -1377,3 +1377,6 @@ mod tests {
 
 #[cfg(test)]
 mod palette_tests;
+
+#[cfg(test)]
+mod resource_tests;

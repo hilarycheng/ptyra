@@ -43,6 +43,17 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 type Result<T> = std::result::Result<T, &'static str>;
 const MAX_PIXELS: usize = 4 * 1024 * 1024;
 
+fn resize_frame_pixels(pixels: &mut Vec<u8>, bytes: usize) -> Result<()> {
+    if bytes > MAX_PIXELS * 4 {
+        return Err("frame exceeds pixel limit");
+    }
+    pixels
+        .try_reserve_exact(bytes.saturating_sub(pixels.len()))
+        .map_err(|_| "frame allocation failed")?;
+    pixels.resize(bytes, 0);
+    Ok(())
+}
+
 struct PaintState {
     size: (u32, u32), // Surface-local logical units.
     buffer_size: (u32, u32),
@@ -705,10 +716,7 @@ impl Runtime {
                 busy: false,
             });
         }
-        self.pixels
-            .try_reserve(bytes.saturating_sub(self.pixels.len()))
-            .map_err(|_| "frame allocation failed")?;
-        self.pixels.resize(bytes, 0);
+        resize_frame_pixels(&mut self.pixels, bytes)?;
         let (bar_height, content_size) = self.content_geometry();
         let content_offset = (bar_height * self.paint.buffer_size.0) as usize * 4;
         let active = self.tabs.active().ok_or("no active tab")?;
@@ -1247,3 +1255,6 @@ mod tests {
         assert_eq!(state.size, (800, 600));
     }
 }
+
+#[cfg(test)]
+mod resource_tests;

@@ -24,6 +24,10 @@ pub const DEFAULT_SCROLLBACK_LINES: usize = 5_000;
 pub const MAX_SCROLLBACK_LINES: usize = 10_000;
 /// Cell slots across both screens, scrollback, and the core's spare row cache.
 pub const MAX_TERMINAL_CELLS: usize = 2_000_000;
+/// Retained Cell capacity, including both screens' spare rows and Vec growth.
+pub const MAX_TERMINAL_ALLOCATION_CELLS: usize = 10_000_000;
+/// One core resize may need additional reflow tails before discarding old history.
+pub const MAX_TERMINAL_RESIZE_CELLS: usize = 20_000_000;
 // alacritty_terminal 0.26.0 Storage grows in batches with up to 1,000 spare rows.
 const CORE_HISTORY_CACHE_LINES: usize = 1_000;
 /// Counts all bytes between ESC ] and BEL/CAN/SUB/ESC, including separators.
@@ -71,6 +75,9 @@ pub struct Terminal {
     tab: TabId,
     content_epoch: Option<u64>,
     core: Option<Core>,
+    reserved_rows: u16,
+    reserved_columns: u16,
+    allocated_cells: usize,
 }
 
 /// Borrowed view of one Tab's visible cells and render state; no payload Debug.
@@ -116,6 +123,10 @@ impl Terminal {
         Ok(Self {
             tab,
             content_epoch: Some(0),
+            reserved_rows: rows,
+            reserved_columns: columns,
+            allocated_cells: cell_reservation(rows, columns, scrollback_lines)
+                .ok_or_else(invalid)?,
             core: Some(Core {
                 term: Term::new(terminal_config(scrollback_lines), &size, events.clone()),
                 parser: Processor::new(),
@@ -280,6 +291,14 @@ impl Terminal {
         &mut self,
         range: alacritty_terminal::selection::SelectionRange,
     ) -> Option<String> {
+        self.copy_range_text_with_limit(range, crate::clipboard::write::MAX_CLIPBOARD_BYTES)
+    }
+
+    pub(crate) fn copy_range_text_with_limit(
+        &mut self,
+        range: alacritty_terminal::selection::SelectionRange,
+        limit: usize,
+    ) -> Option<String> {
         use alacritty_terminal::{index::Column, vte::ansi::Handler};
         let core = self.core.as_mut()?;
         let range = crate::selection::whole_glyph_range(core.term.grid(), range)?;
@@ -296,7 +315,7 @@ impl Terminal {
             stops[core.term.grid().cursor.point.column.0] = true;
         }
         core.term.grid_mut().cursor.point.column = saved;
-        crate::selection::copy_text_with_tabstops(core.term.grid(), range, &stops)
+        crate::selection::copy_text_with_tabstops(core.term.grid(), range, &stops, limit)
     }
 
     /// Borrow the core's grid without copying cells or exposing mutable state.
@@ -329,18 +348,65 @@ impl Terminal {
         Ok(core.term.grid().display_offset() != before)
     }
 
+    pub(crate) fn allocated_cells(&self) -> usize {
+        self.allocated_cells
+    }
+
+    /// Pinned core 0.26: both Storage owners can cache 1000 rows on height growth,
+    /// even with no history. Buffered reflow can retain up to four times high-water row width.
+    pub(crate) fn resize_allocation(&self, rows: u16, columns: u16) -> Option<(usize, usize)> {
+        let core = self.core.as_ref()?;
+        cell_reservation(rows, columns, core.scrollback_lines)?;
+        let grid = core.term.grid();
+        if grid.screen_lines() == usize::from(rows) && grid.columns() == usize::from(columns) {
+            return Some((self.allocated_cells, self.allocated_cells));
+        }
+        let r = usize::from(rows.max(self.reserved_rows));
+        let w = usize::from(columns.max(self.reserved_columns));
+        let history = core.scrollback_lines;
+        let retained = (4usize
+            .checked_mul(w)?
+            .checked_mul(2 * r + history + 2 * CORE_HISTORY_CACHE_LINES)?)
+        .max(self.allocated_cells);
+        if retained > MAX_TERMINAL_ALLOCATION_CELLS {
+            return None;
+        }
+        let mut peak = retained;
+        if usize::from(columns) < grid.columns() {
+            // shrink_columns holds split tails before truncating reflowed history.
+            // A wide spacer can reduce progress to C-1. Count the decreasing tails,
+            // including a previous wrapped row's prefix, before calling the core.
+            let old = grid.columns();
+            let step = usize::from(columns) - 1;
+            let splits = old.div_ceil(step);
+            let tails = 2usize
+                .checked_mul(splits)?
+                .checked_mul(old)?
+                .checked_sub(step.checked_mul(splits)?.checked_mul(splits - 1)?)?;
+            let reflow = (history + r)
+                .checked_mul(4 * w + tails)?
+                .checked_add(4 * w * (r + CORE_HISTORY_CACHE_LINES))?;
+            peak = peak.max(reflow);
+        }
+        (peak <= MAX_TERMINAL_RESIZE_CELLS).then_some((retained, peak))
+    }
+
     /// Resize both screens while preserving content, subject to the original allocation budget.
     pub fn resize(&mut self, rows: u16, columns: u16) -> Result<(), TerminalError> {
         let error = |kind| TerminalError {
             tab: self.tab,
             error: AppError::new(Component::Terminal, kind),
         };
+        if self.core.is_none() {
+            return Err(error(ErrorKind::NotConnected));
+        }
+        let (allocated_cells, _) = self
+            .resize_allocation(rows, columns)
+            .ok_or_else(|| error(ErrorKind::InvalidInput))?;
         let core = self
             .core
             .as_mut()
             .ok_or_else(|| error(ErrorKind::NotConnected))?;
-        cell_reservation(rows, columns, core.scrollback_lines)
-            .ok_or_else(|| error(ErrorKind::InvalidInput))?;
         if core.term.grid().screen_lines() != usize::from(rows)
             || core.term.grid().columns() != usize::from(columns)
         {
@@ -350,6 +416,9 @@ impl Terminal {
             rows: rows as usize,
             columns: columns as usize,
         });
+        self.allocated_cells = allocated_cells;
+        self.reserved_rows = self.reserved_rows.max(rows);
+        self.reserved_columns = self.reserved_columns.max(columns);
         Ok(())
     }
 
@@ -630,3 +699,6 @@ impl Timeout for ImmediateParsing {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod resource_tests;

@@ -22,12 +22,11 @@ pub(super) fn load(pattern: &str) -> Result<Vec<FontVec>> {
         .spawn()
         .map_err(|_| "Fontconfig fc-match unavailable")?;
     let mut bytes = Vec::new();
-    let read = child
-        .stdout
-        .take()
-        .ok_or("Fontconfig output unavailable")?
-        .take((MAX_DISCOVERY_BYTES + 1) as u64)
-        .read_to_end(&mut bytes);
+    let read = read_bounded(
+        child.stdout.take().ok_or("Fontconfig output unavailable")?,
+        &mut bytes,
+        MAX_DISCOVERY_BYTES + 1,
+    );
     let truncated = bytes.len() > MAX_DISCOVERY_BYTES;
     if read.is_err() || truncated {
         let _ = child.kill();
@@ -46,16 +45,43 @@ pub(super) fn load(pattern: &str) -> Result<Vec<FontVec>> {
     let text = std::str::from_utf8(&bytes[..end]).map_err(|_| "invalid Fontconfig response")?;
     load_candidates(text, MAX_TOTAL_BYTES, |path, index, budget| {
         let mut bytes = Vec::new();
-        File::open(path)
-            .map_err(|_| "font file unavailable")?
-            .take(budget.min(MAX_FONT_BYTES) as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| "font read failed")?;
+        read_bounded(
+            File::open(path).map_err(|_| "font file unavailable")?,
+            &mut bytes,
+            budget.min(MAX_FONT_BYTES) + 1,
+        )
+        .map_err(|_| "font read failed")?;
         if bytes.len() > budget.min(MAX_FONT_BYTES) {
             return Err("font file exceeds limit");
         }
         FontVec::try_from_vec_and_index(bytes, index).map_err(|_| "unsupported font file")
     })
+}
+
+/// FontVec keeps the input Vec's capacity, so cap allocation as well as length.
+/// The caller includes one sentinel byte when detecting an oversized source.
+fn read_bounded(mut reader: impl Read, bytes: &mut Vec<u8>, limit: usize) -> std::io::Result<()> {
+    let mut chunk = [0; 16 * 1024];
+    while bytes.len() < limit {
+        let available = chunk.len().min(limit - bytes.len());
+        let count = match reader.read(&mut chunk[..available]) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        let needed = bytes.len() + count;
+        if needed > bytes.capacity() {
+            let capacity = needed.max(bytes.capacity().saturating_mul(2)).min(limit);
+            bytes
+                .try_reserve_exact(capacity - bytes.len())
+                .map_err(|_| std::io::ErrorKind::OutOfMemory)?;
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    // Discovery/font ownership charges actual retained bytes, not spare Vec capacity.
+    *bytes = std::mem::take(bytes).into_boxed_slice().into_vec();
+    Ok(())
 }
 
 fn load_candidates(
@@ -104,6 +130,47 @@ fn load_candidates(
 mod tests {
     use super::*;
     const FONT: &[u8] = include_bytes!("../../tests/fixtures/fallback-primary.ttf");
+    #[test]
+    fn runtime_resource_caps_apply_to_actual_owners() {
+        struct Chunked<'a>(&'a [u8]);
+        impl Read for Chunked<'_> {
+            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                let count = bytes.len().min(4096);
+                self.0.read(&mut bytes[..count])
+            }
+        }
+        // Valid trailing padding crosses read_to_end's geometric growth boundary.
+        let mut source = FONT.to_vec();
+        source.resize(20_000, 0);
+        let fonts = load_candidates(
+            "/first\n0\n/second\n0\n/third\n0\n",
+            40_000,
+            |_, _, budget| {
+                let mut bytes = Vec::new();
+                read_bounded(Chunked(source.as_slice()), &mut bytes, budget + 1)
+                    .map_err(|_| "fixture read failed")?;
+                FontVec::try_from_vec(bytes).map_err(|_| "invalid fixture")
+            },
+        )
+        .unwrap();
+        assert_eq!(fonts.len(), 2);
+        let allocated: usize = fonts
+            .into_iter()
+            .map(|font| font.into_vec().capacity())
+            .sum();
+        assert_eq!(
+            allocated, 40_000,
+            "count actual FontVec allocations, not slice lengths"
+        );
+
+        let mut oversized = Vec::new();
+        let mut reader = source.as_slice();
+        read_bounded(&mut reader, &mut oversized, 10_001).unwrap();
+        assert_eq!(oversized.len(), 10_001);
+        assert_eq!(oversized.capacity(), 10_001);
+        assert_eq!(reader.len(), source.len() - 10_001);
+    }
+
     #[test]
     fn runtime_font_candidates_bound_discovery_faces_and_bytes() {
         let mut calls = Vec::new();

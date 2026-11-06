@@ -38,7 +38,7 @@ impl Primary {
             binding: Binding::default(),
             source: None,
             source_generation: 0,
-            sends: Default::default(),
+            sends: super::clipboard_send::SendQueue::new(limit),
             ready_sends: Vec::new(),
             receive: Default::default(),
             ready_receive: None,

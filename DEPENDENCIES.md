@@ -504,3 +504,85 @@ unsafe, native library, or global setting change.
 - Surface size and terminal size are distinct. Pixel-valid requests may still exceed u16 row/column representation, 32,768 screen cells, the 2,000,000 per-Tab reservation, or 8,000,000 across Tabs. Existing grids and PTY dimensions are then retained and clipped to the viewport, with a deduplicated metadata warning. An initial over-budget grid starts at 24x80 or the requested smaller dimensions, respecting the configured history limit; no history setting is silently reduced. Subsequent valid resizes use the existing conservative high-water reservation policy, so shrinking does not lend retained core capacity to another Tab.
 - Deterministic tests cover staging, invalid dimensions, no old-size commit eligibility, recovery despite a pending callback, active/hidden session retention, startup fallback, representational limits, per-Tab and combined reservations, and physical scale bounds. The opt-in `python3 tests/native_configure.py target/debug/ptyra` uses an owned minimal Wayland compositor and real PTY child to verify wire ordering/refusal/recovery. It is protocol integration evidence, not Sway/Fcitx5/AMD/Mesa desktop acceptance.
 - No dependency, native library, unsafe, FFI, thread, production subprocess, network behavior, installation or global configuration changes. Desktop acceptance remains deferred.
+
+## Actual runtime resource owners — TASK-177
+
+These are application-owned payload/cell-capacity ceilings, not measured RSS/PSS,
+allocator overhead guarantees, child-process limits, or completion of graphics
+integration. Existing logical grid limits (32,768 cells/screen, 2,000,000 reserved
+slots/Tab, 8,000,000/window) remain unchanged. All limits are checked before the
+relevant allocation or upstream resize; a rejected resize keeps every grid and
+PTY size, rather than trimming configured history or turning off reflow.
+
+- **Clipboard/Primary:** each window has two current sources, at most four send
+  jobs per selection, and one focus-bound receive/pending/queued paste transaction.
+  Each source/send payload is at most configured `clipboard_bytes` C (1..16 MiB).
+  Receive capacity grows geometrically only up to C. Selection copy counts the
+  full UTF-8 text, hard breaks, combining marks and custom tab stops before one
+  exact allocation; oversized text is rejected, never truncated. Source replacement
+  cancels its sends. Eight sends, two sources, one paste and one in-flight copy
+  conservatively total **12C**, plus at most 12 framing bytes per Tab. A receive or bracket-framing
+  reallocation can temporarily add another C. OSC52 pending/parser storage has
+  its separate existing 4 KiB sequence limit; a published source sheds spare
+  decoder capacity. Clipboard text never appears in diagnostics.
+- **PTY:** at most 64 owners retain 64 KiB regular input capacity each (**4 MiB**
+  window total), even after draining. One complete paste moves into its original
+  PTY without a clone. Focus/Tab change discards its remaining payload and retains
+  at most 12 bytes of needed bracket framing on that PTY; further pastes cannot
+  accumulate full payloads in hidden Tabs. Completion/cancel/owner drop reclaim
+  their payloads. Queue-full behavior is unchanged here (TASK-178 remains open).
+- **Fonts/glyphs:** one window Raster owns at most 16 faces, 32 MiB/face and
+  **48 MiB combined raw font bytes**, shared by all Tabs. Startup bounded reads
+  avoid `read_to_end` spare-capacity inflation and permit one overflow sentinel.
+  Geometric growth/shrinking can temporarily retain an extra 32 MiB font buffer.
+  Fontconfig discovery is limited to 128 KiB plus its sentinel and 64 candidates.
+  One glyph cache uses configured 0..16 MiB payloads and at most 4096 metadata
+  entries. Scale changes clear payloads; Tab creation/switch/close never clone
+  fonts or the cache. Uncached glyph masks remain separately bounded by raster
+  cell limits (2*256*512 bytes, with a 512-byte synthetic-style row); outline
+  rasterization has its existing 1024x1024 bounds. Font parser/rasterizer and
+  allocator bookkeeping are not claimed to be raw-font/cache payload bytes.
+- **Frames:** exactly two window-owned SHM files and one CPU image, each at most
+  4,194,304 pixels * 4 bytes: **48 MiB retained**. Busy SHM slots are never replaced;
+  free resized slots drop their old file/proxy first. CPU growth uses exact reserve,
+  not unbounded Vec doubling; shrink conservatively retains its <=16 MiB capacity.
+  A moving CPU reallocation can temporarily add 16 MiB (64 MiB total). Compositor
+  storage, protocol bookkeeping and GPU memory are not process-owned frame bytes.
+- **Grids:** a new Terminal reserves its actual construction/history envelope;
+  zero-history UI bars/notices/prompts do not prepay hypothetical resize spares.
+  Changed resize additionally reserves at most **10,000,000 retained Cell capacity
+  slots per Tab**, at most **20,000,000 during that Tab's reflow**, and **40,000,000
+  window-wide including one in-flight resize**. High-water reserves survive
+  shrinking/stopped cores until close. All prospective reservations and the peak
+  are validated across Tabs before any core mutates. Failed spawn releases its
+  Tab; close releases both its logical and actual reservations.
+
+Pinned-core proof (alacritty_terminal 0.26.0): `grid/storage.rs::initialize` may
+create 1000 spare rows for **either** screen on height growth, even with history=0.
+Let R/W be high-water rows/columns and H configured history. Retained row Cell
+capacity is bounded by `4W*(2R+H+2000)`: `Row::grow`/`split_off` retain capacity,
+and `shrink_columns` can repeatedly `append_front` a buffered tail whose Vec was
+already enlarged by a wide-character insertion. Thus 2W is insufficient; the
+bounded tail plus original row never exceeds 2W length and allocation growth is
+at most 4W. `shrink_columns` keeps reflown rows before history truncation, so a
+narrow resize also checks a decreasing-tail sum. For old width O, new C<O,
+`d=C-1`, `q=ceil(O/d)`, its conservative peak is
+`(H+R)*(4W+2qO-dq(q-1)) + 4W*(R+1000)`, or the retained envelope if larger.
+C-1 accounts for wide-character spacers; a carried prefix is included in the
+first O-sized tail. Arithmetic is checked. Extreme 32768-to-2 reflow is refused
+before entering the core. These bounds cover Cell Vec capacity, not just lengths.
+
+Row-vector metadata is separate: each retained Storage Vec is bounded by its
+high-water active/history/spare-row count with at most doubling capacity; reflow
+uses bounded old/new/reversed vectors (new rows at most `(H+R)*(q+1)` plus alternate
+storage). CellExtra/combining/hyperlink payloads remain under the existing parser,
+per-cell and OSC limits; those and allocation bookkeeping are not Cell slots.
+Tests exercise real configured receivers/sends, PTY queues, shared Raster, frame
+image growth, multi-Tab creation/close/failed spawn/resize, pinned Grid spare-row
+construction/drop, and real Row Vec capacities, rather than testing a detached
+reservation counter. Image config limits remain validated but native image owners
+are deliberately deferred to TASK-185/TASK-190.
+
+The raw-font bound is not a malicious-font sandbox: local startup-selected fonts
+can expand outline curves inside ab_glyph before the pixel-bound check. No font
+upload/decoder integration or untrusted-font hardening is added by this task.

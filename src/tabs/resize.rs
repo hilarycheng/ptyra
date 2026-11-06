@@ -51,6 +51,23 @@ impl<P: TabPty> TabRegistry<P> {
         {
             return Err(invalid());
         }
+        let allocations = self
+            .entries
+            .iter()
+            .map(|tab| {
+                tab.terminal
+                    .resize_allocation(rows, columns)
+                    .ok_or_else(invalid)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let total: usize = allocations.iter().map(|(retained, _)| retained).sum();
+        if total > super::MAX_TOTAL_TAB_ALLOCATION_CELLS
+            || allocations.iter().any(|(retained, peak)| {
+                total + peak - retained > super::MAX_TOTAL_TAB_ALLOCATION_CELLS
+            })
+        {
+            return Err(invalid());
+        }
         let mut changed = false;
         for (tab, reservation) in self.entries.iter_mut().zip(reservations) {
             let snapshot = tab.terminal.snapshot().ok_or_else(invalid)?;

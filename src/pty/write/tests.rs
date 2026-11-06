@@ -740,3 +740,51 @@ fn runtime_terminal_replies_return_to_source_pty() {
         0
     );
 }
+
+#[test]
+fn runtime_resource_caps_apply_to_actual_owners() {
+    let mut queues: Vec<_> = (0..crate::tabs::MAX_TABS)
+        .map(|_| WriteQueue::default())
+        .collect();
+    let regular = vec![b'k'; MAX_PTY_PENDING_BYTES];
+    for (i, queue) in queues.iter_mut().enumerate() {
+        queue.enqueue(TabId(i as u64), true, &regular).unwrap();
+        assert!(queue.enqueue(TabId(i as u64), true, b"x").is_err());
+        assert!(queue.bytes.capacity() <= MAX_PTY_PENDING_BYTES);
+    }
+    assert_eq!(
+        queues.iter().map(|q| q.bytes.capacity()).sum::<usize>(),
+        4 * 1024 * 1024
+    );
+    // Every formerly focused Tab may retain only short framing after cancellation.
+    for (i, queue) in queues.iter_mut().enumerate() {
+        let tab = TabId(i as u64);
+        while !queue.bytes.is_empty() {
+            queue.flush(tab, Some(&mut io::sink())).unwrap();
+        }
+        let mut paste = b"\x1b[200~payload\x1b[201~".to_vec();
+        let ptr = paste.as_ptr();
+        queue.enqueue_paste(tab, true, &mut paste, true).unwrap();
+        assert_eq!(
+            queue.paste.as_ref().unwrap().bytes.as_ptr(),
+            ptr,
+            "move, never copy"
+        );
+        assert_eq!(paste.capacity(), 0);
+        let mut writer = FakeWriter::new([Step::Accept(1)]);
+        queue.flush(tab, Some(&mut writer)).unwrap();
+        queue.cancel_paste(true);
+        assert!(queue.paste.as_ref().unwrap().bytes.capacity() <= 12);
+    }
+    assert!(
+        queues
+            .iter()
+            .map(|q| q.paste.as_ref().unwrap().bytes.capacity())
+            .sum::<usize>()
+            <= 64 * 12
+    );
+    for (i, queue) in queues.iter_mut().enumerate() {
+        queue.flush(TabId(i as u64), Some(&mut io::sink())).unwrap();
+        assert!(!queue.has_paste());
+    }
+}

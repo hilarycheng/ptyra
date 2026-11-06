@@ -20,6 +20,8 @@ use std::io::ErrorKind;
 pub const MAX_TABS: usize = 64;
 /// Reserved grid/history slots, not measured bytes; glyph caches stay outside Tab ownership.
 pub const MAX_TOTAL_TAB_CELLS: usize = 8_000_000;
+/// Actual Cell capacity, including one in-flight resize, separate from logical slots.
+pub const MAX_TOTAL_TAB_ALLOCATION_CELLS: usize = 40_000_000;
 
 pub enum TabDirection {
     Next,
@@ -139,6 +141,13 @@ impl<P: TabPty> TabRegistry<P> {
         self.entries.iter().map(|tab| tab.reserved_cells).sum()
     }
 
+    pub(crate) fn allocated_cells(&self) -> usize {
+        self.entries
+            .iter()
+            .map(|tab| tab.terminal.allocated_cells())
+            .sum()
+    }
+
     /// Keep the PTY for final output drainage; child exit never closes other Tabs.
     pub fn apply_effect(&mut self, effect: &crate::AppEffect) -> bool {
         let crate::AppEffect::PtyExited { tab, status } = effect else {
@@ -187,7 +196,9 @@ impl<P: TabPty> TabRegistry<P> {
         let reserved_cells =
             crate::terminal::cell_reservation(rows, columns, self.scrollback_lines)
                 .ok_or_else(|| AppError::new(Component::Terminal, ErrorKind::InvalidInput))?;
-        if reserved_cells > MAX_TOTAL_TAB_CELLS - self.reserved_cells() {
+        if reserved_cells > MAX_TOTAL_TAB_CELLS - self.reserved_cells()
+            || reserved_cells > MAX_TOTAL_TAB_ALLOCATION_CELLS - self.allocated_cells()
+        {
             return Err(AppError::new(Component::Terminal, ErrorKind::OutOfMemory));
         }
         self.entries
