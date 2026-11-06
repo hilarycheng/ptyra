@@ -742,7 +742,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## T. HiDPI / Rendering / Basic Colors
 
-- [ ] **TASK-167 — Runtime 套用 output scale 同 buffer geometry**
+- [x] **TASK-167 — Runtime 套用 output scale 同 buffer geometry**
   - **Dependencies:** `TASK-015`, `TASK-031`, `TASK-125`, `TASK-126`, `TASK-140` | **Unit Test:** `runtime_scale_keeps_logical_and_buffer_coordinates_consistent`
   - **Done:** 綁定 output/surface scale lifecycle，移動視窗或 scale=1↔2 後更新 buffer scale、pixel size、字型 metrics 同 hit-test；logical/physical 唔混用；較新 scale protocol 缺席時有一致 fallback，分配先檢查上限。
 

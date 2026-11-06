@@ -15,6 +15,7 @@ mod mouse;
 mod paste;
 mod pointer;
 mod raster;
+mod scale;
 mod scroll;
 mod selection;
 mod selection_overlay;
@@ -28,10 +29,10 @@ use std::{
     os::{fd::AsFd, unix::fs::FileExt},
 };
 use wayland_client::{
-    Connection, Dispatch, QueueHandle, delegate_noop,
+    Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
     protocol::{
-        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_output, wl_registry, wl_seat,
+        wl_shm, wl_shm_pool, wl_surface,
     },
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -40,7 +41,10 @@ type Result<T> = std::result::Result<T, &'static str>;
 const MAX_PIXELS: usize = 4 * 1024 * 1024;
 
 struct PaintState {
-    size: (u32, u32),
+    size: (u32, u32), // Surface-local logical units.
+    buffer_size: (u32, u32),
+    scale: u32,
+    geometry_presented: bool,
     configured: bool,
     dirty: bool,
     frame_pending: bool,
@@ -49,6 +53,9 @@ impl Default for PaintState {
     fn default() -> Self {
         Self {
             size: (800, 600),
+            buffer_size: (800, 600),
+            scale: 1,
+            geometry_presented: false,
             configured: false,
             dirty: false,
             frame_pending: false,
@@ -73,6 +80,7 @@ impl PaintState {
         if u64::from(width) * u64::from(height) > MAX_PIXELS as u64 {
             return Err("Wayland surface exceeds pixel limit");
         }
+        self.geometry_presented &= self.size == (width, height);
         self.size = (width, height);
         self.dirty = true;
         Ok(())
@@ -83,6 +91,7 @@ impl PaintState {
     fn submitted(&mut self) {
         self.dirty = false;
         self.frame_pending = true;
+        self.geometry_presented = true;
     }
 }
 
@@ -130,6 +139,8 @@ struct Runtime {
     globals: [u32; 3],
     surface: Option<wl_surface::WlSurface>,
     paint: PaintState,
+    output_scale: scale::State,
+    outputs: std::collections::BTreeMap<u32, wl_output::WlOutput>,
     slots: [Option<Slot>; 2],
     pixels: Vec<u8>,
     running: bool,
@@ -176,6 +187,8 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         globals: [0; 3],
         surface: None,
         paint: PaintState::default(),
+        output_scale: scale::State::default(),
+        outputs: std::collections::BTreeMap::new(),
         slots: [None, None],
         pixels: Vec::new(),
         running: true,
@@ -239,6 +252,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         if !app.running {
             break;
         }
+        app.sync_scale();
         sync::refresh(&mut app.tabs, &app.clock);
         app.sync_terminal()?;
         app.read_output(&qh)?;
@@ -497,8 +511,9 @@ impl Runtime {
     fn tab_layout(&self) -> bar::Layout {
         bar::Layout::new(
             &self.tabs,
-            self.paint.size,
+            self.paint.buffer_size,
             (self.raster.cell_width, self.raster.cell_height),
+            self.paint.scale,
         )
     }
     fn content_geometry(&self) -> (u32, (u32, u32)) {
@@ -510,7 +525,7 @@ impl Runtime {
             return Ok(());
         }
         let rows = (self.content_geometry().1.1 / self.raster.cell_height).max(1);
-        let columns = (self.paint.size.0 / self.raster.cell_width).max(2);
+        let columns = (self.paint.buffer_size.0 / self.raster.cell_width).max(2);
         let size = PtySize {
             rows: rows.try_into().map_err(|_| "too many rows")?,
             columns: columns.try_into().map_err(|_| "too many columns")?,
@@ -622,11 +637,11 @@ impl Runtime {
         else {
             return Ok(());
         };
-        let (width, height) = self.paint.size;
+        let (width, height) = self.paint.buffer_size;
         let bytes = width as usize * height as usize * 4;
         if self.slots[index]
             .as_ref()
-            .is_none_or(|slot| slot.size != self.paint.size)
+            .is_none_or(|slot| slot.size != self.paint.buffer_size)
         {
             if let Some(old) = self.slots[index].take() {
                 old.buffer.destroy();
@@ -652,7 +667,7 @@ impl Runtime {
             self.slots[index] = Some(Slot {
                 file,
                 buffer,
-                size: self.paint.size,
+                size: self.paint.buffer_size,
                 busy: false,
             });
         }
@@ -662,7 +677,7 @@ impl Runtime {
             .map_err(|_| "frame allocation failed")?;
         self.pixels.resize(bytes, 0);
         let (bar_height, content_size) = self.content_geometry();
-        let content_offset = (bar_height * self.paint.size.0) as usize * 4;
+        let content_offset = (bar_height * self.paint.buffer_size.0) as usize * 4;
         let tab = self
             .tabs
             .get(self.tabs.active().ok_or("no active tab")?)
@@ -684,7 +699,7 @@ impl Runtime {
         layout.draw(
             &self.tabs,
             &mut self.raster,
-            self.paint.size,
+            self.paint.buffer_size,
             &mut self.pixels[..content_offset],
         )?;
         let prompt = self
@@ -694,10 +709,15 @@ impl Runtime {
         if prompt.is_none()
             && let Some(notice) = self.clipboard_notice
         {
-            notice::draw(&mut self.raster, self.paint.size, &mut self.pixels, notice)?;
+            notice::draw(
+                &mut self.raster,
+                self.paint.buffer_size,
+                &mut self.pixels,
+                notice,
+            )?;
         }
         let presented = if prompt.is_some()
-            && paste::draw_prompt(&mut self.raster, self.paint.size, &mut self.pixels)?
+            && paste::draw_prompt(&mut self.raster, self.paint.buffer_size, &mut self.pixels)?
         {
             prompt
         } else {
@@ -708,6 +728,7 @@ impl Runtime {
             .write_all_at(&self.pixels, 0)
             .map_err(|_| "frame write failed")?;
         let surface = self.surface.as_ref().ok_or("surface unavailable")?;
+        surface.set_buffer_scale(self.paint.scale as i32);
         surface.attach(Some(&slot.buffer), 0, 0);
         surface.damage_buffer(0, 0, width as i32, height as i32);
         surface.frame(qh, ());
@@ -769,7 +790,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
         registry: &wl_registry::WlRegistry,
         event: wl_registry::Event,
         _: &(),
-        _: &Connection,
+        connection: &Connection,
         qh: &QueueHandle<Self>,
     ) {
         match event {
@@ -779,8 +800,13 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
                 version,
             } => match interface.as_str() {
                 "wl_compositor" if version >= 4 && state.compositor.is_none() => {
-                    state.compositor = Some(registry.bind(name, 4, qh, ()));
+                    state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
                     state.globals[0] = name;
+                }
+                "wl_output" if version >= 1 && state.output_scale.add(name, version.min(4)) => {
+                    state
+                        .outputs
+                        .insert(name, registry.bind(name, version.min(4), qh, name));
                 }
                 "wl_shm" if state.shm.is_none() => {
                     state.shm = Some(registry.bind(name, 1, qh, ()));
@@ -807,6 +833,16 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
             },
             wl_registry::Event::GlobalRemove { name } if state.globals.contains(&name) => {
                 state.fail("required Wayland global removed")
+            }
+            wl_registry::Event::GlobalRemove { name } if state.outputs.contains_key(&name) => {
+                state.output_scale.remove(name);
+                if let Some(output) = state.outputs.remove(&name) {
+                    if output.version() >= 3 {
+                        output.release();
+                    } else {
+                        let _ = connection.backend().destroy_object(&output.id());
+                    }
+                }
             }
             wl_registry::Event::GlobalRemove { name } if state.seat_name == Some(name) => {
                 state.remove_clipboard_device();
@@ -919,7 +955,6 @@ impl Dispatch<wl_callback::WlCallback, ()> for Runtime {
     }
 }
 delegate_noop!(Runtime: ignore wl_compositor::WlCompositor);
-delegate_noop!(Runtime: ignore wl_surface::WlSurface);
 delegate_noop!(Runtime: ignore wl_shm::WlShm);
 delegate_noop!(Runtime: ignore wl_shm_pool::WlShmPool);
 
@@ -973,6 +1008,10 @@ mod tests {
         state.submitted();
         state.frame_pending = false;
         assert!(!state.ready());
+        assert!(state.geometry_presented);
+        state.configure(801, 600).unwrap();
+        assert!(!state.geometry_presented);
+        state.configure(800, 600).unwrap();
         assert!(state.configure(-1, 600).is_err());
         assert!(state.configure(i32::MAX, i32::MAX).is_err());
         state.configure(0, 0).unwrap();

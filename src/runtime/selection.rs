@@ -16,11 +16,21 @@ pub(super) struct Geometry {
     pub size: (u32, u32),
     pub cell: (u32, u32),
 }
-#[derive(Default)]
 pub(super) struct SelectionInput {
+    scale: u32,
     drag: Option<(TabId, Screen, u64)>,
     click: Option<Click>,
     publish: bool,
+}
+impl Default for SelectionInput {
+    fn default() -> Self {
+        Self {
+            scale: 1,
+            drag: None,
+            click: None,
+            publish: false,
+        }
+    }
 }
 struct Click {
     owner: (TabId, Screen, u64),
@@ -29,11 +39,17 @@ struct Click {
     count: u8,
 }
 impl Click {
-    fn near(&self, point: crate::input::Point) -> bool {
-        (self.point.x() - point.x()).abs() <= 4. && (self.point.y() - point.y()).abs() <= 4.
+    fn near(&self, point: crate::input::Point, scale: u32) -> bool {
+        let tolerance = 4. * f64::from(scale);
+        (self.point.x() - point.x()).abs() <= tolerance
+            && (self.point.y() - point.y()).abs() <= tolerance
     }
 }
 impl SelectionInput {
+    pub fn set_scale(&mut self, scale: u32) {
+        self.scale = scale;
+        self.click = None;
+    }
     pub fn take_publication(&mut self) -> bool {
         std::mem::take(&mut self.publish)
     }
@@ -67,7 +83,7 @@ impl SelectionInput {
             && self
                 .click
                 .as_ref()
-                .is_some_and(|click| !click.near(event.position))
+                .is_some_and(|click| !click.near(event.position, self.scale))
         {
             self.click = None;
         }
@@ -140,7 +156,7 @@ impl SelectionInput {
                 .as_ref()
                 .filter(|click| {
                     click.owner == owner
-                        && click.near(event.position)
+                        && click.near(event.position, self.scale)
                         && at
                             .checked_sub(click.at)
                             .is_some_and(|elapsed| elapsed <= std::time::Duration::from_millis(400))
@@ -224,6 +240,52 @@ mod tests {
                 serial: 2,
             },
         )
+    }
+    #[test]
+    fn runtime_scaled_clicks_keep_logical_tolerance() {
+        for scale in [1, 2, 1] {
+            let mut tabs = TabRegistry::<Fake>::with_scrollback(0).unwrap();
+            tabs.insert(TabId(1), 3, 8).unwrap();
+            tabs.get_mut(TabId(1))
+                .unwrap()
+                .terminal_mut()
+                .feed(TabId(1), b"abc def")
+                .unwrap();
+            let geometry = Geometry {
+                origin: 20 * scale,
+                size: (80 * scale, 30 * scale),
+                cell: (10 * scale, 10 * scale),
+            };
+            let clock = crate::clock::FakeClock::default();
+            let mut input = SelectionInput::default();
+            input.set_scale(scale);
+            for (x, count) in [(12., 1), (15., 2), (18., 3), (23., 1)] {
+                let point = crate::input::Point::new(x, 25.).unwrap();
+                let point = super::super::scale::buffer_point(point, scale).unwrap();
+                input.route(
+                    &mut tabs,
+                    &event(1, point.x(), point.y(), Kind::Motion),
+                    geometry,
+                    &clock,
+                );
+                input.route(&mut tabs, &press(1, point.x(), point.y()), geometry, &clock);
+                input.route(
+                    &mut tabs,
+                    &release(1, point.x(), point.y()),
+                    geometry,
+                    &clock,
+                );
+                assert_eq!(input.click.as_ref().unwrap().count, count);
+                let range = tabs.get(TabId(1)).unwrap().selection_range().unwrap();
+                if count == 2 {
+                    assert_eq!((range.start.column.0, range.end.column.0), (0, 2));
+                }
+                if count == 3 {
+                    assert_eq!((range.start.column.0, range.end.column.0), (0, 7));
+                }
+                clock.advance(std::time::Duration::from_millis(50)).unwrap();
+            }
+        }
     }
     #[test]
     fn runtime_history_selection_copies_original_lines() {

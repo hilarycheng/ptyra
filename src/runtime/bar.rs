@@ -20,8 +20,13 @@ pub(super) struct Layout {
     pub items: Vec<Item>,
 }
 impl Layout {
-    pub fn new<P: TabPty>(tabs: &TabRegistry<P>, size: (u32, u32), cell: (u32, u32)) -> Self {
-        let height = (cell.1 + 8).min(size.1.saturating_sub(1));
+    pub fn new<P: TabPty>(
+        tabs: &TabRegistry<P>,
+        size: (u32, u32),
+        cell: (u32, u32),
+        scale: u32,
+    ) -> Self {
+        let height = (cell.1 + 8 * scale).min(size.1.saturating_sub(1));
         let columns = (size.0 / cell.0.max(1)).clamp(2, 1024) as u16;
         let ids: Vec<_> = tabs.ids().collect();
         let count = (usize::from(columns) / 12).max(1).min(ids.len());
@@ -131,6 +136,28 @@ mod tests {
         }
     }
     #[test]
+    fn runtime_scaled_tab_hit_targets_match_logical_positions() {
+        let mut tabs = TabRegistry::<Fake>::with_scrollback(0).unwrap();
+        for id in [1, 5, 9] {
+            tabs.insert(TabId(id), 2, 8).unwrap();
+        }
+        let base = Layout::new(&tabs, (288, 200), (8, 16), 1);
+        let scaled = Layout::new(&tabs, (576, 400), (16, 32), 2);
+        assert_eq!(scaled.height, base.height * 2);
+        assert_eq!(scaled.content, (base.content.0 * 2, base.content.1 * 2));
+        for x in [-0.1, 0., 95.9, 96., 287.9, 288.] {
+            let point = crate::input::Point::new(x, 5.).unwrap();
+            assert_eq!(
+                base.tab_at(&tabs, base.size, point),
+                scaled.tab_at(
+                    &tabs,
+                    scaled.size,
+                    super::super::scale::buffer_point(point, 2).unwrap()
+                )
+            );
+        }
+    }
+    #[test]
     fn runtime_tab_bar_click_selects_exact_tab() {
         use crate::input::Point;
         let mut tabs = TabRegistry::<Fake>::with_scrollback(0).unwrap();
@@ -138,7 +165,7 @@ mod tests {
             tabs.insert(TabId(id), 2, 8).unwrap();
         }
         let size = (288, 200);
-        let layout = Layout::new(&tabs, size, (8, 16));
+        let layout = Layout::new(&tabs, size, (8, 16), 1);
         for (x, expected) in [
             (0.0, Some(TabId(1))),
             (95.9, Some(TabId(1))),
@@ -178,7 +205,7 @@ mod tests {
         }
         for id in 1..=20 {
             tabs.activate(TabId(id));
-            let layout = Layout::new(&tabs, (240, 200), (8, 16));
+            let layout = Layout::new(&tabs, (240, 200), (8, 16), 1);
             assert_eq!(layout.height, 24);
             assert_eq!(layout.content, (240, 176));
             assert!(layout.items.len() <= 2);
@@ -188,7 +215,7 @@ mod tests {
                 30
             );
         }
-        let narrow = Layout::new(&tabs, (1, 1), (8, 16));
+        let narrow = Layout::new(&tabs, (1, 1), (8, 16), 1);
         assert_eq!(narrow.height, 0);
         assert_eq!(narrow.items.len(), 1);
     }

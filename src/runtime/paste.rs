@@ -153,7 +153,7 @@ impl super::Runtime {
         };
         let cancel = key.keysyms.contains(&0xff1b);
         let accept = prompt_geometry(
-            self.paint.size,
+            self.paint.buffer_size,
             (self.raster.cell_width, self.raster.cell_height),
         )
         .is_some()

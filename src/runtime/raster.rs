@@ -18,6 +18,10 @@ pub(super) struct Raster {
     fonts: Vec<FontVec>,
     pub cell_width: u32,
     pub cell_height: u32,
+    logical_cell: (u32, u32),
+    logical_baseline: f32,
+    logical_size: f32,
+    scale: u32,
     baseline: f32,
     size: f32,
     cache: GlyphCache,
@@ -49,12 +53,30 @@ impl Raster {
             fonts,
             cell_width,
             cell_height,
+            logical_cell: (cell_width, cell_height),
+            logical_baseline: baseline,
+            logical_size: config.font_size as f32,
+            scale: 1,
             baseline,
             size: config.font_size as f32,
             cache: config
                 .glyph_cache()
                 .map_err(|_| "glyph cache allocation failed")?,
         })
+    }
+    pub(super) fn logical_cell(&self) -> (u32, u32) {
+        self.logical_cell
+    }
+    pub(super) fn set_scale(&mut self, scale: u32) {
+        if self.scale == scale {
+            return;
+        }
+        self.cell_width = self.logical_cell.0 * scale;
+        self.cell_height = self.logical_cell.1 * scale;
+        self.baseline = self.logical_baseline * scale as f32;
+        self.size = self.logical_size * scale as f32;
+        self.scale = scale;
+        self.cache.clear();
     }
     pub fn draw(
         &mut self,
@@ -306,6 +328,45 @@ fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: 
 mod tests {
     use super::*;
     use crate::renderer::palette::CURSOR;
+    #[test]
+    fn runtime_scaled_glyphs_rebuild_cache_and_preserve_grid_geometry() {
+        let font = FontVec::try_from_vec(include_bytes!("../../tests/fixtures/demo.ttf").to_vec())
+            .unwrap();
+        let mut raster = Raster::new(vec![font], &Config::default()).unwrap();
+        let mut terminal = Terminal::new(crate::TabId(1), 2, 8).unwrap();
+        terminal
+            .feed(crate::TabId(1), "\x1b[?25l\x1b[41mA中e\u{301}".as_bytes())
+            .unwrap();
+        let cell = raster.logical_cell();
+        let draw = |raster: &mut Raster| {
+            let size = (8 * raster.cell_width, 2 * raster.cell_height);
+            let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
+            raster.draw(&terminal, size, &mut pixels, true).unwrap();
+            pixels
+        };
+        let original = draw(&mut raster);
+        let cache_bytes = raster.cache.bytes_used();
+        assert!(cache_bytes > 0);
+        raster.set_scale(2);
+        assert!(raster.cache.is_empty());
+        assert_eq!(
+            (raster.cell_width, raster.cell_height),
+            (cell.0 * 2, cell.1 * 2)
+        );
+        assert_eq!(raster.logical_cell(), cell);
+        assert_eq!(raster.baseline, raster.logical_baseline * 2.);
+        let scaled = draw(&mut raster);
+        assert_eq!(scaled.len(), original.len() * 4);
+        assert_eq!(raster.cache.bytes_used(), cache_bytes * 4);
+        raster.set_scale(2);
+        assert_eq!(
+            raster.cache.bytes_used(),
+            cache_bytes * 4,
+            "unchanged scale retains cache"
+        );
+        raster.set_scale(1);
+        assert_eq!(draw(&mut raster), original);
+    }
     #[test]
     fn runtime_query_palette_matches_cell_and_cursor_pixels() {
         let font = FontVec::try_from_vec(include_bytes!("../../tests/fixtures/demo.ttf").to_vec())

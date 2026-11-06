@@ -248,6 +248,9 @@ def main():
                 keyboard.send(primary_pointer, 2, u32(0, 274, 0))
                 keyboard.send(primary_pointer, 4)
                 keyboard.sync()
+            if os.environ.get("PTYRA_TEST_SCALE"):
+                from native_scale import check_scale
+                check_scale(root, env, keyboard, app, wait_until, ipc, nodes, u32)
             if os.environ.get("PTYRA_TEST_SYNC"):
                 from native_sync import check_sync
                 check_sync(root, env, keyboard, app, wait_until, ipc, nodes)
@@ -561,10 +564,34 @@ def main():
                 rect, window = node["rect"], node["window_rect"]
                 fixture = root / "selection-fixture"
                 fixture.write_bytes(("\x1b[2J\x1b[Habc 中e\u0301" + "z" * 200 + "\r\n").encode())
-                keyboard.text("cat " + str(fixture))
+                # Hold output after a real DSR barrier: a delayed shell prompt must not
+                # invalidate the selection between press and Primary publication.
+                holder = root / "selection-hold.py"
+                holder.write_text("""import os,re,select,termios,time,tty
+from pathlib import Path
+root=Path(""" + repr(str(root)) + """)
+old=termios.tcgetattr(0);tty.setraw(0)
+try:
+ os.write(1,(root/'selection-fixture').read_bytes()+b'\\x1b[6n')
+ data=bytearray();end=time.monotonic()+5
+ while not re.search(rb'\\x1b\\[\\d+;\\d+R$',data):
+  assert time.monotonic()<end
+  if select.select([0],[],[],0.05)[0]:data.extend(os.read(0,4096))
+ (root/'selection-ready').touch();end=time.monotonic()+30
+ while not (root/'selection-stop').exists():
+  assert time.monotonic()<end
+  time.sleep(0.01)
+finally:
+ termios.tcsetattr(0,termios.TCSAFLUSH,old)
+ (root/'selection-exited').touch()
+""")
+                keyboard.text("python3 " + str(holder))
                 keyboard.tap(28)
                 keyboard.sync()
-                time.sleep(0.2)
+                wait_until((root / "selection-ready").exists)
+                def finish_selection():
+                    (root / "selection-stop").touch()
+                    wait_until((root / "selection-exited").exists)
                 def primary_value(mime="text/plain;charset=utf-8"):
                     result = subprocess.run(["wl-paste", "--primary", "--type", mime, "--no-newline"], env=env, timeout=5, capture_output=True)
                     return result.stdout if result.returncode == 0 else None
@@ -654,6 +681,7 @@ def main():
                         subprocess.run(["grim", str(screenshot.with_name(screenshot.stem + "-selection.png"))], env=env, check=True)
                     print("PASS: compositor pixels highlight both complete CJK cells without overwriting glyphs")
                     if os.environ.get("PTYRA_TEST_SELECTION_LIFECYCLE"):
+                        finish_selection()
                         keyboard.text("echo changed > " + str(root / "selection-output"))
                         keyboard.tap(28)
                         keyboard.sync()
@@ -661,6 +689,7 @@ def main():
                         wait_until(lambda: not highlight_visible())
                         print("PASS: native PTY output invalidates the old selection highlight")
 
+                finish_selection()
 
             if os.environ.get("PTYRA_TEST_TAB_CLICK"):
                 node = next(n for n in nodes(json.loads(ipc("-t", "get_tree"))) if n.get("app_id") == "ptyra")

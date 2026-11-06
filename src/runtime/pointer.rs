@@ -120,7 +120,11 @@ impl Runtime {
         }
         self.pointer_input.clear();
     }
-    pub(super) fn route_pointer(&mut self, event: Routed, qh: &QueueHandle<Self>) {
+    pub(super) fn route_pointer(&mut self, mut event: Routed, qh: &QueueHandle<Self>) {
+        let Some(point) = super::scale::buffer_point(event.position, self.paint.scale) else {
+            return;
+        };
+        event.position = point;
         if self.tabs.active() != Some(event.target.tab) {
             return;
         }
@@ -172,10 +176,10 @@ impl Runtime {
             pressed: true,
             ..
         } = event.kind
-            && let Some(id) = self
-                .presented_bar
-                .as_ref()
-                .and_then(|layout| layout.tab_at(&self.tabs, self.paint.size, event.position))
+            && self.paint.geometry_presented
+            && let Some(id) = self.presented_bar.as_ref().and_then(|layout| {
+                layout.tab_at(&self.tabs, self.paint.buffer_size, event.position)
+            })
         {
             self.cancel_pointer_drag();
             self.activate_tab(id);
@@ -219,6 +223,9 @@ impl Runtime {
                 }
                 return;
             }
+        }
+        if !self.paint.geometry_presented {
+            return;
         }
         // Application mouse owns its gestures. Shift+Ctrl+click uses the local override.
         match super::hyperlink::route(
