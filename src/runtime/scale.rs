@@ -107,6 +107,9 @@ pub(super) fn buffer_point(point: Point, factor: u32) -> Option<Point> {
 }
 impl Runtime {
     pub(super) fn sync_scale(&mut self) {
+        if !self.paint.configured {
+            return;
+        }
         let factor = bounded_scale(
             self.paint.size,
             self.raster.logical_cell(),

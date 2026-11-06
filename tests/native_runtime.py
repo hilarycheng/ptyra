@@ -176,7 +176,7 @@ def main():
                 wrapper.write_text("#!/bin/sh\nexec /bin/bash --noprofile --norc\n")
             if os.environ.get("PTYRA_TEST_MULTI_PTY"):
                 os.mkfifo(root / "flood-start")
-                wrapper.write_text(f"#!/bin/sh\nif mkdir '{root}/first' 2>/dev/null; then :; else if mkdir '{root}/flood-once' 2>/dev/null; then read ready < '{root}/flood-start'; fi; head -c 262144 /dev/zero | tr '\\000' x; echo drained > '{root}/drained'; fi\nexec /bin/bash --noprofile --norc\n")
+                wrapper.write_text(f"#!/bin/sh\nif mkdir '{root}/first' 2>/dev/null; then :; else if mkdir '{root}/flood-once' 2>/dev/null; then read ready < '{root}/flood-start'; head -c 262144 /dev/zero | tr '\\000' x; echo drained > '{root}/drained'; fi; fi\nexec /bin/bash --noprofile --norc\n")
             if os.environ.get("PTYRA_TEST_OSC52"):
                 wrapper.write_text("#!/bin/sh\nprintf '\\033]52;c;U1RBUlQ=\\007\\033]52;p;U1RBUlQ=\\007'\nexec /bin/bash --noprofile --norc\n")
             wrapper.chmod(0o700)

@@ -3,6 +3,17 @@ use crate::error::{AppError, Component};
 use std::io::ErrorKind;
 
 impl<P: TabPty> TabRegistry<P> {
+    /// A first configure may fit the surface budget but exceed the grid/history
+    /// budget. Start a clipped 24x80 (or smaller) grid instead of losing startup.
+    pub(crate) fn initial_size(&self, rows: u32, columns: u32) -> (u16, u16) {
+        let requested = u16::try_from(rows).ok().zip(u16::try_from(columns).ok());
+        requested
+            .filter(|&(rows, columns)| {
+                crate::terminal::cell_reservation(rows, columns, self.scrollback_lines).is_some()
+            })
+            .unwrap_or((rows.clamp(1, 24) as u16, columns.clamp(2, 80) as u16))
+    }
+
     /// Raster metrics remain valid even when a requested grid resize is rejected.
     pub(crate) fn set_cell_pixels(&mut self, cell: (u32, u32)) {
         for tab in &mut self.entries {

@@ -49,6 +49,9 @@ struct PaintState {
     scale: u32,
     geometry_presented: bool,
     configured: bool,
+    pending_size: (i32, i32), // Latched only by xdg_surface.configure.
+    configure_error: Option<&'static str>,
+    configure_pending: bool,
     dirty: bool,
     frame_pending: bool,
 }
@@ -60,6 +63,9 @@ impl Default for PaintState {
             scale: 1,
             geometry_presented: false,
             configured: false,
+            pending_size: (0, 0),
+            configure_error: None,
+            configure_pending: false,
             dirty: false,
             frame_pending: false,
         }
@@ -67,6 +73,10 @@ impl Default for PaintState {
 }
 impl PaintState {
     fn configure(&mut self, width: i32, height: i32) -> Result<()> {
+        // An acknowledged size must be exact (notably when maximized). On refusal,
+        // retain the old buffer/grid but do not commit it against the new configure.
+        self.configured = false;
+        self.configure_pending = false;
         if width < 0 || height < 0 {
             return Err("invalid Wayland dimensions");
         }
@@ -85,13 +95,16 @@ impl PaintState {
         }
         self.geometry_presented &= self.size == (width, height);
         self.size = (width, height);
+        self.configured = true;
+        self.configure_pending = true;
         self.dirty = true;
         Ok(())
     }
     fn ready(&self) -> bool {
-        self.configured && self.dirty && !self.frame_pending
+        self.configured && self.dirty && (!self.frame_pending || self.configure_pending)
     }
     fn submitted(&mut self) {
+        self.configure_pending = false;
         self.dirty = false;
         self.frame_pending = true;
         self.geometry_presented = true;
@@ -154,7 +167,7 @@ struct Runtime {
     tabs: crate::tabs::TabRegistry<PtySession>,
     ready_pty: Vec<crate::TabId>,
     exit_history: sessions::ExitHistory,
-    rejected_resize: Option<PtySize>,
+    rejected_resize: Option<(u32, u32)>,
     presented_bar: Option<bar::Layout>,
     seat: Option<wl_seat::WlSeat>,
     seat_name: Option<u32>,
@@ -540,28 +553,34 @@ impl Runtime {
         }
         let rows = (self.content_geometry().1.1 / self.raster.cell_height).max(1);
         let columns = (self.paint.buffer_size.0 / self.raster.cell_width).max(2);
-        let size = PtySize {
-            rows: rows.try_into().map_err(|_| "too many rows")?,
-            columns: columns.try_into().map_err(|_| "too many columns")?,
-        };
+        let requested = (rows, columns);
+        let size = u16::try_from(rows)
+            .ok()
+            .zip(u16::try_from(columns).ok())
+            .map(|(rows, columns)| PtySize { rows, columns });
         if self.tabs.active().is_none() {
-            self.new_tab(size)?;
+            let (rows, columns) = self.tabs.initial_size(rows, columns);
+            self.new_tab(PtySize { rows, columns })?;
         }
         self.tabs
             .set_cell_pixels((self.raster.cell_width, self.raster.cell_height));
-        match self.tabs.resize_all(size.rows, size.columns) {
-            Ok(changed) => {
-                self.paint.dirty |= changed;
-                self.rejected_resize = None;
+        let resized = size.and_then(|size| {
+            self.tabs
+                .resize_all(size.rows, size.columns)
+                .ok()
+                .map(|changed| (size, changed))
+        });
+        let Some((size, changed)) = resized else {
+            if self.rejected_resize != Some(requested) {
+                eprintln!(
+                    "Ptyra resize rejected: tab cell budget or unavailable grid; retaining bounded grid"
+                );
             }
-            Err(_) => {
-                if self.rejected_resize != Some(size) {
-                    eprintln!("Ptyra resize rejected: tab cell budget or unavailable grid");
-                }
-                self.rejected_resize = Some(size);
-                return Ok(());
-            }
-        }
+            self.rejected_resize = Some(requested);
+            return Ok(());
+        };
+        self.paint.dirty |= changed;
+        self.rejected_resize = None;
         let ids: Vec<_> = self.tabs.ids().collect();
         for id in ids {
             if let Some(pty) = self.tabs.get_mut(id).and_then(|tab| tab.pty_mut()) {
@@ -743,7 +762,7 @@ impl Runtime {
             terminal_damage,
             overlays,
         );
-        if plan.surface.iter().all(Option::is_none) {
+        if plan.surface.iter().all(Option::is_none) && !self.paint.configure_pending {
             self.tabs
                 .get_mut(active)
                 .ok_or("terminal unavailable")?
@@ -816,7 +835,11 @@ impl Runtime {
                 (band.end - band.start) as i32,
             );
         }
-        surface.frame(qh, ());
+        // A configure can require a response while the compositor withholds the old
+        // frame callback. Reuse that one callback instead of accumulating more.
+        if !self.paint.frame_pending {
+            surface.frame(qh, ());
+        }
         surface.commit();
         slot.busy = true;
         self.damage.submitted(index);
@@ -994,8 +1017,16 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for Runtime {
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             surface.ack_configure(serial);
-            state.paint.configured = true;
-            state.paint.dirty = true;
+            let (width, height) = state.paint.pending_size;
+            let error = state.paint.configure(width, height).err();
+            if error != state.paint.configure_error
+                && let Some(error) = error
+            {
+                eprintln!(
+                    "Ptyra configure refused: {error}; presentation paused, Shells retained; resize smaller or leave maximized/fullscreen mode"
+                );
+            }
+            state.paint.configure_error = error;
         }
     }
 }
@@ -1010,9 +1041,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for Runtime {
     ) {
         match event {
             xdg_toplevel::Event::Configure { width, height, .. } => {
-                if let Err(error) = state.paint.configure(width, height) {
-                    state.fail(error);
-                }
+                state.paint.pending_size = (width, height);
             }
             xdg_toplevel::Event::Close => state.running = false,
             _ => {}
@@ -1083,12 +1112,121 @@ mod tests {
         assert!(!apply_output(&mut terminal, &mut paint, PtyReadStatus::Eof, &[]).unwrap());
     }
     #[test]
+    fn runtime_oversized_configure_keeps_valid_sessions() {
+        use crate::{
+            TabId,
+            tabs::{TabPty, TabRegistry},
+        };
+        use std::{cell::Cell, rc::Rc};
+        struct Fake(TabId, Rc<Cell<usize>>);
+        impl TabPty for Fake {
+            fn tab(&self) -> TabId {
+                self.0
+            }
+        }
+        impl Drop for Fake {
+            fn drop(&mut self) {
+                self.1.set(self.1.get() + 1);
+            }
+        }
+        let dropped = Rc::new(Cell::new(0));
+        let mut tabs = TabRegistry::with_scrollback(10_000).unwrap();
+        for _ in 0..5 {
+            sessions::spawn_tab(&mut tabs, 20, 80, |r| Ok(Fake(r.tab, dropped.clone()))).unwrap();
+        }
+        let reserved = tabs.reserved_cells();
+        let mut state = PaintState::default();
+        state.configure(800, 600).unwrap();
+        state.submitted();
+        // Staging a role event alone must not change the current presentation.
+        state.pending_size = (i32::MAX, i32::MAX);
+        assert!(state.configured);
+        assert_eq!(state.size, (800, 600));
+        for (width, height) in [(i32::MAX, i32::MAX), (-1, 600), (4096, 2048)] {
+            assert!(state.configure(width, height).is_err());
+            assert!(
+                !state.ready(),
+                "never commit an old-size buffer after refusal"
+            );
+            assert_eq!(state.size, (800, 600));
+            assert_eq!(state.buffer_size, (800, 600));
+            assert!(
+                state.frame_pending,
+                "keep ownership of the outstanding callback"
+            );
+            for id in tabs.ids().collect::<Vec<_>>() {
+                let tab = tabs.get_mut(id).unwrap();
+                assert!(tab.pty().is_some());
+                tab.terminal_mut().feed(id, b"\x1b[Hstill alive").unwrap();
+            }
+            assert_eq!(dropped.get(), 0);
+            assert_eq!(tabs.reserved_cells(), reserved);
+        }
+        // A new configure grants a response even if the old frame callback is withheld.
+        state.configure(640, 480).unwrap();
+        assert!(state.ready());
+        state.submitted();
+        state.dirty = true;
+        assert!(
+            !state.ready(),
+            "ordinary redraws still wait for that callback"
+        );
+        state.frame_pending = false;
+        assert!(state.ready());
+        assert!(tabs.resize_all(10, 40).unwrap());
+        assert_eq!(
+            tabs.reserved_cells(),
+            reserved,
+            "retain high-water capacity"
+        );
+        assert!(
+            tabs.resize_all(20, 150).is_err(),
+            "combined Tab budget still applies"
+        );
+        for id in tabs.ids() {
+            let snapshot = tabs.get(id).unwrap().terminal().snapshot().unwrap();
+            assert_eq!((snapshot.rows, snapshot.columns), (10, 40));
+            assert!(tabs.get(id).unwrap().pty().is_some());
+        }
+        // Pixel-valid wide/thin shapes and tiny fonts can still exceed u16/grid/history caps.
+        for history in [0, 5000, 10_000] {
+            let mut first = TabRegistry::<Fake>::with_scrollback(history).unwrap();
+            for requested in [(1, 4_194_304), (4_194_304, 2), (1000, 1000), (24, 80)] {
+                let bounded = first.initial_size(requested.0, requested.1);
+                assert!(crate::terminal::cell_reservation(bounded.0, bounded.1, history).is_some());
+                assert!(u32::from(bounded.0) <= requested.0 && u32::from(bounded.1) <= requested.1);
+                let id = sessions::spawn_tab(&mut first, bounded.0, bounded.1, |r| {
+                    Ok(Fake(r.tab, dropped.clone()))
+                })
+                .unwrap();
+                assert!(first.resize_all(1000, 1000).is_err());
+                let snapshot = first.get(id).unwrap().terminal().snapshot().unwrap();
+                assert_eq!(
+                    (snapshot.rows, snapshot.columns),
+                    (usize::from(bounded.0), usize::from(bounded.1))
+                );
+                first.close(id);
+            }
+            assert_eq!(first.initial_size(24, 80), (24, 80));
+        }
+        for logical in [(2048, 2048), (4_194_304, 1), (1, 4_194_304)] {
+            state.configure(logical.0, logical.1).unwrap();
+            assert!(scale::buffer_size(state.size, 1).is_some());
+            assert!(scale::buffer_size(state.size, 2).is_none());
+        }
+    }
+
+    #[test]
     fn runtime_window_waits_for_configure() {
         let mut state = PaintState::default();
         assert!(!state.ready());
-        state.configure(800, 600).unwrap();
-        assert!(!state.ready());
-        state.configured = true;
+        state.pending_size = (800, 600);
+        assert!(
+            !state.ready(),
+            "toplevel state waits for the surface configure"
+        );
+        let (width, height) = state.pending_size;
+        state.configure(width, height).unwrap();
         assert!(state.ready());
         state.submitted();
         assert!(!state.ready());

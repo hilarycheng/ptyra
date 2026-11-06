@@ -770,7 +770,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-161`, `TASK-172`, `TASK-126` | **Unit Test:** `runtime_palette_changes_pixels_and_query_replies`
   - **Done:** raster、cursor/overlay 同 color query 共用已解析 palette；設定、SGR index、OSC color/reset precedence 有一致結果；唔只 parse 但仍使用硬編碼 colors。
 
-- [ ] **TASK-174 — 超額 configure / buffer request 安全退讓**
+- [x] **TASK-174 — 超額 configure / buffer request 安全退讓**
   - **Dependencies:** `TASK-010`, `TASK-136`, `TASK-167` | **Unit Test:** `runtime_oversized_configure_keeps_valid_sessions`
   - **Done:** 當視窗/HiDPI 尺寸超過目前 surface 或 terminal cap，使用符合 xdg configure 規則嘅有界尺寸/錯誤策略；唔 overflow、OOM 或因普通 resize 無提示殺掉所有 Shell；清楚記錄可支援上限同實際退讓行為。
 
