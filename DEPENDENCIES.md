@@ -462,3 +462,26 @@ after successful presentation. The compositor's release ownership is unchanged.
 No new crate, native library, unsafe, FFI, thread, subprocess, payload log, network
 access, installation, or global setting change. Desktop/Fcitx5/GPU acceptance is
 separate; the existing font-parser maintenance/complexity advisory is unresolved.
+
+## Basic palette configuration — TASK-172
+
+`[colors]` accepts optional `foreground`, `background`, and `cursor` RGB strings
+in exact `#RRGGBB` form (case-insensitive hex). `[colors.ansi]` accepts individual
+`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, and the eight
+`bright_` names. Omitted entries keep the current native defaults. For example:
+
+```toml
+[colors]
+foreground = "#d3d7cf"
+background = "#181818"
+cursor = "#eeeeec"
+[colors.ansi]
+red = "#cc0000"
+bright_blue = "#729fcf"
+```
+
+No alpha, shorthand, numeric coercion, unknown names, or silent clamping.
+Programmatically supplied RGB integers must also fit 24 bits. Config diagnostics
+retain field/reason metadata only; parsing does not rewrite the source file.
+This task defines the schema/validation; native raster and color-query application
+is TASK-173. No dependency, unsafe, native library, or global setting change.

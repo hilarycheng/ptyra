@@ -1,11 +1,13 @@
 //! Bounded TOML configuration; diagnostics contain metadata, never source text or values.
 pub mod bindings;
 pub mod load;
+pub mod palette;
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, PartialEq)]
 pub struct Config {
     pub bindings: bindings::Bindings,
+    pub colors: palette::Palette,
     pub font_family: String,
     pub font_size: f64,
     pub scrollback_lines: usize,
@@ -35,6 +37,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             bindings: bindings::Bindings::default(),
+            colors: palette::Palette::default(),
             font_family: "monospace".into(),
             font_size: 14.0,
             scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
@@ -76,6 +79,7 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.bindings.validate()?;
+        self.colors.validate()?;
         self.image_limits().map_err(|_| {
             error(
                 "image_limits",
@@ -125,6 +129,7 @@ impl Config {
         for (key, value) in table {
             match key.as_str() {
                 "bindings" => config.bindings = bindings::Bindings::from_value(&value)?,
+                "colors" => config.colors = palette::Palette::from_value(&value)?,
                 "font_family" => {
                     config.font_family = value
                         .as_str()
@@ -169,6 +174,129 @@ fn integer(value: &toml::Value, field: &'static str) -> Result<usize, ConfigErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn config_palette_validates_and_defaults() {
+        use alacritty_terminal::{
+            term::color::Colors,
+            vte::ansi::{Color, NamedColor},
+        };
+        let default = palette::Palette::default();
+        for source in [None, Some(""), Some("[colors]"), Some("[colors.ansi]")] {
+            assert_eq!(Config::from_toml(source).unwrap().colors, default);
+        }
+        // Until TASK-173 consumes the parsed palette, defaults must match the native palette.
+        let overrides = Colors::default();
+        for (index, expected) in default.ansi.into_iter().enumerate() {
+            assert_eq!(
+                crate::renderer::palette::color(Color::Indexed(index as u8), &overrides),
+                expected
+            );
+        }
+        for (name, expected) in [
+            (NamedColor::Foreground, default.foreground),
+            (NamedColor::Background, default.background),
+            (NamedColor::Cursor, default.cursor),
+        ] {
+            assert_eq!(
+                crate::renderer::palette::color(Color::Named(name), &overrides),
+                expected
+            );
+        }
+        let source = "[colors]\nforeground='#010203'\ncursor='#AbCdEf'\n[colors.ansi]\nred='#00FF00'\nbright_white='#123456'";
+        let parsed = Config::from_toml(Some(source)).unwrap();
+        assert_eq!(parsed.colors.foreground, 0x010203);
+        assert_eq!(parsed.colors.background, default.background);
+        assert_eq!(parsed.colors.cursor, 0xabcdef);
+        for index in 0..16 {
+            assert_eq!(
+                parsed.colors.ansi[index],
+                match index {
+                    1 => 0x00ff00,
+                    15 => 0x123456,
+                    _ => default.ansi[index],
+                }
+            );
+        }
+        let names = [
+            "black",
+            "red",
+            "green",
+            "yellow",
+            "blue",
+            "magenta",
+            "cyan",
+            "white",
+            "bright_black",
+            "bright_red",
+            "bright_green",
+            "bright_yellow",
+            "bright_blue",
+            "bright_magenta",
+            "bright_cyan",
+            "bright_white",
+        ];
+        let mut all = String::from("[colors.ansi]\n");
+        for (index, name) in names.into_iter().enumerate() {
+            all.push_str(&format!("{name}='#{index:06x}'\n"));
+        }
+        assert_eq!(
+            Config::from_toml(Some(&all)).unwrap().colors.ansi,
+            std::array::from_fn(|i| i as u32)
+        );
+        let extremes =
+            Config::from_toml(Some("[colors]\nbackground='#000000'\nforeground='#ffffff'"))
+                .unwrap();
+        assert_eq!(
+            (extremes.colors.background, extremes.colors.foreground),
+            (0, 0xffffff)
+        );
+        for value in [
+            "123",
+            "-1",
+            "16777216",
+            "true",
+            "1.5",
+            "[]",
+            "{}",
+            "''",
+            "'#fff'",
+            "'#12345678'",
+            "'123456'",
+            "'#GG0000'",
+            "'#-12345'",
+            "' #123456'",
+            "'#123456 '",
+            "'＃123456'",
+            "'#繁體字'",
+        ] {
+            for field in ["foreground", "background", "cursor"] {
+                let source = format!("[colors]\n{field}={value}");
+                assert!(Config::from_toml(Some(&source)).is_err(), "{source}");
+            }
+            assert!(Config::from_toml(Some(&format!("[colors.ansi]\nred={value}"))).is_err());
+        }
+        for source in [
+            "colors=[]",
+            "colors=1",
+            "[colors]\nansi=[]",
+            "[colors]\nunknown='#123456'",
+            "[colors.ansi]\nbright_purple='#123456'",
+            "[colors.ansi]\n16='#123456'",
+            "[colors]\nforeground='#123456'\nforeground='#abcdef'",
+        ] {
+            assert!(Config::from_toml(Some(source)).is_err(), "{source}");
+        }
+        let error = Config::from_toml(Some("[colors]\nforeground='PRIVATE-TEXT'")).unwrap_err();
+        assert_eq!(error.field, "colors.foreground");
+        assert!(!format!("{error:?}").contains("PRIVATE-TEXT"));
+        let mut invalid = Config::default();
+        invalid.colors.cursor = 0x1000000;
+        assert_eq!(invalid.validate().unwrap_err().field, "colors");
+        invalid.colors = default;
+        invalid.colors.ansi[15] = u32::MAX;
+        assert!(invalid.validate().is_err());
+    }
+
     #[test]
     fn config_limits_are_bounded() {
         for source in [

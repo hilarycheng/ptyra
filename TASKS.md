@@ -762,7 +762,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-016`, `TASK-038`, `TASK-091`, `TASK-126`, `TASK-143`, `TASK-158` | **Unit Test:** `runtime_partial_damage_preserves_other_pixels`
   - **Done:** terminal/selection/preedit/cursor damage 接到 raster 同 surface damage；double-buffer reuse 保留未更新 pixels，resize/Tab switch 需要時完整重畫；一格更新唔無條件重畫整窗，idle/hidden view 不新增 frame。
 
-- [ ] **TASK-172 — TOML basic color palette schema 同驗證**
+- [x] **TASK-172 — TOML basic color palette schema 同驗證**
   - **Dependencies:** `TASK-094`, `TASK-098` | **Unit Test:** `config_palette_validates_and_defaults`
   - **Done:** 提供 scope 內 basic foreground/background/cursor/ANSI colors，缺省維持有效 palette；無效格式/範圍明確報錯，唔自動改設定檔；測部分 override 同 malformed input。
 
