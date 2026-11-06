@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（142 已勾選；TASK-129、TASK-144–199 共 57 項未勾選）。
+**Total:** 199 atomic TASKS（143 已勾選；TASK-129、TASK-145–199 共 56 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -642,7 +642,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-037`, `TASK-126`, `TASK-141` | **Unit Test:** `runtime_selection_overlay_matches_range`
   - **Done:** 真選區可見，wide glyph highlight 完整；選區改變/清除只更新畫面，唔改 terminal text；選區 state 同 renderer snapshot 接通，唔只測獨立 reducer。
 
-- [ ] **TASK-144 — Selection 跟隨 screen / resize / output lifecycle**
+- [x] **TASK-144 — Selection 跟隨 screen / resize / output lifecycle**
   - **Dependencies:** `TASK-046`, `TASK-131`, `TASK-136`, `TASK-141` | **Unit Test:** `runtime_selection_survives_only_valid_anchors`
   - **Done:** main/alt screen 各自隔離；resize/reflow、內容淘汰、Tab close 按明確 anchor policy 更新或失效選區；唔將舊 row/column 選區套到無關文字，stale drag 不可重建已清除選區。
 

@@ -65,6 +65,7 @@ pub struct KeyboardReply {
 /// One Tab's parser and grid. Payload-bearing state deliberately has no Debug.
 pub struct Terminal {
     tab: TabId,
+    content_epoch: Option<u64>,
     core: Option<Core>,
 }
 
@@ -108,6 +109,7 @@ impl Terminal {
         };
         Ok(Self {
             tab,
+            content_epoch: Some(0),
             core: Some(Core {
                 term: Term::new(terminal_config(scrollback_lines), &size, events.clone()),
                 parser: Processor::new(),
@@ -117,6 +119,12 @@ impl Terminal {
                 keyboard: crate::kitty::protocol::KeyboardProtocol::default(),
             }),
         })
+    }
+
+    /// Conservative anchor policy: any nonempty feed or changed grid size invalidates selections.
+    /// Exhaustion fails closed rather than allowing an old anchor generation to be reused.
+    pub(crate) fn content_epoch(&self) -> Option<u64> {
+        self.content_epoch
     }
 
     pub fn tab(&self) -> TabId {
@@ -178,6 +186,9 @@ impl Terminal {
         if tab != self.tab || bytes.len() > MAX_FEED_BYTES {
             return Err(error(ErrorKind::InvalidInput));
         }
+        if !bytes.is_empty() {
+            self.content_epoch = self.content_epoch.and_then(|epoch| epoch.checked_add(1));
+        }
         if !core.feed(bytes) {
             self.core = None;
             return Err(error(ErrorKind::InvalidData));
@@ -203,6 +214,11 @@ impl Terminal {
             .ok_or_else(|| error(ErrorKind::NotConnected))?;
         cell_reservation(rows, columns, core.scrollback_lines)
             .ok_or_else(|| error(ErrorKind::InvalidInput))?;
+        if core.term.grid().screen_lines() != usize::from(rows)
+            || core.term.grid().columns() != usize::from(columns)
+        {
+            self.content_epoch = self.content_epoch.and_then(|epoch| epoch.checked_add(1));
+        }
         core.term.resize(Size {
             rows: rows as usize,
             columns: columns as usize,

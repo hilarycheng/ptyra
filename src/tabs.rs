@@ -55,6 +55,7 @@ pub struct Tab<P> {
     terminal: Terminal,
     pty: Option<P>,
     selections: TabSelections,
+    selection_epoch: Option<u64>,
     title: String,
     dirty: bool,
     preedit: Option<crate::ime::preedit::PreeditState>,
@@ -88,6 +89,7 @@ impl<P> Tab<P> {
         &self.selections
     }
     pub fn selections_mut(&mut self) -> &mut TabSelections {
+        self.sync_selection_epoch();
         self.dirty = true;
         &mut self.selections
     }
@@ -181,6 +183,7 @@ impl<P: TabPty> TabRegistry<P> {
             terminal,
             pty: None,
             selections: TabSelections::new(id),
+            selection_epoch: Some(0),
             title: "Terminal".into(),
             dirty: true,
             preedit: None,

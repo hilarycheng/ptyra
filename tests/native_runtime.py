@@ -334,6 +334,14 @@ def main():
                     if screenshot:
                         subprocess.run(["grim", str(screenshot.with_name(screenshot.stem + "-selection.png"))], env=env, check=True)
                     print("PASS: compositor pixels highlight both complete CJK cells without overwriting glyphs")
+                    if os.environ.get("PTYRA_TEST_SELECTION_LIFECYCLE"):
+                        keyboard.text("echo changed > " + str(root / "selection-output"))
+                        keyboard.tap(28)
+                        keyboard.sync()
+                        wait_until(lambda: (root / "selection-output").exists())
+                        wait_until(lambda: not highlight_visible())
+                        print("PASS: native PTY output invalidates the old selection highlight")
+
 
             if os.environ.get("PTYRA_TEST_TAB_CLICK"):
                 node = next(n for n in nodes(json.loads(ipc("-t", "get_tree"))) if n.get("app_id") == "ptyra")

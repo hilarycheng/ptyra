@@ -9,7 +9,6 @@ use crate::{
         Renderer,
         dirty::{PreparedFrame, render_visible_dirty},
     },
-    selection::Screen,
     window::WindowSize,
 };
 use std::io::ErrorKind;
@@ -49,10 +48,7 @@ impl<P: TabPty> TabRegistry<P> {
             .terminal
             .snapshot()
             .ok_or_else(|| AppError::new(Component::Renderer, ErrorKind::NotConnected))?;
-        snapshot.content.selection = tab
-            .terminal
-            .mode()
-            .and_then(|mode| tab.selections.range(id, Screen::from_mode(mode)));
+        snapshot.content.selection = tab.selection_range();
         let result = render_visible_dirty(frames, clock, true, renderer, size, snapshot)?;
         if result.is_some() {
             tab.dirty = false;
@@ -74,6 +70,7 @@ mod tests {
     struct Backend {
         drawn: Vec<TabId>,
         fail: bool,
+        selections: Vec<Option<alacritty_terminal::selection::SelectionRange>>,
     }
     impl Renderer for Backend {
         type Frame = ();
@@ -82,6 +79,7 @@ mod tests {
                 return Err(AppError::new(Component::Renderer, ErrorKind::Other));
             }
             self.drawn.push(input.terminal.tab);
+            self.selections.push(input.terminal.content.selection);
             Ok(RenderOutput {
                 window: input.window,
                 tab: input.terminal.tab,
@@ -91,6 +89,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn rendered_selection_rejects_mutated_content() {
+        use crate::{selection::Screen, tabs::SelectionAction};
+        use alacritty_terminal::index::{Column, Line, Point};
+        let mut tabs = TabRegistry::<FakePty>::with_scrollback(0).unwrap();
+        tabs.insert(TabId(1), 2, 8).unwrap();
+        let point = Point::new(Line(0), Column(0));
+        let tab = tabs.get_mut(TabId(1)).unwrap();
+        tab.terminal_mut().feed(TabId(1), b"old").unwrap();
+        tab.select(Screen::Main, SelectionAction::Press, point);
+        tab.select(Screen::Main, SelectionAction::Release, point);
+        let size = WindowSize::new(80, 20).unwrap();
+        let scale = Scale::new(1).unwrap();
+        let clock = FakeClock::default();
+        let mut frames = FrameScheduler::new(WindowId(1), size);
+        let mut backend = Backend::default();
+        let (frame, _) = tabs
+            .render_active(&mut frames, &clock, &mut backend, size, scale)
+            .unwrap()
+            .unwrap();
+        assert!(backend.selections[0].is_some());
+        frames.frame_done(frame.callback);
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(1), b"\rnew")
+            .unwrap();
+        tabs.render_active(&mut frames, &clock, &mut backend, size, scale)
+            .unwrap()
+            .unwrap();
+        assert!(backend.selections[1].is_none());
+    }
     #[test]
     fn only_active_tab_is_rendered() {
         let size = WindowSize::new(160, 40).unwrap();

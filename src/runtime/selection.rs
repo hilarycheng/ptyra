@@ -18,11 +18,11 @@ pub(super) struct Geometry {
 }
 #[derive(Default)]
 pub(super) struct SelectionInput {
-    drag: Option<(TabId, Screen)>,
+    drag: Option<(TabId, Screen, u64)>,
     click: Option<Click>,
 }
 struct Click {
-    owner: (TabId, Screen),
+    owner: (TabId, Screen, u64),
     point: crate::input::Point,
     at: std::time::Duration,
     count: u8,
@@ -35,7 +35,7 @@ impl Click {
 impl SelectionInput {
     pub fn cancel<P: TabPty>(&mut self, tabs: &mut TabRegistry<P>) -> bool {
         self.click = None;
-        if let Some((id, screen)) = self.drag.take() {
+        if let Some((id, screen, _)) = self.drag.take() {
             if let Some(tab) = tabs.get_mut(id) {
                 tab.cancel_selection_drag(screen);
             }
@@ -86,7 +86,10 @@ impl SelectionInput {
             return false;
         };
         let screen = Screen::from_mode(mode);
-        let owner = (event.target.tab, screen);
+        let Some(epoch) = tab.terminal().content_epoch() else {
+            return false;
+        };
+        let owner = (event.target.tab, screen, epoch);
         let start = matches!(action, SelectionAction::Press);
         if !start && self.drag != Some(owner) {
             if self.drag.is_some() {
@@ -295,6 +298,83 @@ mod tests {
         input.route(&mut tabs, &release(2, 15., 25.), geometry, &clock);
         let range = tabs.get(TabId(2)).unwrap().selection_range().unwrap();
         assert_eq!((range.start.column.0, range.end.column.0), (1, 1));
+    }
+    #[test]
+    fn runtime_selection_survives_only_valid_anchors() {
+        let mut tabs = TabRegistry::<Fake>::with_scrollback(2).unwrap();
+        for id in [1, 2] {
+            tabs.insert(TabId(id), 2, 8).unwrap();
+        }
+        let clock = crate::clock::FakeClock::default();
+        let geometry = Geometry {
+            origin: 20,
+            size: (80, 20),
+            cell: (10, 10),
+        };
+        let mut input = SelectionInput::default();
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(1), b"original")
+            .unwrap();
+        input.route(&mut tabs, &press(1, 15., 25.), geometry, &clock);
+        input.route(&mut tabs, &release(1, 25., 25.), geometry, &clock);
+        assert!(tabs.get(TabId(1)).unwrap().selection_range().is_some());
+        assert!(!tabs.resize_all(2, 8).unwrap());
+        assert!(tabs.get(TabId(1)).unwrap().selection_range().is_some());
+        tabs.get_mut(TabId(2))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(2), b"other")
+            .unwrap();
+        assert!(tabs.get(TabId(1)).unwrap().selection_range().is_some());
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(1), b"\rCHANGED")
+            .unwrap();
+        assert!(tabs.get(TabId(1)).unwrap().selection_range().is_none());
+        // A completed click must also be invalidated, even inside the multi-click interval.
+        input.route(&mut tabs, &press(1, 15., 25.), geometry, &clock);
+        input.route(&mut tabs, &release(1, 15., 25.), geometry, &clock);
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(1), b"\x1b[?1049h\x1b[?1049l")
+            .unwrap();
+        input.route(&mut tabs, &press(1, 15., 25.), geometry, &clock);
+        input.route(&mut tabs, &release(1, 15., 25.), geometry, &clock);
+        let range = tabs.get(TabId(1)).unwrap().selection_range().unwrap();
+        assert_eq!((range.start.column.0, range.end.column.0), (1, 1));
+        for mutation in 0..3 {
+            clock.advance(std::time::Duration::from_secs(1)).unwrap();
+            input.route(&mut tabs, &press(1, 15., 25.), geometry, &clock);
+            match mutation {
+                0 => {
+                    tabs.resize_all(3, 10).unwrap();
+                }
+                1 => tabs
+                    .get_mut(TabId(1))
+                    .unwrap()
+                    .terminal_mut()
+                    .feed(TabId(1), b"\x1b[?1049hALT\x1b[?1049l")
+                    .unwrap(),
+                _ => tabs
+                    .get_mut(TabId(1))
+                    .unwrap()
+                    .terminal_mut()
+                    .feed(TabId(1), b"\r\n1\r\n2\r\n3\r\n4\r\n5")
+                    .unwrap(),
+            }
+            assert!(tabs.get(TabId(1)).unwrap().selection_range().is_none());
+            assert!(!input.route(&mut tabs, &release(1, 35., 25.), geometry, &clock));
+            assert!(tabs.get(TabId(1)).unwrap().selection_range().is_none());
+        }
+        clock.advance(std::time::Duration::from_secs(1)).unwrap();
+        input.route(&mut tabs, &press(1, 15., 25.), geometry, &clock);
+        tabs.close(TabId(1));
+        assert!(!input.route(&mut tabs, &release(1, 35., 25.), geometry, &clock));
+        assert!(tabs.get(TabId(2)).unwrap().selection_range().is_none());
     }
     #[test]
     fn runtime_drag_selects_whole_glyphs() {

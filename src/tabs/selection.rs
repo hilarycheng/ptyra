@@ -10,7 +10,17 @@ pub(crate) enum SelectionAction {
     Line,
 }
 impl<P> Tab<P> {
+    pub(super) fn sync_selection_epoch(&mut self) {
+        let epoch = self.terminal.content_epoch();
+        if self.selection_epoch != epoch {
+            self.selections = crate::selection::TabSelections::new(self.id);
+            self.selection_epoch = epoch;
+        }
+    }
     pub fn selection_range(&self) -> Option<SelectionRange> {
+        if self.selection_epoch.is_none() || self.selection_epoch != self.terminal.content_epoch() {
+            return None;
+        }
         let screen = Screen::from_mode(self.terminal.mode()?);
         crate::selection::whole_glyph_range(
             self.terminal.grid()?,
@@ -18,6 +28,10 @@ impl<P> Tab<P> {
         )
     }
     pub(crate) fn select(&mut self, screen: Screen, action: SelectionAction, point: Point) -> bool {
+        self.sync_selection_epoch();
+        if self.selection_epoch.is_none() {
+            return false;
+        }
         let selection = self
             .selections
             .selection_mut(self.id, screen)

@@ -737,3 +737,15 @@ fn terminal_osc_guard_covers_vte_entry_sequences() {
         }
     }
 }
+
+#[test]
+fn selection_content_epoch_never_reuses_an_old_generation() {
+    let mut terminal = super::Terminal::with_scrollback(crate::TabId(1), 2, 8, 0).unwrap();
+    terminal.content_epoch = Some(u64::MAX - 1);
+    terminal.feed(crate::TabId(1), b"x").unwrap();
+    assert_eq!(terminal.content_epoch(), Some(u64::MAX));
+    terminal.feed(crate::TabId(1), b"y").unwrap();
+    assert_eq!(terminal.content_epoch(), None);
+    terminal.resize(3, 8).unwrap();
+    assert_eq!(terminal.content_epoch(), None);
+}
