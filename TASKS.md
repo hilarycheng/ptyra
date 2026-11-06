@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（140 已勾選；TASK-129、TASK-142–199 共 59 項未勾選）。
+**Total:** 199 atomic TASKS（141 已勾選；TASK-129、TASK-143–199 共 58 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -634,7 +634,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-039`, `TASK-040`, `TASK-045`, `TASK-046`, `TASK-140` | **Unit Test:** `runtime_drag_selects_whole_glyphs`
   - **Done:** 真 press/motion/release 更新原 target selection，正反方向同 CJK/combining 結果一致；拖出邊界有明確 clip/cancel 行為，唔產生 PTY text 或跨 Tab 選區。
 
-- [ ] **TASK-142 — Double / Triple click 接入選字選行**
+- [x] **TASK-142 — Double / Triple click 接入選字選行**
   - **Dependencies:** `TASK-006`, `TASK-041`, `TASK-042`, `TASK-141` | **Unit Test:** `runtime_click_count_selects_word_or_line`
   - **Done:** 可注入 clock 嘅 click-count 判斷驅動現有 word/logical-line selection；超時、位移、Tab/Screen 改變重設 count；真操作測中文、ASCII 同 soft-wrapped line。
 

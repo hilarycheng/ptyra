@@ -94,3 +94,9 @@
 - `runtime_drag_selects_whole_glyphs`: initially failed before implementation, then PASS. Workspace regression, fmt and Clippy: PASS in the worktree and the staged tree excluding T129.
 - `PTYRA_TEST_POINTER=1 PTYRA_TEST_SELECTION=1 python3 tests/native_runtime.py ...`: PASS in owned headless Sway, including real native drag events and keyboard/reconnect regression.
 - CPU affinity 0–1 and Cargo jobs=2. Selection highlight is TASK-143; screen/content mutation invalidation is TASK-144. Actual desktop acceptance: NOT RUN. T129 edits remain uncommitted and preserved.
+
+## TASK-142
+
+- Dependencies satisfied. An injectable monotonic clock groups up to three clicks within 400 ms and a 4-pixel tolerance. Double click uses the existing Unicode word policy; triple click selects the complete soft-wrapped logical line. Timeout, pointer displacement, focus/tab cancellation and screen identity reset the count. A fourth click starts a new single-cell drag.
+- `runtime_click_count_selects_word_or_line`: initially failed, then PASS, including ASCII/CJK/combining, wrapped rows, timeout, displacement, Tab and screen resets. Full workspace, fmt and Clippy pass both combined and T129-free staged trees.
+- Owned-headless native matrix with `PTYRA_TEST_POINTER=1 PTYRA_TEST_SELECTION=1 PTYRA_TEST_MULTI_CLICK=1`: PASS on both trees, checking actual ASCII word, whole CJK and multi-row logical-line selection. Opt-in tracing contains coordinates/cell geometry only, not selected text. Desktop acceptance remains NOT RUN.

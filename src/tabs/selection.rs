@@ -6,6 +6,8 @@ pub(crate) enum SelectionAction {
     Press,
     Motion,
     Release,
+    Word,
+    Line,
 }
 impl<P> Tab<P> {
     pub fn selection_range(&self) -> Option<SelectionRange> {
@@ -24,6 +26,14 @@ impl<P> Tab<P> {
             SelectionAction::Press => selection.press(self.id, point),
             SelectionAction::Motion => selection.motion(self.id, point),
             SelectionAction::Release => selection.release(self.id, point),
+            SelectionAction::Word => self
+                .terminal
+                .grid()
+                .and_then(|grid| selection.double_click(self.id, grid, point)),
+            SelectionAction::Line => self
+                .terminal
+                .grid()
+                .and_then(|grid| selection.triple_click(self.id, grid, point)),
         }
         .is_some();
         self.dirty |= changed;

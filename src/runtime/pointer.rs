@@ -150,10 +150,27 @@ impl Runtime {
                 size,
                 cell: (self.raster.cell_width, self.raster.cell_height),
             },
+            &self.clock,
         );
         self.paint.dirty |= selection_changed;
         if selection_changed && self.trace_pointer {
             eprintln!("Ptyra selection: updated");
+            if let Some(range) = self
+                .tabs
+                .get(event.target.tab)
+                .and_then(|tab| tab.selection_range())
+            {
+                eprintln!(
+                    "Ptyra selection geometry: {}:{}-{}:{} cell={}:{} origin={}",
+                    range.start.line.0,
+                    range.start.column.0,
+                    range.end.line.0,
+                    range.end.column.0,
+                    self.raster.cell_width,
+                    self.raster.cell_height,
+                    origin
+                );
+            }
         }
         match event.kind {
             Kind::Button { button, serial, .. } => {

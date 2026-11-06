@@ -7,6 +7,7 @@ The small Wayland client injects fixed test keys through virtual-keyboard-v1.
 import array
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import struct
@@ -275,6 +276,7 @@ def main():
                 assert "Ptyra pointer: release" in (root / "app.log").read_text()
                 print("PASS: real Wayland pointer enter/button/axis events reach the targeted adapter")
                 if os.environ.get("PTYRA_TEST_SELECTION"):
+                    time.sleep(0.45)  # Independent drag, outside the multi-click interval.
                     before = (root / "app.log").read_text().count("Ptyra selection: updated")
                     keyboard.send(pointer, 2, u32(0, 272, 1))
                     keyboard.send(pointer, 1, u32(0, 500, 300, 800, 600))
@@ -284,6 +286,38 @@ def main():
                     wait_until(lambda: (root / "app.log").read_text().count("Ptyra selection: updated") >= before + 3)
                     print("PASS: real Wayland press/motion/release update the selected grid range")
 
+            if os.environ.get("PTYRA_TEST_MULTI_CLICK"):
+                pattern = r"Ptyra selection geometry: (-?\d+):(\d+)-(-?\d+):(\d+) cell=(\d+):(\d+) origin=(\d+)"
+                def selected():
+                    return tuple(map(int, re.findall(pattern, (root / "app.log").read_text())[-1]))
+                _, _, _, _, cw, ch, origin = selected()
+                node = next(n for n in nodes(json.loads(ipc("-t", "get_tree"))) if n.get("app_id") == "ptyra")
+                rect, window = node["rect"], node["window_rect"]
+                fixture = root / "selection-fixture"
+                fixture.write_bytes(("\x1b[2J\x1b[Habc 中e\u0301" + "z" * 200 + "\r\n").encode())
+                keyboard.text("cat " + str(fixture))
+                keyboard.tap(28)
+                keyboard.sync()
+                time.sleep(0.2)
+                def click_cell(column):
+                    x = rect["x"] + window["x"] + column * cw + cw // 2
+                    y = rect["y"] + window["y"] + origin + ch // 2
+                    before = len(re.findall(pattern, (root / "app.log").read_text()))
+                    keyboard.send(pointer, 1, u32(0, x, y, 800, 600))
+                    keyboard.send(pointer, 2, u32(0, 272, 1))
+                    keyboard.send(pointer, 2, u32(0, 272, 0))
+                    keyboard.send(pointer, 4)
+                    keyboard.sync()
+                    wait_until(lambda: len(re.findall(pattern, (root / "app.log").read_text())) > before)
+                click_cell(1)
+                click_cell(1)
+                assert selected()[:4] == (0, 0, 0, 2), selected()
+                click_cell(1)
+                assert selected()[0:2] == (0, 0) and selected()[2] > 0, selected()
+                click_cell(5)
+                click_cell(5)
+                assert selected()[:4] == (0, 4, 0, 5), selected()
+                print("PASS: native double/triple click selects ASCII, whole CJK and soft-wrapped logical lines")
             if os.environ.get("PTYRA_TEST_TAB_CLICK"):
                 node = next(n for n in nodes(json.loads(ipc("-t", "get_tree"))) if n.get("app_id") == "ptyra")
                 rect, window = node["rect"], node["window_rect"]
