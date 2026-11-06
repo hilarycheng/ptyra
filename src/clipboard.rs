@@ -89,6 +89,10 @@ pub struct PasteIntent {
 }
 
 impl PasteIntent {
+    pub(crate) fn for_target(target: FocusTarget, selection: SelectionKind) -> Self {
+        Self { target, selection }
+    }
+
     pub fn target(self) -> FocusTarget {
         self.target
     }
@@ -166,6 +170,11 @@ pub struct PendingPaste {
 }
 
 impl PendingPaste {
+    /// Runtime queues take ownership only after the exact instance is ready and unstarted.
+    pub(crate) fn ready_bytes(&mut self) -> Option<&mut Vec<u8>> {
+        (!self.confirmation_pending && self.sent == 0).then_some(&mut self.payload.bytes)
+    }
+
     pub fn target(&self) -> FocusTarget {
         self.target
     }

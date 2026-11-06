@@ -5,6 +5,7 @@ mod clipboard_offers;
 mod clipboard_receive;
 mod clipboard_send;
 mod keyboard;
+mod paste;
 mod pointer;
 mod raster;
 mod selection;
@@ -137,6 +138,7 @@ struct Runtime {
     pointer_input: pointer::PointerInput,
     selection_input: selection::SelectionInput,
     clipboard: clipboard::Clipboard,
+    paste: Option<paste::Paste>,
     trace_pointer: bool,
     input: keyboard::KeyboardInput,
     clock: crate::clock::MonotonicClock,
@@ -176,6 +178,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         pointer_input: pointer::PointerInput::default(),
         selection_input: selection::SelectionInput::default(),
         clipboard: clipboard::Clipboard::new(config.clipboard_bytes),
+        paste: None,
         trace_pointer: std::env::var_os("PTYRA_TRACE_POINTER").as_deref()
             == Some(std::ffi::OsStr::new("1")),
         input: keyboard::KeyboardInput {
@@ -218,7 +221,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         app.sync_terminal()?;
         app.read_output()?;
         app.clipboard.pump_sends();
-        app.clipboard.pump_receive();
+        app.pump_paste();
         if !app.running {
             break;
         }
@@ -234,7 +237,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             .active()
             .and_then(|id| app.tabs.get_mut(id))
             .and_then(|tab| tab.pty_mut())
-            && pty.pending_write_bytes() > 0
+            && pty.wants_write()
         {
             let result = pty.flush_write().map_err(|_| "PTY write failed")?;
             if let crate::pty::PtyWriteStatus::Written(count) = result.status
@@ -284,7 +287,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                 fds.push(PollFd::new(
                     fd,
                     PollFlags::POLLIN
-                        | if pty.pending_write_bytes() > 0 {
+                        | if pty.wants_write() {
                             PollFlags::POLLOUT
                         } else {
                             PollFlags::empty()
@@ -510,7 +513,7 @@ impl Runtime {
                 _ => {}
             }
             if let Some(pty) = self.tabs.get_mut(id).and_then(|tab| tab.pty_mut())
-                && pty.pending_write_bytes() > 0
+                && pty.wants_write()
             {
                 pty.flush_write().map_err(|_| "PTY write failed")?;
             }

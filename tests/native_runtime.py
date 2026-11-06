@@ -226,24 +226,46 @@ def main():
                 keyboard.sync()
                 print("PASS: one tap = 1 press + 1 release + 0 repeats + 1 queued byte + 1 written byte")
             if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE"):
-                def paste_fixture(payload, expected, mime="text/plain;charset=utf-8"):
+                def paste_fixture(payload, expected, mime="text/plain;charset=utf-8", capture=False, bracketed=True, tail=b""):
+                    received = root / "paste-received"
+                    if capture:
+                        if received.exists():
+                            received.unlink()
+                        framed = b"\x1b[200~" + payload + b"\x1b[201~" if bracketed else payload
+                        wanted = framed + tail
+                        mode = b"\x1b[?2004h" if bracketed else b"\x1b[?2004l"
+                        script = root / "capture.py"
+                        script.write_text("import os, select, termios, tty, time\nfrom pathlib import Path\nold=termios.tcgetattr(0)\ntry:\n tty.setraw(0)\n os.write(1, " + repr(mode + b"\x1b]2;Paste fixture\x07") + ")\n time.sleep(0.3)\n data=bytearray()\n end=time.monotonic()+8\n while len(data)<" + str(len(wanted)) + ":\n  assert time.monotonic()<end\n  if select.select([0],[],[],0.1)[0]: data.extend(os.read(0," + str(len(wanted)) + "-len(data)))\nfinally:\n termios.tcsetattr(0,termios.TCSANOW,old)\n os.write(1,b'\\x1b[?2004l\\x1b]2;Terminal\\x07')\nPath(" + repr(str(received)) + ").write_bytes(data)\n")
+                        keyboard.text(f"python3 {script}")
+                        keyboard.tap(28)
+                        keyboard.sync()
+                        wait_until(lambda: any(n.get("app_id") == "ptyra" and n.get("name") == "Paste fixture" for n in nodes(json.loads(ipc("-t", "get_tree")))))
                     before = (root / "app.log").read_text().count(expected)
+                    queued = (root / "app.log").read_text().count("Ptyra paste: queued")
                     subprocess.run(["wl-copy", "--type", mime], input=payload, env=env, check=True, timeout=5)
                     time.sleep(0.1)
                     keyboard.modifiers(5)
                     keyboard.tap(47)
                     keyboard.modifiers(0)
-                    keyboard.sync()
+                    if capture and tail:
+                        keyboard.text(tail.decode())
+                    else:
+                        keyboard.sync()
                     wait_until(lambda: (root / "app.log").read_text().count(expected) > before)
+                    if capture:
+                        wait_until(lambda: (root / "app.log").read_text().count("Ptyra paste: queued") > queued)
+                        wait_until(received.exists)
+                        assert received.read_bytes() == wanted, "native paste bytes differ"
+                        time.sleep(0.1)
                     assert app.poll() is None
                 text = ("繁體e\u0301 \t\n" * 6000).encode()
-                paste_fixture(text, f"Ptyra paste: received {len(text)} bytes")
+                paste_fixture(text, f"Ptyra paste: received {len(text)} bytes", capture=True, tail=b"z")
                 paste_fixture(b"x" * 131073, "Ptyra paste: clipboard receive exceeds limit")
                 paste_fixture(b"\xff", "Ptyra paste: clipboard receive is not UTF-8")
                 paste_fixture(b"nontext", "Ptyra paste: clipboard has no text offer", "application/octet-stream")
-                paste_fixture(b"recovered", "Ptyra paste: received 9 bytes", "text/plain")
+                paste_fixture(b"recovered", "Ptyra paste: received 9 bytes", "text/plain", capture=True, bracketed=False)
                 assert "繁體" not in (root / "app.log").read_text()
-                print("PASS: native receive exact byte counts, configured cap, UTF-8 rejection and recovery")
+                print("PASS: native receive cap/UTF-8 recovery and exact raw PTY paste, framing, backpressure and later-key order")
             if os.environ.get("PTYRA_TEST_COPY_OWNER"):
                 subprocess.run(["wl-copy", "--type", "application/octet-stream", "sentinel"], env=env, check=True, timeout=5)
             keyboard.modifiers(5)

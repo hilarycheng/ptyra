@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（148 已勾選；TASK-129、TASK-150–199 共 51 項未勾選）。
+**Total:** 199 atomic TASKS（149 已勾選；TASK-129、TASK-151–199 共 50 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -668,7 +668,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-053`, `TASK-054`, `TASK-055`, `TASK-148` | **Unit Test:** `runtime_clipboard_receive_is_bounded_and_cancellable`
   - **Done:** 發出正確 offer.receive，FD 由 poll 驅動；partial UTF-8/EOF/EINTR/EAGAIN、失效 offer 同 owner 消失有確定結果；使用 config clipboard cap，超額拒絕唔靜默截斷，取消後釋放 FD/payload。
 
-- [ ] **TASK-150 — Paste action 寫入原 Tab PTY queue**
+- [x] **TASK-150 — Paste action 寫入原 Tab PTY queue**
   - **Dependencies:** `TASK-057`, `TASK-058`, `TASK-059`, `TASK-061`, `TASK-130`, `TASK-131`, `TASK-149` | **Unit Test:** `runtime_paste_preserves_payload_and_target`
   - **Done:** Paste 開始時捕捉 TabId/focus token，完成後只向原有效 target enqueue；不 trim/normalize/補 newline；按該 terminal mode 加一次 bracketed framing，queue backpressure 唔遺失、重複或重排 payload。
 

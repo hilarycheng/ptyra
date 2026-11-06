@@ -142,18 +142,8 @@ impl Clipboard {
         self.receive.cancel();
         self.ready_receive = None;
     }
-    pub fn pump_receive(&mut self) {
-        match self.receive.pump(self.ready_receive.take(), &self.offers) {
-            Ok(Some(text)) => {
-                // PTY delivery and multiline safety are connected by TASK-150/151.
-                eprintln!(
-                    "Ptyra paste: received {} bytes; delivery unavailable",
-                    text.len()
-                );
-            }
-            Err(error) => eprintln!("Ptyra paste: {error}"),
-            Ok(None) => {}
-        }
+    fn pump_receive(&mut self) -> super::Result<Option<String>> {
+        self.receive.pump(self.ready_receive.take(), &self.offers)
     }
     fn start_receive(&mut self) -> super::Result<()> {
         use std::os::fd::AsFd;
@@ -205,10 +195,107 @@ impl Clipboard {
 }
 impl Runtime {
     pub(super) fn receive_clipboard(&mut self) -> super::Result<()> {
-        self.input.focus.target().ok_or("no keyboard focus")?;
-        self.clipboard.start_receive()
+        let paste = super::paste::Paste::capture(&self.input.focus)?;
+        let pty = self
+            .tabs
+            .get(paste.target.tab)
+            .and_then(|tab| tab.pty())
+            .ok_or("paste target unavailable")?;
+        if pty.has_paste() {
+            return Err("paste already in progress");
+        }
+        self.cancel_waiting_paste();
+        self.clipboard.start_receive()?;
+        let result = self
+            .tabs
+            .get_mut(paste.target.tab)
+            .and_then(|tab| tab.pty_mut())
+            .ok_or("paste target unavailable")?
+            .reserve_paste();
+        if result.is_err() {
+            self.clipboard.cancel_receive();
+            return Err("paste target unavailable");
+        }
+        self.paste = Some(paste);
+        Ok(())
     }
-
+    fn cancel_waiting_paste(&mut self) {
+        if let Some(paste) = self.paste.take()
+            && let Some(pty) = self
+                .tabs
+                .get_mut(paste.target.tab)
+                .and_then(|tab| tab.pty_mut())
+        {
+            pty.cancel_waiting_paste();
+        }
+        self.clipboard.cancel_receive();
+    }
+    pub(super) fn pump_paste(&mut self) {
+        if self
+            .paste
+            .as_ref()
+            .is_some_and(|paste| !paste.valid(&self.input.focus))
+        {
+            self.cancel_waiting_paste();
+        }
+        match self.clipboard.pump_receive() {
+            Ok(Some(text)) => {
+                eprintln!("Ptyra paste: received {} bytes", text.len());
+                let result = self
+                    .paste
+                    .as_mut()
+                    .ok_or("paste target unavailable")
+                    .and_then(|paste| {
+                        let terminal = self
+                            .tabs
+                            .get(paste.target.tab)
+                            .ok_or("paste target unavailable")?
+                            .terminal();
+                        paste.complete(&self.input.focus, terminal, text)
+                    });
+                if let Err(error) = result {
+                    eprintln!("Ptyra paste: {error}");
+                    self.cancel_waiting_paste();
+                }
+            }
+            Err(error) => {
+                eprintln!("Ptyra paste: {error}");
+                self.cancel_waiting_paste();
+            }
+            Ok(None) => {}
+        }
+        let Some(paste) = &mut self.paste else {
+            return;
+        };
+        let Some(pending) = &mut paste.pending else {
+            if self.clipboard.receive_fd().is_none() {
+                self.cancel_waiting_paste();
+            }
+            return;
+        };
+        let Some(bytes) = pending.ready_bytes() else {
+            return;
+        };
+        let Some(pty) = self
+            .tabs
+            .get_mut(paste.target.tab)
+            .and_then(|tab| tab.pty_mut())
+        else {
+            self.paste = None;
+            return;
+        };
+        match pty.enqueue_paste(bytes) {
+            Ok(_) => {
+                self.paste = None;
+                eprintln!("Ptyra paste: queued");
+            }
+            Err(error) if error.reason == crate::pty::PtyWriteFailure::QueueFull => {}
+            Err(_) => {
+                self.cancel_waiting_paste();
+                eprintln!("Ptyra paste: target unavailable");
+            }
+        }
+    }
     pub(super) fn copy_selection(&mut self, qh: &QueueHandle<Self>) -> super::Result<()> {
         let target = self.input.focus.target().ok_or("no keyboard focus")?;
         let seat = SeatId(self.seat_name.ok_or("clipboard unavailable")?);

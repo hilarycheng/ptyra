@@ -4,7 +4,7 @@ use crate::{
 };
 use std::{collections::VecDeque, io};
 
-/// Logical byte limit per session, independent of other sessions.
+/// Regular-input byte limit per session, plus one separately bounded owned paste.
 pub const MAX_PTY_PENDING_BYTES: usize = 64 * 1024;
 /// Maximum submitted bytes per flush; a short write ends the call immediately.
 pub const MAX_PTY_WRITE_BYTES: usize = 16 * 1024;
@@ -52,11 +52,98 @@ pub struct PtyWriteError {
 #[derive(Default)]
 pub(super) struct WriteQueue {
     bytes: VecDeque<u8>,
+    paste: Option<PasteSegment>,
+}
+
+struct PasteSegment {
+    bytes: Vec<u8>,
+    sent: usize,
+    before: usize,
+    ready: bool,
 }
 
 impl WriteQueue {
+    pub(super) fn reserve_paste(&mut self, tab: TabId, open: bool) -> Result<(), PtyWriteError> {
+        if !open || self.paste.is_some() {
+            return Err(PtyWriteError {
+                tab,
+                pending: self.pending(),
+                reason: if open {
+                    PtyWriteFailure::QueueFull
+                } else {
+                    PtyWriteFailure::Closed
+                },
+            });
+        }
+        self.paste = Some(PasteSegment {
+            bytes: Vec::new(),
+            sent: 0,
+            before: self.bytes.len(),
+            ready: false,
+        });
+        Ok(())
+    }
+    pub(super) fn cancel_waiting_paste(&mut self) {
+        if self.paste.as_ref().is_some_and(|paste| !paste.ready) {
+            self.paste = None;
+        }
+    }
+    pub(super) fn wants_write(&self) -> bool {
+        self.paste.as_ref().map_or(!self.bytes.is_empty(), |paste| {
+            paste.before > 0 || (paste.ready && paste.sent < paste.bytes.len())
+        })
+    }
+
+    /// Move one bounded paste into the FIFO without copying or permitting key interleaving.
+    pub(super) fn enqueue_paste(
+        &mut self,
+        tab: TabId,
+        open: bool,
+        bytes: &mut Vec<u8>,
+    ) -> Result<PtyEnqueueResult, PtyWriteError> {
+        let reason = if !open {
+            Some(PtyWriteFailure::Closed)
+        } else if self.paste.as_ref().is_some_and(|paste| paste.ready)
+            || bytes.len() > crate::clipboard::read::MAX_PASTE_BYTES + 12
+        {
+            Some(PtyWriteFailure::QueueFull)
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Err(PtyWriteError {
+                tab,
+                pending: self.pending(),
+                reason,
+            });
+        }
+        if bytes.is_empty() {
+            self.cancel_waiting_paste();
+        } else if let Some(paste) = &mut self.paste {
+            paste.bytes = std::mem::take(bytes);
+            paste.ready = true;
+        } else {
+            self.paste = Some(PasteSegment {
+                bytes: std::mem::take(bytes),
+                sent: 0,
+                before: self.bytes.len(),
+                ready: true,
+            });
+        }
+        Ok(PtyEnqueueResult {
+            tab,
+            pending: self.pending(),
+        })
+    }
+    pub(super) fn has_paste(&self) -> bool {
+        self.paste.is_some()
+    }
     pub(super) fn pending(&self) -> usize {
         self.bytes.len()
+            + self
+                .paste
+                .as_ref()
+                .map_or(0, |paste| paste.bytes.len() - paste.sent)
     }
 
     pub(super) fn enqueue(
@@ -74,7 +161,7 @@ impl WriteQueue {
         if !open {
             return Err(error(PtyWriteFailure::Closed));
         }
-        if bytes.len() > MAX_PTY_PENDING_BYTES - pending {
+        if bytes.len() > MAX_PTY_PENDING_BYTES - self.bytes.len() {
             return Err(error(PtyWriteFailure::QueueFull));
         }
         // Reserve before copying: failure rejects the entire enqueue and leaves
@@ -117,14 +204,39 @@ impl WriteQueue {
         if pending == 0 {
             return result(PtyWriteStatus::Empty, 0);
         }
-        let (first, second) = self.bytes.as_slices();
-        let front = if first.is_empty() { second } else { first };
+        if !self.wants_write() {
+            return result(PtyWriteStatus::WouldBlock, pending);
+        }
+        let pasting = self.paste.as_ref().is_some_and(|paste| paste.before == 0);
+        let front = if pasting {
+            let paste = self.paste.as_ref().unwrap();
+            &paste.bytes[paste.sent..]
+        } else {
+            let (first, second) = self.bytes.as_slices();
+            let front = if first.is_empty() { second } else { first };
+            let limit = self
+                .paste
+                .as_ref()
+                .map_or(front.len(), |paste| paste.before.min(front.len()));
+            &front[..limit]
+        };
         let chunk = &front[..front.len().min(MAX_PTY_WRITE_BYTES)];
         for _ in 0..MAX_PTY_WRITE_ATTEMPTS {
             match writer.write(chunk) {
                 Ok(0) => return Err(io_error(io::ErrorKind::WriteZero.into())),
                 Ok(n) if n <= chunk.len() => {
-                    drop(self.bytes.drain(..n));
+                    if pasting {
+                        let paste = self.paste.as_mut().unwrap();
+                        paste.sent += n;
+                        if paste.sent == paste.bytes.len() {
+                            self.paste = None;
+                        }
+                    } else {
+                        drop(self.bytes.drain(..n));
+                        if let Some(paste) = &mut self.paste {
+                            paste.before -= n;
+                        }
+                    }
                     return result(PtyWriteStatus::Written(n), self.pending());
                 }
                 Ok(_) => return Err(io_error(io::ErrorKind::InvalidData.into())),

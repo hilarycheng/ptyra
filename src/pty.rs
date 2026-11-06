@@ -375,6 +375,29 @@ impl PtySession {
             .enqueue(self.tab, self.master.is_some(), bytes)
     }
 
+    /// Moves a complete, validated paste behind existing input and ahead of later keys.
+    /// A rejected enqueue leaves the caller's payload and this queue unchanged.
+    pub(crate) fn enqueue_paste(
+        &mut self,
+        bytes: &mut Vec<u8>,
+    ) -> Result<PtyEnqueueResult, PtyWriteError> {
+        self.write_queue
+            .enqueue_paste(self.tab, self.master.is_some(), bytes)
+    }
+    pub(crate) fn reserve_paste(&mut self) -> Result<(), PtyWriteError> {
+        self.write_queue
+            .reserve_paste(self.tab, self.master.is_some())
+    }
+    pub(crate) fn cancel_waiting_paste(&mut self) {
+        self.write_queue.cancel_waiting_paste();
+    }
+    pub(crate) fn wants_write(&self) -> bool {
+        self.write_queue.wants_write()
+    }
+    pub(crate) fn has_paste(&self) -> bool {
+        self.write_queue.has_paste()
+    }
+
     /// Unwritten bytes still owned by this session, including after an error.
     pub fn pending_write_bytes(&self) -> usize {
         self.write_queue.pending()

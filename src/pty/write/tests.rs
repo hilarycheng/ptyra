@@ -393,3 +393,142 @@ fn pty_write_errors_preserve_pending_and_isolate_sessions() {
     assert_eq!(second_writer.output, b"second");
     assert_eq!(first.pending(), 5);
 }
+
+#[test]
+fn runtime_paste_queue_preserves_payload_under_backpressure() {
+    let tab = TabId(4);
+    let mut queue = WriteQueue::default();
+    queue.enqueue(tab, true, b"before").unwrap();
+    let expected = [b"\x1b[200~".as_slice(), &vec![b'x'; 100_000], b"\x1b[201~"].concat();
+    let mut payload = expected.clone();
+    queue.enqueue_paste(tab, true, &mut payload).unwrap();
+    assert!(payload.is_empty());
+    queue.enqueue(tab, true, b"after").unwrap();
+    let mut rejected = b"new".to_vec();
+    assert_eq!(
+        queue
+            .enqueue_paste(tab, true, &mut rejected)
+            .unwrap_err()
+            .reason,
+        PtyWriteFailure::QueueFull
+    );
+    assert_eq!(rejected, b"new");
+    let mut writer = FakeWriter::new(
+        [blocked(), interrupted(), Step::Accept(2)]
+            .into_iter()
+            .chain((0..100).map(|_| Step::Accept(4095))),
+    );
+    while queue.pending() > 0 {
+        queue.flush(tab, Some(&mut writer)).unwrap();
+    }
+    assert_eq!(
+        writer.output,
+        [b"before".as_slice(), &expected, b"after"].concat()
+    );
+    assert!(writer.largest_write <= MAX_PTY_WRITE_BYTES);
+    queue.enqueue_paste(tab, true, &mut rejected).unwrap();
+    assert!(rejected.is_empty());
+}
+
+#[test]
+fn runtime_paste_queue_preserves_limits_and_closed_payload() {
+    let tab = TabId(4);
+    let mut queue = WriteQueue::default();
+    let mut payload = b"paste".to_vec();
+    assert_eq!(
+        queue
+            .enqueue_paste(tab, false, &mut payload)
+            .unwrap_err()
+            .reason,
+        PtyWriteFailure::Closed
+    );
+    assert_eq!(payload, b"paste");
+    let mut too_large = vec![0; crate::clipboard::read::MAX_PASTE_BYTES + 13];
+    assert_eq!(
+        queue
+            .enqueue_paste(tab, true, &mut too_large)
+            .unwrap_err()
+            .reason,
+        PtyWriteFailure::QueueFull
+    );
+    assert_eq!(
+        too_large.len(),
+        crate::clipboard::read::MAX_PASTE_BYTES + 13
+    );
+    assert_eq!(queue.pending(), 0);
+    queue
+        .enqueue(tab, true, &vec![b'a'; MAX_PTY_PENDING_BYTES])
+        .unwrap();
+    queue.enqueue_paste(tab, true, &mut payload).unwrap();
+    assert_eq!(queue.pending(), MAX_PTY_PENDING_BYTES + 5);
+    assert_eq!(
+        queue.enqueue(tab, true, b"x").unwrap_err().reason,
+        PtyWriteFailure::QueueFull
+    );
+    let mut writer = FakeWriter::new((0..10).map(|_| Step::Accept(usize::MAX)));
+    while queue.pending() > 0 {
+        queue.flush(tab, Some(&mut writer)).unwrap();
+    }
+    assert_eq!(
+        writer.output,
+        [vec![b'a'; MAX_PTY_PENDING_BYTES], b"paste".to_vec()].concat()
+    );
+    queue.enqueue_paste(tab, true, &mut Vec::new()).unwrap();
+    assert!(!queue.has_paste());
+}
+
+#[test]
+fn runtime_paste_reservation_orders_keys_before_receive_eof() {
+    let tab = TabId(4);
+    let mut queue = WriteQueue::default();
+    queue.enqueue(tab, true, b"before").unwrap();
+    queue.reserve_paste(tab, true).unwrap();
+    queue.enqueue(tab, true, b"after").unwrap();
+    let mut writer = FakeWriter::new([
+        Step::Accept(usize::MAX),
+        Step::Accept(2),
+        blocked(),
+        interrupted(),
+        Step::Accept(usize::MAX),
+        Step::Accept(usize::MAX),
+    ]);
+    queue.flush(tab, Some(&mut writer)).unwrap();
+    assert_eq!(writer.output, b"before");
+    assert!(!queue.wants_write());
+    assert_eq!(
+        queue.flush(tab, Some(&mut writer)).unwrap().status,
+        PtyWriteStatus::WouldBlock
+    );
+    assert_eq!(writer.calls, 1);
+    let mut payload = b"paste".to_vec();
+    queue.enqueue_paste(tab, true, &mut payload).unwrap();
+    assert!(queue.wants_write());
+    queue.flush(tab, Some(&mut writer)).unwrap();
+    assert_eq!(writer.output, b"beforepa");
+    assert_eq!(queue.pending(), 8);
+    assert_eq!(
+        queue.flush(tab, Some(&mut writer)).unwrap().status,
+        PtyWriteStatus::WouldBlock
+    );
+    assert_eq!(queue.pending(), 8);
+    while queue.pending() > 0 {
+        queue.flush(tab, Some(&mut writer)).unwrap();
+    }
+    assert_eq!(writer.output, b"beforepasteafter");
+    queue.reserve_paste(tab, true).unwrap();
+    queue.enqueue(tab, true, b"released").unwrap();
+    assert!(!queue.wants_write());
+    queue.cancel_waiting_paste();
+    assert!(queue.wants_write());
+    let mut writer = FakeWriter::new([Step::Accept(usize::MAX)]);
+    queue.flush(tab, Some(&mut writer)).unwrap();
+    assert_eq!(writer.output, b"released");
+    queue.reserve_paste(tab, true).unwrap();
+    queue.enqueue(tab, true, b"empty tail").unwrap();
+    queue.enqueue_paste(tab, true, &mut Vec::new()).unwrap();
+    assert!(!queue.has_paste());
+    assert!(queue.wants_write());
+    let mut writer = FakeWriter::new([Step::Accept(usize::MAX)]);
+    queue.flush(tab, Some(&mut writer)).unwrap();
+    assert_eq!(writer.output, b"empty tail");
+}
