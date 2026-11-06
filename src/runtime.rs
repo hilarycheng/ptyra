@@ -119,6 +119,7 @@ struct Runtime {
     raster: raster::Raster,
     tabs: crate::tabs::TabRegistry<PtySession>,
     ready_pty: Vec<crate::TabId>,
+    exit_history: sessions::ExitHistory,
     seat: Option<wl_seat::WlSeat>,
     seat_name: Option<u32>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -150,6 +151,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         raster,
         tabs,
         ready_pty: Vec::new(),
+        exit_history: sessions::ExitHistory::default(),
         seat: None,
         seat_name: None,
         keyboard: None,
@@ -397,7 +399,22 @@ impl Runtime {
         for (id, result) in results {
             match result.map_err(|_| "PTY read failed")?.status {
                 PtyReadStatus::Data(_) if self.tabs.active() == Some(id) => self.paint.dirty = true,
-                PtyReadStatus::Eof => self.running = false,
+                PtyReadStatus::Eof => {
+                    let status = if let Some(pty) =
+                        self.tabs.get_mut(id).and_then(|tab| tab.pty_mut())
+                    {
+                        let mut status = pty.try_wait().map_err(|_| "child status unavailable")?;
+                        if status.is_none() {
+                            pty.terminate().map_err(|_| "child cleanup failed")?;
+                            status = pty.try_wait().map_err(|_| "child status unavailable")?;
+                        }
+                        status
+                    } else {
+                        None
+                    };
+                    self.exit_history.record(&mut self.tabs, id, status);
+                    self.close_tab(id);
+                }
                 _ => {}
             }
             if let Some(pty) = self.tabs.get_mut(id).and_then(|tab| tab.pty_mut())

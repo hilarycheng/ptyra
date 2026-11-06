@@ -244,6 +244,19 @@ def main():
                 assert proof2.read_text().strip() in children.read_text().split()
                 assert len(children.read_text().split()) == 2
                 print("PASS: new Tab activation and previous Tab shortcut route input without spawning")
+            if os.environ.get("PTYRA_TEST_EXIT_TAB"):
+                keyboard.modifiers(4)
+                keyboard.tap(109)
+                keyboard.modifiers(0)
+                keyboard.text("echo final > " + str(root / "final"))
+                keyboard.tap(28)
+                keyboard.text("exit 7")
+                keyboard.tap(28)
+                keyboard.sync()
+                wait_until(lambda: children.read_text().split() == first)
+                assert (root / "final").read_text() == "final\n"
+                assert app.poll() is None
+                print("PASS: second child exit drains and closes only that Tab; original Shell survives")
             if os.environ.get("PTYRA_TEST_CLOSE_TAB"):
                 keyboard.modifiers(4)
                 keyboard.tap(109)  # Ctrl+PageDown selects second.

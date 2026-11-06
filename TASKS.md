@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（133 已勾選；TASK-129、TASK-135–199 共 66 項未勾選）。
+**Total:** 199 atomic TASKS（134 已勾選；TASK-129、TASK-136–199 共 65 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -602,7 +602,7 @@
   - **Dependencies:** `TASK-087`, `TASK-131`, `TASK-133` | **Unit Test:** `runtime_close_tab_preserves_other_sessions`
   - **Done:** CloseTab 移除對應 FD、回收 child 同該 Tab resources；只選一個有效 successor；last Tab 關閉有明確退出行為；重複/stale close 唔誤殺其他 Shell，ID 不重用。
 
-- [ ] **TASK-135 — Child exit / EOF 只更新對應 runtime Tab**
+- [x] **TASK-135 — Child exit / EOF 只更新對應 runtime Tab**
   - **Dependencies:** `TASK-103`, `TASK-132`, `TASK-134` | **Unit Test:** `runtime_child_exit_is_per_tab`
   - **Done:** drain 最後 output 後按已記錄 exit policy 處理該 Tab，保留 exit metadata；唔再以任何一個 EOF 停止整個 app；其餘 Shell、pending output 同 UI 繼續運作。
 
