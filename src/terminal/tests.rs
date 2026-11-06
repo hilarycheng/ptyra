@@ -749,3 +749,66 @@ fn selection_content_epoch_never_reuses_an_old_generation() {
     terminal.resize(3, 8).unwrap();
     assert_eq!(terminal.content_epoch(), None);
 }
+
+#[test]
+fn terminal_copy_preserves_tabstops_and_selected_spaces() {
+    use alacritty_terminal::{
+        index::{Column, Line, Point},
+        selection::SelectionRange,
+    };
+    let id = crate::TabId(1);
+    for (width, input, start, end, want) in [
+        (20, "a\tB  ", (0, 0), (0, 10), "a\tB  "),
+        (
+            20,
+            "\x1b[3g\x1b[1;6H\x1bH\ra\tB  ",
+            (0, 0),
+            (0, 7),
+            "a\tB  ",
+        ),
+        (20, "a\tB", (0, 2), (0, 7), "      "),
+        (20, "a\tB", (0, 1), (0, 4), "\t"),
+        (6, "a\t ", (0, 0), (0, 5), "a\t "),
+        (9, "a\t ", (0, 0), (0, 8), "a\t "),
+        (6, "\x1b[3ga\tB", (0, 0), (0, 5), "a\tB"),
+        (16, "e\u{301}\t繁  ", (0, 0), (0, 11), "e\u{301}\t繁  "),
+        (4, "abcde\r\nf ", (0, 0), (2, 1), "abcde   \nf "),
+        (
+            16,
+            "a\tB\x1b[1;4H \u{301}",
+            (0, 0),
+            (0, 8),
+            "a\t \u{301}    B",
+        ),
+    ] {
+        let mut terminal = super::Terminal::with_scrollback(id, 3, width, 0).unwrap();
+        terminal.feed(id, input.as_bytes()).unwrap();
+        let cursor = terminal.grid().unwrap().cursor.clone();
+        let rows: Vec<_> = (0..3)
+            .map(|row| terminal.grid().unwrap()[Line(row)].clone())
+            .collect();
+        let epoch = terminal.content_epoch();
+        let range = SelectionRange::new(
+            Point::new(Line(start.0), Column(start.1)),
+            Point::new(Line(end.0), Column(end.1)),
+            false,
+        );
+        assert_eq!(terminal.copy_range_text(range).unwrap(), want);
+        assert_eq!(terminal.grid().unwrap().cursor, cursor);
+        assert_eq!(terminal.content_epoch(), epoch);
+        for (row, original) in rows.iter().enumerate() {
+            assert_eq!(&terminal.grid().unwrap()[Line(row as i32)], original);
+        }
+    }
+    let mut terminal = super::Terminal::with_scrollback(id, 2, 6, 0).unwrap();
+    terminal.feed(id, b"a\t ").unwrap();
+    let range = SelectionRange::new(
+        Point::new(Line(0), Column(0)),
+        Point::new(Line(0), Column(5)),
+        false,
+    );
+    assert!(terminal.grid().unwrap().cursor.input_needs_wrap);
+    assert_eq!(terminal.copy_range_text(range).unwrap(), "a\t ");
+    terminal.feed(id, b"Z").unwrap();
+    assert_eq!(terminal.grid().unwrap()[Line(1)][Column(0)].c, 'Z');
+}

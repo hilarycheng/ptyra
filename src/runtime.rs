@@ -172,7 +172,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         pointer: None,
         pointer_input: pointer::PointerInput::default(),
         selection_input: selection::SelectionInput::default(),
-        clipboard: clipboard::Clipboard::default(),
+        clipboard: clipboard::Clipboard::new(config.clipboard_bytes),
         trace_pointer: std::env::var_os("PTYRA_TRACE_POINTER").as_deref()
             == Some(std::ffi::OsStr::new("1")),
         input: keyboard::KeyboardInput {

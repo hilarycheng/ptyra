@@ -1,12 +1,12 @@
 //! Seat-owned Wayland Clipboard adapter. Payloads never appear in diagnostics.
 use super::Runtime;
 use crate::{
-    clipboard::{InputSerialEvent, SeatId, SeatSerialState},
+    clipboard::{ClipboardState, DataSourceRequest, InputSerialEvent, SeatId, SeatSerialState},
     input::FocusTarget,
 };
 use wayland_client::{
     Connection, Dispatch, QueueHandle, delegate_noop,
-    protocol::{wl_data_device, wl_data_device_manager, wl_data_offer},
+    protocol::{wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,14 +64,64 @@ impl Binding {
         self.serials.record_event(seat, target, serial, event)
     }
 }
+struct CopyPlan {
+    text: String,
+    requests: [DataSourceRequest; 4],
+}
+fn prepare_copy<P>(
+    tab: &mut crate::tabs::Tab<P>,
+    binding: &mut Binding,
+    seat: SeatId,
+    target: FocusTarget,
+    limit: usize,
+) -> super::Result<CopyPlan> {
+    if tab.id() != target.tab || binding.current.is_none_or(|id| id.seat != seat) {
+        return Err("clipboard unavailable");
+    }
+    let range = tab.selection_range().ok_or("no valid selection")?;
+    let text = tab
+        .terminal_mut()
+        .copy_range_text(range)
+        .ok_or("selection unavailable")?;
+    if text.is_empty() {
+        return Err("no valid selection");
+    }
+    if text.len() > limit {
+        return Err("selection exceeds clipboard limit");
+    }
+    let requests = crate::clipboard::plan_data_source(&mut binding.serials, seat, target)
+        .ok_or("no valid input serial")?;
+    Ok(CopyPlan { text, requests })
+}
+struct Source {
+    proxy: wl_data_source::WlDataSource,
+    tab: crate::TabId,
+    _text: String,
+}
 #[derive(Default)]
 pub(super) struct Clipboard {
     pub manager: Option<(u32, wl_data_device_manager::WlDataDeviceManager)>,
     device: Option<wl_data_device::WlDataDevice>,
     pub binding: Binding,
+    state: ClipboardState,
+    source: Option<Source>,
+    limit: usize,
 }
 impl Clipboard {
+    pub fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            ..Self::default()
+        }
+    }
+    fn remove_source(&mut self) {
+        if let Some(source) = self.source.take() {
+            source.proxy.destroy();
+            self.state.cancel_local_owner(source.tab);
+        }
+    }
     fn remove_device(&mut self) {
+        self.remove_source();
         if let Some(device) = self.device.take() {
             device.release();
         }
@@ -83,6 +133,53 @@ impl Clipboard {
     }
 }
 impl Runtime {
+    pub(super) fn copy_selection(&mut self, qh: &QueueHandle<Self>) -> super::Result<()> {
+        let target = self.input.focus.target().ok_or("no keyboard focus")?;
+        let seat = SeatId(self.seat_name.ok_or("clipboard unavailable")?);
+        let manager = self
+            .clipboard
+            .manager
+            .as_ref()
+            .map(|(_, manager)| manager.clone())
+            .ok_or("clipboard unavailable")?;
+        let device = self
+            .clipboard
+            .device
+            .clone()
+            .ok_or("clipboard unavailable")?;
+        let tab = self
+            .tabs
+            .get_mut(target.tab)
+            .ok_or("selection unavailable")?;
+        let plan = prepare_copy(
+            tab,
+            &mut self.clipboard.binding,
+            seat,
+            target,
+            self.clipboard.limit,
+        )?;
+        self.clipboard.remove_source();
+        if !self.clipboard.state.set_local_owner(target.tab) {
+            return Err("clipboard identity exhausted");
+        }
+        let proxy = manager.create_data_source(qh, target.tab);
+        for request in plan.requests {
+            match request {
+                DataSourceRequest::Create => {}
+                DataSourceRequest::Offer(mime) => proxy.offer(mime.into()),
+                DataSourceRequest::SetSelection { serial, .. } => {
+                    device.set_selection(Some(&proxy), serial.0)
+                }
+            }
+        }
+        self.clipboard.source = Some(Source {
+            proxy,
+            tab: target.tab,
+            _text: plan.text,
+        });
+        eprintln!("Ptyra copy: published");
+        Ok(())
+    }
     pub(super) fn remove_clipboard_device(&mut self) {
         self.clipboard.remove_device();
     }
@@ -96,6 +193,7 @@ impl Runtime {
         if !self.clipboard.binding.sync(wanted) {
             return;
         }
+        self.clipboard.remove_source();
         if let Some(device) = self.clipboard.device.take() {
             device.release();
         }
@@ -137,6 +235,37 @@ impl Dispatch<wl_data_device::WlDataDevice, DeviceId> for Runtime {
     }
     wayland_client::event_created_child!(Runtime,wl_data_device::WlDataDevice,[0 => (wl_data_offer::WlDataOffer,())]);
 }
+impl Dispatch<wl_data_source::WlDataSource, crate::TabId> for Runtime {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        _: &crate::TabId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if state
+            .clipboard
+            .source
+            .as_ref()
+            .is_none_or(|source| &source.proxy != proxy)
+        {
+            return;
+        }
+        match event {
+            wl_data_source::Event::Cancelled => {
+                state.clipboard.remove_source();
+                eprintln!("Ptyra copy: cancelled");
+            }
+            // FD streaming is TASK-147; never perform a blocking write in a Wayland callback.
+            wl_data_source::Event::Send { fd, .. } => {
+                drop(fd);
+                eprintln!("Ptyra copy: transfer unavailable");
+            }
+            _ => {}
+        }
+    }
+}
 delegate_noop!(Runtime: ignore wl_data_device_manager::WlDataDeviceManager);
 delegate_noop!(Runtime: ignore wl_data_offer::WlDataOffer);
 
@@ -144,6 +273,78 @@ delegate_noop!(Runtime: ignore wl_data_offer::WlDataOffer);
 mod tests {
     use super::*;
     use crate::{TabId, WindowId};
+    #[test]
+    fn runtime_copy_publishes_selected_text_only() {
+        use crate::{
+            selection::Screen,
+            tabs::{SelectionAction, TabPty, TabRegistry},
+        };
+        use alacritty_terminal::index::{Column, Line, Point};
+        struct Fake;
+        impl TabPty for Fake {
+            fn tab(&self) -> TabId {
+                TabId(1)
+            }
+        }
+        let mut tabs = TabRegistry::<Fake>::with_scrollback(0).unwrap();
+        tabs.insert(TabId(1), 3, 8).unwrap();
+        let tab = tabs.get_mut(TabId(1)).unwrap();
+        let target = FocusTarget {
+            window: WindowId(1),
+            tab: TabId(1),
+        };
+        let seat = SeatId(7);
+        let mut binding = Binding::default();
+        binding.sync(Some((4, seat)));
+        binding.record(seat, target, 50, InputSerialEvent::KeyPress);
+        assert!(prepare_copy(tab, &mut binding, seat, target, 1024).is_err());
+        tab.terminal_mut()
+            .feed(TabId(1), "a中e\u{301} Z\r\nB".as_bytes())
+            .unwrap();
+        tab.select(
+            Screen::Main,
+            SelectionAction::Press,
+            Point::new(Line(0), Column(0)),
+        );
+        tab.select(
+            Screen::Main,
+            SelectionAction::Release,
+            Point::new(Line(1), Column(0)),
+        );
+        let plan = prepare_copy(tab, &mut binding, seat, target, 1024).unwrap();
+        assert_eq!(plan.text, "a中e\u{301} Z  \nB");
+        assert!(matches!(
+            plan.requests[3],
+            crate::clipboard::DataSourceRequest::SetSelection {
+                serial: crate::clipboard::SelectionSerial(50),
+                ..
+            }
+        ));
+        assert!(prepare_copy(tab, &mut binding, seat, target, 1024).is_err());
+        binding.record(seat, target, 51, InputSerialEvent::KeyPress);
+        assert!(prepare_copy(tab, &mut binding, seat, target, 2).is_err());
+        assert!(prepare_copy(tab, &mut binding, seat, target, 1024).is_ok());
+        tab.terminal_mut()
+            .feed(TabId(1), b"\x1b[2J\x1b[H12345678Q")
+            .unwrap();
+        tab.select(
+            Screen::Main,
+            SelectionAction::Press,
+            Point::new(Line(0), Column(0)),
+        );
+        tab.select(
+            Screen::Main,
+            SelectionAction::Release,
+            Point::new(Line(1), Column(0)),
+        );
+        binding.record(seat, target, 52, InputSerialEvent::KeyPress);
+        assert_eq!(
+            prepare_copy(tab, &mut binding, seat, target, 1024)
+                .unwrap()
+                .text,
+            "12345678Q"
+        );
+    }
     #[test]
     fn runtime_data_device_tracks_seat_lifecycle() {
         let seat = SeatId(7);

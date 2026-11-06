@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（144 已勾選；TASK-129、TASK-146–199 共 55 項未勾選）。
+**Total:** 199 atomic TASKS（145 已勾選；TASK-129、TASK-147–199 共 54 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -652,7 +652,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-047`, `TASK-049`, `TASK-125`, `TASK-140` | **Unit Test:** `runtime_data_device_tracks_seat_lifecycle`
   - **Done:** 建立/銷毀 `wl_data_device_manager` / device，同 protocol objects 對應 library IDs；保留 keyboard/pointer 有效 serial；seat/global 移除清理 pending state，缺 protocol 時唔 crash 或宣稱 Clipboard 可用。
 
-- [ ] **TASK-146 — Copy shortcut 發佈真 Wayland selection owner**
+- [x] **TASK-146 — Copy shortcut 發佈真 Wayland selection owner**
   - **Dependencies:** `TASK-043`, `TASK-044`, `TASK-050`, `TASK-056`, `TASK-130`, `TASK-141`, `TASK-145` | **Unit Test:** `runtime_copy_publishes_selected_text_only`
   - **Done:** 有有效選區/serial 先建立 `wl_data_source`、宣告 text MIME 同 set_selection；UTF-8、tabs、空格、hard/soft wrap 照原文抽取；冇選區唔清空外部 Clipboard，source cancellation 撤銷相應 ownership。
 

@@ -196,6 +196,30 @@ impl Terminal {
         Ok(())
     }
 
+    /// Copy with the core's current custom tab stops, preserving selected trailing spaces.
+    pub fn copy_range_text(
+        &mut self,
+        range: alacritty_terminal::selection::SelectionRange,
+    ) -> Option<String> {
+        use alacritty_terminal::{index::Column, vte::ansi::Handler};
+        let core = self.core.as_mut()?;
+        let range = crate::selection::whole_glyph_range(core.term.grid(), range)?;
+        let columns = core.term.grid().columns();
+        let mut stops = Vec::new();
+        stops.try_reserve_exact(columns).ok()?;
+        stops.resize(columns, false);
+        let saved = core.term.grid().cursor.point.column;
+        core.term.grid_mut().cursor.point.column = Column(0);
+        // The public forward-tab handler only changes column and damage metadata. It
+        // scans disjoint intervals; include the final clamped destination as a stop.
+        while core.term.grid().cursor.point.column.0 < columns - 1 {
+            core.term.move_forward_tabs(1);
+            stops[core.term.grid().cursor.point.column.0] = true;
+        }
+        core.term.grid_mut().cursor.point.column = saved;
+        crate::selection::copy_text_with_tabstops(core.term.grid(), range, &stops)
+    }
+
     /// Borrow the core's grid without copying cells or exposing mutable state.
     /// None means a stream resource violation stopped this adapter.
     pub fn grid(&self) -> Option<&Grid<Cell>> {

@@ -186,9 +186,18 @@ impl Runtime {
             self.paint.dirty = true;
         }
     }
-    fn dispatch_action(&mut self, action: crate::config::bindings::BindingAction) {
+    fn dispatch_action(
+        &mut self,
+        action: crate::config::bindings::BindingAction,
+        qh: &QueueHandle<Self>,
+    ) {
         use crate::config::bindings::BindingAction;
         match action {
+            BindingAction::Copy => {
+                if let Err(error) = self.copy_selection(qh) {
+                    eprintln!("Ptyra copy: {error}");
+                }
+            }
             BindingAction::NewTab => {
                 let size = self
                     .tabs
@@ -231,7 +240,7 @@ impl Runtime {
         self.input.map = None;
         self.paint.dirty = true;
     }
-    fn keyboard_event(&mut self, event: wl_keyboard::Event) -> Result<()> {
+    fn keyboard_event(&mut self, event: wl_keyboard::Event, qh: &QueueHandle<Self>) -> Result<()> {
         match event {
             wl_keyboard::Event::Keymap { format, fd, size } => {
                 self.input.repeat.cancel();
@@ -306,7 +315,7 @@ impl Runtime {
                     .key(key, pressed, self.application_cursor(), &self.clock)?;
                 self.enqueue_input(bytes)?;
                 if let Some(action) = self.input.action.take() {
-                    self.dispatch_action(action);
+                    self.dispatch_action(action, qh);
                 }
             }
             _ => {}
@@ -354,12 +363,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for Runtime {
         event: wl_keyboard::Event,
         _: &(),
         _: &Connection,
-        _: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         if state.keyboard.as_ref() != Some(keyboard) {
             return;
         }
-        if let Err(error) = state.keyboard_event(event) {
+        if let Err(error) = state.keyboard_event(event, qh) {
             state.fail(error);
         }
     }

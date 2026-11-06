@@ -299,7 +299,18 @@ fn glyph_bounds(grid: &Grid<Cell>, point: Point) -> Option<(Point, Point)> {
 
 /// Copy selected cells into logical-line fragments. Hard-line separators are
 /// deliberately left to the caller; a soft wrap joins adjacent rows here.
+/// Grid-only callers use default eight-column tab stops; runtime Copy queries the core.
 pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Vec<String>> {
+    copy_lines_at_stops(grid, range, |column| {
+        column % 8 == 0 || column + 1 == grid.columns()
+    })
+}
+
+fn copy_lines_at_stops(
+    grid: &Grid<Cell>,
+    range: SelectionRange,
+    is_stop: impl Fn(usize) -> bool,
+) -> Option<Vec<String>> {
     let range = whole_glyph_range(grid, range)?;
     let columns = grid.columns();
     let last = Column(columns.checked_sub(1)?);
@@ -325,8 +336,22 @@ pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Ve
         } else {
             last.0
         };
+        let mut tab_mode = false;
         for column in first..=end {
             let cell = &grid[Point::new(line, Column(column))];
+            if tab_mode {
+                if is_stop(column)
+                    || cell.c != ' '
+                    || cell.zerowidth().is_some_and(|marks| !marks.is_empty())
+                {
+                    tab_mode = false;
+                } else {
+                    continue;
+                }
+            }
+            if cell.c == '\t' {
+                tab_mode = true;
+            }
             if cell
                 .flags
                 .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
@@ -350,6 +375,20 @@ pub fn copy_logical_lines(grid: &Grid<Cell>, range: SelectionRange) -> Option<Ve
 /// Render selected logical lines as Copy text, separating only hard breaks.
 pub fn copy_text(grid: &Grid<Cell>, range: SelectionRange) -> Option<String> {
     join_logical_lines(&copy_logical_lines(grid, range)?, MAX_COPY_BYTES)
+}
+
+pub(crate) fn copy_text_with_tabstops(
+    grid: &Grid<Cell>,
+    range: SelectionRange,
+    stops: &[bool],
+) -> Option<String> {
+    if stops.len() != grid.columns() {
+        return None;
+    }
+    join_logical_lines(
+        &copy_lines_at_stops(grid, range, |column| stops[column])?,
+        MAX_COPY_BYTES,
+    )
 }
 
 fn join_logical_lines(lines: &[String], limit: usize) -> Option<String> {

@@ -492,6 +492,12 @@ impl ClipboardState {
         true
     }
 
+    pub fn cancel_local_owner(&mut self, tab: TabId) {
+        if self.owner == Some(ClipboardOwner::Local(tab)) {
+            self.owner = None;
+        }
+    }
+
     pub fn cancel_offer(&mut self, id: OfferId) {
         if self.latest_offer == Some(id) {
             self.latest_offer = None;

@@ -208,15 +208,20 @@ def main():
                 keyboard.tap(14)
                 keyboard.sync()
                 print("PASS: one tap = 1 press + 1 release + 0 repeats + 1 queued byte + 1 written byte")
+            if os.environ.get("PTYRA_TEST_COPY_OWNER"):
+                subprocess.run(["wl-copy", "--type", "application/octet-stream", "sentinel"], env=env, check=True, timeout=5)
             keyboard.modifiers(5)
             keyboard.key(30)
             keyboard.sync()
-            wait_until(lambda: "Ptyra action unavailable: Copy" in (root / "app.log").read_text())
+            wait_until(lambda: "Ptyra copy: no valid selection" in (root / "app.log").read_text())
             time.sleep(0.7)  # Holding a shortcut must not repeat or leak into the Shell.
             keyboard.modifiers(0)
             keyboard.key(30, False)
             keyboard.sync()
-            assert (root / "app.log").read_text().count("Ptyra action unavailable: Copy") == 1
+            assert (root / "app.log").read_text().count("Ptyra copy: no valid selection") == 1
+            if os.environ.get("PTYRA_TEST_COPY_OWNER"):
+                assert subprocess.check_output(["wl-paste", "--type", "application/octet-stream", "--no-newline"], env=env, timeout=5) == b"sentinel"
+
             if os.environ.get("PTYRA_TEST_NEW_TAB"):
                 children = Path(f"/proc/{app.pid}/task/{app.pid}/children")
                 first = children.read_text().split()
@@ -324,6 +329,18 @@ def main():
                 click_cell(5)
                 assert selected()[:4] == (0, 4, 0, 5), selected()
                 print("PASS: native double/triple click selects ASCII, whole CJK and soft-wrapped logical lines")
+                if os.environ.get("PTYRA_TEST_COPY_OWNER"):
+                    keyboard.modifiers(5)
+                    keyboard.tap(30)
+                    keyboard.modifiers(0)
+                    keyboard.sync()
+                    wait_until(lambda: "Ptyra copy: published" in (root / "app.log").read_text())
+                    formats = subprocess.check_output(["wl-paste", "--list-types"], env=env, timeout=5).decode().splitlines()
+                    assert set(formats) == {"text/plain;charset=utf-8", "text/plain"}, formats
+                    subprocess.run(["wl-copy", "--type", "application/octet-stream", "replacement"], env=env, check=True, timeout=5)
+                    wait_until(lambda: "Ptyra copy: cancelled" in (root / "app.log").read_text())
+                    print("PASS: Copy preserves an external owner without selection, publishes exact text MIME, and handles cancellation")
+
                 if os.environ.get("PTYRA_TEST_SELECTION_PIXELS"):
                     def highlight_visible():
                         ppm = subprocess.check_output(["grim", "-t", "ppm", "-"], env=env)
