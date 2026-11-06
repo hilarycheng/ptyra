@@ -1,6 +1,7 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod bar;
 mod clipboard;
+mod osc52;
 mod primary;
 use crate::clipboard::SelectionKind;
 mod clipboard_offers;
@@ -225,7 +226,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             break;
         }
         app.sync_terminal()?;
-        app.read_output()?;
+        app.read_output(&qh)?;
         app.clipboard.pump_sends();
         app.primary.pump_sends();
         app.pump_paste();
@@ -512,7 +513,7 @@ impl Runtime {
             .map_err(|_| "cannot start Shell PTY")
         })
     }
-    fn read_output(&mut self) -> Result<()> {
+    fn read_output(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
         let previous_titles: Vec<_> = self
             .ready_pty
             .iter()
@@ -527,7 +528,10 @@ impl Runtime {
             .map_err(|_| "PTY dispatch failed")?;
         for (id, result) in results {
             match result.map_err(|_| "PTY read failed")?.status {
-                PtyReadStatus::Data(_) if self.tabs.active() == Some(id) => self.paint.dirty = true,
+                PtyReadStatus::Data(_) => {
+                    self.publish_osc52(id, qh);
+                    self.paint.dirty |= self.tabs.active() == Some(id);
+                }
                 PtyReadStatus::Eof => {
                     let status = if let Some(pty) =
                         self.tabs.get_mut(id).and_then(|tab| tab.pty_mut())

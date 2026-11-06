@@ -324,6 +324,12 @@ impl Runtime {
                 if pressed
                     && let (Some(seat), Some(target)) = (self.seat_name, self.input.focus.target())
                 {
+                    self.primary.binding.record(
+                        crate::clipboard::SeatId(seat),
+                        target,
+                        serial,
+                        crate::clipboard::InputSerialEvent::KeyPress,
+                    );
                     self.clipboard.binding.record(
                         crate::clipboard::SeatId(seat),
                         target,

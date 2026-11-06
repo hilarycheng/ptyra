@@ -177,6 +177,8 @@ def main():
             if os.environ.get("PTYRA_TEST_MULTI_PTY"):
                 os.mkfifo(root / "flood-start")
                 wrapper.write_text(f"#!/bin/sh\nif mkdir '{root}/first' 2>/dev/null; then :; else if mkdir '{root}/flood-once' 2>/dev/null; then read ready < '{root}/flood-start'; fi; head -c 262144 /dev/zero | tr '\\000' x; echo drained > '{root}/drained'; fi\nexec /bin/bash --noprofile --norc\n")
+            if os.environ.get("PTYRA_TEST_OSC52"):
+                wrapper.write_text("#!/bin/sh\nprintf '\\033]52;c;U1RBUlQ=\\007\\033]52;p;U1RBUlQ=\\007'\nexec /bin/bash --noprofile --norc\n")
             wrapper.chmod(0o700)
             env["SHELL"] = str(wrapper)
             if os.environ.get("PTYRA_TEST_TRACE"):
@@ -185,7 +187,7 @@ def main():
                 env["PTYRA_TRACE_POINTER"] = "1"
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE") or os.environ.get("PTYRA_TEST_PRIMARY") or os.environ.get("PTYRA_TEST_NO_PRIMARY"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
-            (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n")
+            (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else ("clipboard_bytes=16\n" if os.environ.get("PTYRA_TEST_OSC52") else "")) + ("osc52_write=true\n" if os.environ.get("PTYRA_TEST_OSC52") == "enabled" else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n")
             keyboard = Keyboard(display, keymap.read_bytes())
             with open(root / "app.log", "w") as log:
                 app = subprocess.Popen([binary, "--config", str(root / "test.toml")], env=env, stdout=log, stderr=log)
@@ -194,6 +196,9 @@ def main():
             wait_until(lambda: any(n.get("app_id") == "ptyra" for n in nodes(json.loads(ipc("-t", "get_tree")))))
             time.sleep(0.2)
             assert app.poll() is None, (root / "app.log").read_text()
+            if os.environ.get("PTYRA_TEST_OSC52"):
+                from native_osc52 import check_osc52
+                check_osc52(root, env, keyboard, app, wait_until)
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE"):
                 wait_until(lambda: "Ptyra clipboard: device bound" in (root / "app.log").read_text())
                 assert (root / "app.log").read_text().count("Ptyra clipboard: device bound") == 1

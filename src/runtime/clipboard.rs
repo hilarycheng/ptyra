@@ -106,7 +106,7 @@ pub(super) struct Clipboard {
     pub binding: Binding,
     offers: super::clipboard_offers::Offers<wl_data_offer::WlDataOffer>,
     source: Option<Source>,
-    limit: usize,
+    pub(super) limit: usize,
     source_generation: u64,
     sends: super::clipboard_send::SendQueue<std::fs::File>,
     pub ready_sends: Vec<u64>,
@@ -340,17 +340,6 @@ impl Runtime {
     pub(super) fn copy_selection(&mut self, qh: &QueueHandle<Self>) -> super::Result<()> {
         let target = self.input.focus.target().ok_or("no keyboard focus")?;
         let seat = SeatId(self.seat_name.ok_or("clipboard unavailable")?);
-        let manager = self
-            .clipboard
-            .manager
-            .as_ref()
-            .map(|(_, manager)| manager.clone())
-            .ok_or("clipboard unavailable")?;
-        let device = self
-            .clipboard
-            .device
-            .clone()
-            .ok_or("clipboard unavailable")?;
         let tab = self
             .tabs
             .get_mut(target.tab)
@@ -362,18 +351,33 @@ impl Runtime {
             target,
             self.clipboard.limit,
         )?;
+        self.clipboard.publish(target.tab, plan, qh)
+    }
+}
+impl Clipboard {
+    pub(super) fn publish(
+        &mut self,
+        tab: crate::TabId,
+        plan: super::clipboard::CopyPlan,
+        qh: &QueueHandle<Runtime>,
+    ) -> super::Result<()> {
+        let manager = self
+            .manager
+            .as_ref()
+            .map(|(_, manager)| manager.clone())
+            .ok_or("clipboard unavailable")?;
+        let device = self.device.clone().ok_or("clipboard unavailable")?;
         let source_id = self
-            .clipboard
             .source_generation
             .checked_add(1)
             .ok_or("clipboard source identity exhausted")?;
-        self.clipboard.source_generation = source_id;
-        self.clipboard.remove_source();
-        self.clipboard.clear_offers();
-        if !self.clipboard.offers.state.set_local_owner(target.tab) {
+        self.source_generation = source_id;
+        self.remove_source();
+        self.clear_offers();
+        if !self.offers.state.set_local_owner(tab) {
             return Err("clipboard identity exhausted");
         }
-        let proxy = manager.create_data_source(qh, target.tab);
+        let proxy = manager.create_data_source(qh, tab);
         for request in plan.requests {
             match request {
                 DataSourceRequest::Create => {}
@@ -383,15 +387,17 @@ impl Runtime {
                 }
             }
         }
-        self.clipboard.source = Some(Source {
+        self.source = Some(Source {
             id: source_id,
             proxy,
-            tab: target.tab,
+            tab,
             text: plan.text,
         });
         eprintln!("Ptyra copy: published");
         Ok(())
     }
+}
+impl Runtime {
     pub(super) fn remove_clipboard_device(&mut self) {
         self.clipboard.remove_device();
     }

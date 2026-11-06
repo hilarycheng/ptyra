@@ -21,7 +21,7 @@ pub(super) struct Primary {
     pub binding: Binding,
     offers: super::clipboard_offers::Offers<offer::ZwpPrimarySelectionOfferV1>,
     source: Option<Source>,
-    limit: usize,
+    pub(super) limit: usize,
     source_generation: u64,
     sends: super::clipboard_send::SendQueue<std::fs::File>,
     pub ready_sends: Vec<u64>,
@@ -126,13 +126,6 @@ impl Runtime {
     pub(super) fn publish_primary(&mut self, qh: &QueueHandle<Self>) -> super::Result<()> {
         let target = self.input.focus.target().ok_or("no keyboard focus")?;
         let seat = SeatId(self.seat_name.ok_or("primary unavailable")?);
-        let manager = self
-            .primary
-            .manager
-            .as_ref()
-            .map(|(_, manager)| manager.clone())
-            .ok_or("primary unavailable")?;
-        let device = self.primary.device.clone().ok_or("primary unavailable")?;
         let tab = self
             .tabs
             .get_mut(target.tab)
@@ -144,18 +137,33 @@ impl Runtime {
             target,
             self.primary.limit,
         )?;
+        self.primary.publish(target.tab, plan, qh)
+    }
+}
+impl Primary {
+    pub(super) fn publish(
+        &mut self,
+        tab: crate::TabId,
+        plan: super::clipboard::CopyPlan,
+        qh: &QueueHandle<Runtime>,
+    ) -> super::Result<()> {
+        let manager = self
+            .manager
+            .as_ref()
+            .map(|(_, manager)| manager.clone())
+            .ok_or("primary unavailable")?;
+        let device = self.device.clone().ok_or("primary unavailable")?;
         let source_id = self
-            .primary
             .source_generation
             .checked_add(1)
             .ok_or("primary source identity exhausted")?;
-        self.primary.source_generation = source_id;
-        self.primary.remove_source();
-        self.primary.clear_offers();
-        if !self.primary.offers.state.set_local_owner(target.tab) {
+        self.source_generation = source_id;
+        self.remove_source();
+        self.clear_offers();
+        if !self.offers.state.set_local_owner(tab) {
             return Err("primary identity exhausted");
         }
-        let proxy = manager.create_source(qh, target.tab);
+        let proxy = manager.create_source(qh, tab);
         for request in plan.requests {
             match request {
                 DataSourceRequest::Create => {}
@@ -165,15 +173,17 @@ impl Runtime {
                 }
             }
         }
-        self.primary.source = Some(Source {
+        self.source = Some(Source {
             id: source_id,
             proxy,
-            tab: target.tab,
+            tab,
             text: plan.text,
         });
         eprintln!("Ptyra primary: published");
         Ok(())
     }
+}
+impl Runtime {
     pub(super) fn remove_primary_device(&mut self) {
         self.primary.remove_device();
     }

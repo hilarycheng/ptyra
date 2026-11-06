@@ -10,6 +10,7 @@ pub struct Config {
     pub font_size: f64,
     pub scrollback_lines: usize,
     pub clipboard_bytes: usize,
+    pub osc52_write: bool,
     pub glyph_cache_bytes: usize,
     pub image_bytes: usize,
     pub image_pixels: usize,
@@ -38,6 +39,7 @@ impl Default for Config {
             font_size: 14.0,
             scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
             clipboard_bytes: crate::clipboard::read::MAX_PASTE_BYTES,
+            osc52_write: false,
             glyph_cache_bytes: crate::font::cache::MAX_CACHE_BYTES,
             image_bytes: crate::kitty::graphics::transfer::MAX_IMAGE_BYTES,
             image_pixels: crate::kitty::graphics::decode::MAX_IMAGE_PIXELS,
@@ -67,7 +69,9 @@ impl Config {
     pub fn tab_registry<P: crate::tabs::TabPty>(
         &self,
     ) -> Result<crate::tabs::TabRegistry<P>, crate::error::AppError> {
-        crate::tabs::TabRegistry::with_scrollback(self.scrollback_lines)
+        let mut tabs = crate::tabs::TabRegistry::with_scrollback(self.scrollback_lines)?;
+        tabs.set_osc52_write_enabled(self.osc52_write);
+        Ok(tabs)
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -135,6 +139,11 @@ impl Config {
                 }
                 "scrollback_lines" => {
                     config.scrollback_lines = integer(&value, "scrollback_lines")?
+                }
+                "osc52_write" => {
+                    config.osc52_write = value
+                        .as_bool()
+                        .ok_or_else(|| error("osc52_write", "expected boolean"))?;
                 }
                 "clipboard_bytes" => config.clipboard_bytes = integer(&value, "clipboard_bytes")?,
                 "image_bytes" => config.image_bytes = integer(&value, "image_bytes")?,
@@ -244,6 +253,20 @@ mod tests {
 
     #[test]
     fn config_defaults_are_valid() {
+        assert!(!Config::from_toml(None).unwrap().osc52_write);
+        assert!(
+            Config::from_toml(Some("osc52_write=true"))
+                .unwrap()
+                .osc52_write
+        );
+        assert!(
+            !Config::from_toml(Some("osc52_write=false"))
+                .unwrap()
+                .osc52_write
+        );
+        for value in ["1", "\"true\"", "[]"] {
+            assert!(Config::from_toml(Some(&format!("osc52_write={value}"))).is_err());
+        }
         let defaults = Config::default();
         assert_eq!(Config::from_toml(None).unwrap(), defaults);
         assert_eq!(

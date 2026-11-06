@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（153 已勾選；TASK-129、TASK-154–155、TASK-157–199 共 46 項未勾選）。
+**Total:** 199 atomic TASKS（154 已勾選；TASK-129、TASK-155、TASK-157–199 共 45 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -684,7 +684,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-063`, `TASK-064`, `TASK-065`, `TASK-140`, `TASK-141`, `TASK-147`, `TASK-149`, `TASK-150`, `TASK-152` | **Unit Test:** `runtime_primary_selection_never_uses_clipboard_offer`
   - **Done:** 有 protocol 時用獨立 source/offer/state 發佈選區同 middle-click paste，重用 bounded FD pump 同 paste safety；唔覆寫或 fallback 到一般 Clipboard；缺 protocol 時一般 Copy/Paste 繼續正常。
 
-- [ ] **TASK-154 — OSC 52 write opt-in 接入 config 同 Clipboard adapter**
+- [x] **TASK-154 — OSC 52 write opt-in 接入 config 同 Clipboard adapter**
   - **Dependencies:** `TASK-066`, `TASK-067`, `TASK-068`, `TASK-094`, `TASK-145`, `TASK-147`, `TASK-153` | **Unit Test:** `runtime_osc52_respects_explicit_write_policy`
   - **Done:** 明確 config opt-in 才 drain/發佈 bounded OSC 52 writes，仍需有效 seat serial 同正確 selection kind；缺 serial/能力有明確拒絕策略；read 永遠預設拒絕，PTY output 不能自授權；撤銷 opt-in 清理 pending writes。
 

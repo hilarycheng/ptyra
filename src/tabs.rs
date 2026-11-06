@@ -101,6 +101,7 @@ pub struct TabRegistry<P> {
     active: Option<TabId>,
     render_target: Option<TabId>,
     scrollback_lines: usize,
+    osc52_write: bool,
     output_cursor: usize,
 }
 
@@ -112,12 +113,26 @@ impl<P> Default for TabRegistry<P> {
             active: None,
             render_target: None,
             scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
+            osc52_write: false,
             output_cursor: 0,
         }
     }
 }
 
 impl<P: TabPty> TabRegistry<P> {
+    /// Explicit application policy only; revocation clears pending writes on every live core.
+    pub fn set_osc52_write_enabled(&mut self, enabled: bool) {
+        self.osc52_write = enabled;
+        for tab in &mut self.entries {
+            // A stopped core has already discarded all of its pending requests.
+            let _ = tab.terminal.set_osc52_write_enabled(enabled);
+        }
+    }
+
+    pub fn osc52_write_enabled(&self) -> bool {
+        self.osc52_write
+    }
+
     pub fn reserved_cells(&self) -> usize {
         self.entries.iter().map(|tab| tab.reserved_cells).sum()
     }
@@ -176,7 +191,10 @@ impl<P: TabPty> TabRegistry<P> {
         self.entries
             .try_reserve(1)
             .map_err(|_| AppError::new(Component::Terminal, ErrorKind::OutOfMemory))?;
-        let terminal = Terminal::with_scrollback(id, rows, columns, self.scrollback_lines)
+        let mut terminal = Terminal::with_scrollback(id, rows, columns, self.scrollback_lines)
+            .map_err(|error| error.error)?;
+        terminal
+            .set_osc52_write_enabled(self.osc52_write)
             .map_err(|error| error.error)?;
         self.entries.push(Tab {
             id,
