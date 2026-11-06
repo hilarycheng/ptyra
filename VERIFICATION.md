@@ -44,3 +44,10 @@
 - Dependencies satisfied. Exit policy: drain through EOF, capture/reap that child, retain bounded TabId/exit-status metadata, and close only its Tab. The last Tab exits the app. A child that closes its PTY while still running is terminated under the same close policy.
 - `runtime_child_exit_is_per_tab`, workspace regression, fmt, Clippy: PASS.
 - Native multi-tab test with `PTYRA_TEST_EXIT_TAB=1`: PASS; exit 7 from second Shell preserves final output processing, reaps its child, and leaves original Shell interactive. Last exit and reconnect still pass.
+
+## TASK-136
+
+- Dependencies satisfied. All grids and cell reservations are validated together before resizing; over-budget requests preserve prior dimensions/reservations and report metadata once per rejected size. Active and hidden PTYs receive the accepted size.
+- Terminal content deducts one font-height plus 8 pixels for the tab strip; terminal drawing uses the remaining buffer.
+- `runtime_resize_updates_tab_budgets`, workspace regression, fmt, Clippy: PASS.
+- Native multi-tab test additionally with `PTYRA_TEST_RESIZE_TABS=1`: PASS; both real Shells report identical resized PTY dimensions, and input/exit isolation still pass.

@@ -120,6 +120,7 @@ struct Runtime {
     tabs: crate::tabs::TabRegistry<PtySession>,
     ready_pty: Vec<crate::TabId>,
     exit_history: sessions::ExitHistory,
+    rejected_resize: Option<PtySize>,
     seat: Option<wl_seat::WlSeat>,
     seat_name: Option<u32>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -152,6 +153,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         tabs,
         ready_pty: Vec::new(),
         exit_history: sessions::ExitHistory::default(),
+        rejected_resize: None,
         seat: None,
         seat_name: None,
         keyboard: None,
@@ -343,11 +345,15 @@ impl Runtime {
         }
         Ok(())
     }
+    fn content_geometry(&self) -> (u32, (u32, u32)) {
+        let bar = (self.raster.cell_height + 8).min(self.paint.size.1.saturating_sub(1));
+        (bar, (self.paint.size.0, self.paint.size.1 - bar))
+    }
     fn sync_terminal(&mut self) -> Result<()> {
         if !self.paint.configured {
             return Ok(());
         }
-        let rows = (self.paint.size.1 / self.raster.cell_height).max(1);
+        let rows = (self.content_geometry().1.1 / self.raster.cell_height).max(1);
         let columns = (self.paint.size.0 / self.raster.cell_width).max(2);
         let size = PtySize {
             rows: rows.try_into().map_err(|_| "too many rows")?,
@@ -356,19 +362,24 @@ impl Runtime {
         if self.tabs.active().is_none() {
             self.new_tab(size)?;
         }
-        let tab = self
-            .tabs
-            .get_mut(self.tabs.active().ok_or("no active tab")?)
-            .ok_or("terminal unavailable")?;
-        let snapshot = tab.terminal().snapshot().ok_or("terminal unavailable")?;
-        if snapshot.rows != rows as usize || snapshot.columns != columns as usize {
-            tab.terminal_mut()
-                .resize(size.rows, size.columns)
-                .map_err(|_| "terminal size exceeds allocation budget")?;
-            self.paint.dirty = true;
+        match self.tabs.resize_all(size.rows, size.columns) {
+            Ok(changed) => {
+                self.paint.dirty |= changed;
+                self.rejected_resize = None;
+            }
+            Err(_) => {
+                if self.rejected_resize != Some(size) {
+                    eprintln!("Ptyra resize rejected: tab cell budget or unavailable grid");
+                }
+                self.rejected_resize = Some(size);
+                return Ok(());
+            }
         }
-        if let Some(pty) = tab.pty_mut() {
-            pty.resize(size).map_err(|_| "PTY resize failed")?;
+        let ids: Vec<_> = self.tabs.ids().collect();
+        for id in ids {
+            if let Some(pty) = self.tabs.get_mut(id).and_then(|tab| tab.pty_mut()) {
+                pty.resize(size).map_err(|_| "PTY resize failed")?;
+            }
         }
         Ok(())
     }
@@ -476,6 +487,8 @@ impl Runtime {
             .try_reserve(bytes)
             .map_err(|_| "frame allocation failed")?;
         self.pixels.resize(bytes, 0);
+        let (bar_height, content_size) = self.content_geometry();
+        let content_offset = (bar_height * self.paint.size.0) as usize * 4;
         let terminal = self
             .tabs
             .get(self.tabs.active().ok_or("no active tab")?)
@@ -483,8 +496,8 @@ impl Runtime {
             .terminal();
         self.raster.draw(
             terminal,
-            self.paint.size,
-            &mut self.pixels,
+            content_size,
+            &mut self.pixels[content_offset..],
             self.input.focus.target().is_some(),
         )?;
         let slot = self.slots[index].as_mut().ok_or("frame slot unavailable")?;

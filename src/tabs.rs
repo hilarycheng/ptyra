@@ -3,6 +3,7 @@ pub mod bar;
 #[cfg(target_os = "linux")]
 pub mod output;
 mod render;
+mod resize;
 mod routing;
 pub use routing::ImeRouteError;
 mod title;

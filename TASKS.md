@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（134 已勾選；TASK-129、TASK-136–199 共 65 項未勾選）。
+**Total:** 199 atomic TASKS（135 已勾選；TASK-129、TASK-137–199 共 64 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -606,7 +606,7 @@
   - **Dependencies:** `TASK-103`, `TASK-132`, `TASK-134` | **Unit Test:** `runtime_child_exit_is_per_tab`
   - **Done:** drain 最後 output 後按已記錄 exit policy 處理該 Tab，保留 exit metadata；唔再以任何一個 EOF 停止整個 app；其餘 Shell、pending output 同 UI 繼續運作。
 
-- [ ] **TASK-136 — Resize 同步每 Tab grid / PTY / reservation**
+- [x] **TASK-136 — Resize 同步每 Tab grid / PTY / reservation**
   - **Dependencies:** `TASK-024`, `TASK-105`, `TASK-131` | **Unit Test:** `runtime_resize_updates_tab_budgets`
   - **Done:** 以實際 terminal content area 計算 rows/columns，扣除 Tab Bar；active/inactive Tab 尺寸及 cell reservation 一致；超額 resize 不造成無界 allocation 或污染其他 Tab，保留有效狀態並回報 metadata。
 
