@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（156 已勾選；TASK-129、TASK-158–199 共 43 項未勾選）。
+**Total:** 199 atomic TASKS（157 已勾選；TASK-129、TASK-159–199 共 42 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -702,7 +702,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-130`, `TASK-133`, `TASK-140`, `TASK-156` | **Unit Test:** `runtime_scroll_input_targets_active_viewport`
   - **Done:** 無 application mouse ownership 時 wheel 同明確可設定 scroll bindings 操作 active history；新增 bindings 參與 conflict 驗證；按鍵輸入/新 output 時 follow-bottom policy 有記錄，其他 Tab offset 不變。
 
-- [ ] **TASK-158 — Raster 正確呈現歷史 viewport**
+- [x] **TASK-158 — Raster 正確呈現歷史 viewport**
   - **Dependencies:** `TASK-126`, `TASK-156` | **Unit Test:** `runtime_history_rows_use_display_offset`
   - **Done:** 負 history row 依 display offset 映射可見 row，唔全部畫到第零行；cursor 離開 viewport 時不誤畫；resize/reflow、CJK 同 soft wrap 在真視窗可見且無殘影。
 

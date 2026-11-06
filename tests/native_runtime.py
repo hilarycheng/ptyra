@@ -245,6 +245,9 @@ def main():
                 keyboard.send(primary_pointer, 2, u32(0, 274, 0))
                 keyboard.send(primary_pointer, 4)
                 keyboard.sync()
+            if os.environ.get("PTYRA_TEST_HISTORY"):
+                from native_history import check_history
+                check_history(root, env, keyboard, app, wait_until, ipc, nodes)
             if os.environ.get("PTYRA_TEST_SCROLL"):
                 from native_scroll import check_scroll
                 check_scroll(root, env, keyboard, app, wait_until, u32)

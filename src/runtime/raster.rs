@@ -72,6 +72,13 @@ impl Raster {
         }
         let snapshot = terminal.snapshot().ok_or("terminal unavailable")?;
         let colors = snapshot.content.colors;
+        let display_offset = snapshot.content.display_offset;
+        let rows = snapshot.rows;
+        let cell_height = self.cell_height;
+        let viewport_y = |line: i32| {
+            let row = display_offset.checked_add_signed(line as isize)?;
+            (row < rows).then_some(row as u32 * cell_height)
+        };
         let default_bg = color(
             Color::Named(alacritty_terminal::vte::ansi::NamedColor::Background),
             colors,
@@ -82,7 +89,9 @@ impl Raster {
         // Paint backgrounds first so wide cells never erase the preceding glyph.
         for cell in snapshot.content.display_iter {
             let x = cell.point.column.0 as u32 * self.cell_width;
-            let y = cell.point.line.0.max(0) as u32 * self.cell_height;
+            let Some(y) = viewport_y(cell.point.line.0) else {
+                continue;
+            };
             let bg = if cell.cell.flags.contains(Flags::INVERSE) {
                 cell.cell.fg
             } else {
@@ -108,7 +117,9 @@ impl Raster {
                 continue;
             }
             let x = cell.point.column.0 as u32 * self.cell_width;
-            let y = cell.point.line.0.max(0) as u32 * self.cell_height;
+            let Some(y) = viewport_y(cell.point.line.0) else {
+                continue;
+            };
             let fg = if flags.contains(Flags::INVERSE) {
                 cell.cell.bg
             } else {
@@ -201,9 +212,10 @@ impl Raster {
             .ok_or("terminal unavailable")?
             .content
             .cursor;
-        if cursor.shape != CursorShape::Hidden && cursor.point.line.0 >= 0 {
+        if cursor.shape != CursorShape::Hidden
+            && let Some(y) = viewport_y(cursor.point.line.0)
+        {
             let x = cursor.point.column.0 as u32 * self.cell_width;
-            let y = cursor.point.line.0 as u32 * self.cell_height;
             paint_cursor(
                 pixels,
                 size,
@@ -317,6 +329,61 @@ fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runtime_history_rows_use_display_offset() {
+        use alacritty_terminal::grid::Scroll;
+        let font = FontVec::try_from_vec(include_bytes!("../../tests/fixtures/demo.ttf").to_vec())
+            .unwrap();
+        let mut raster = Raster::new(vec![font], &Config::default()).unwrap();
+        let tab = crate::TabId(1);
+        let mut history = Terminal::new(tab, 3, 8).unwrap();
+        let first = "\x1b[?25l\x1b[41mA中e\u{301} BCD\x1b[42mEF中G HI\x1b[44mJKLMN OP";
+        history.feed(tab, first.as_bytes()).unwrap();
+        let render = |raster: &mut Raster, terminal: &Terminal, rows, columns| {
+            let size = (columns * raster.cell_width, rows * raster.cell_height);
+            let mut pixels = vec![0x55; (size.0 * size.1 * 4) as usize];
+            raster.draw(terminal, size, &mut pixels, true).unwrap();
+            pixels
+        };
+        let expected = render(&mut raster, &history, 3, 8);
+        history
+            .feed(tab, b"\r\n\x1b[0mnew\r\nmore\r\nlast")
+            .unwrap();
+        history.scroll_viewport(Scroll::Top).unwrap();
+        assert_eq!(history.snapshot().unwrap().content.display_offset, 3);
+        assert_eq!(render(&mut raster, &history, 3, 8), expected);
+
+        // Reflow the same original soft-wrapped CJK/combining text into six columns.
+        let mut reference = Terminal::new(tab, 4, 6).unwrap();
+        reference.feed(tab, first.as_bytes()).unwrap();
+        history.resize(4, 6).unwrap();
+        history.scroll_viewport(Scroll::Top).unwrap();
+        assert_eq!(
+            render(&mut raster, &history, 4, 6),
+            render(&mut raster, &reference, 4, 6)
+        );
+        history.scroll_viewport(Scroll::Bottom).unwrap();
+        let bottom = render(&mut raster, &history, 4, 6);
+        history.scroll_viewport(Scroll::Top).unwrap();
+        history.scroll_viewport(Scroll::Bottom).unwrap();
+        assert_eq!(render(&mut raster, &history, 4, 6), bottom);
+
+        // The live cursor is a grid point: it must move down by display_offset,
+        // or disappear entirely when it is below the visible grid, even with padding.
+        let mut cursor = Terminal::new(tab, 3, 8).unwrap();
+        cursor.feed(tab, b"\r\n\r\n\r\n\r\n").unwrap();
+        cursor.scroll_viewport(Scroll::Top).unwrap();
+        let visible = render(&mut raster, &cursor, 5, 8);
+        cursor.feed(tab, b"\x1b[?25l").unwrap();
+        assert_eq!(visible, render(&mut raster, &cursor, 5, 8));
+        cursor.feed(tab, b"\x1b[?25h\x1b[H").unwrap();
+        cursor.scroll_viewport(Scroll::Bottom).unwrap();
+        cursor.scroll_viewport(Scroll::Delta(1)).unwrap();
+        let shifted = render(&mut raster, &cursor, 3, 8);
+        cursor.scroll_viewport(Scroll::Bottom).unwrap();
+        cursor.feed(tab, b"\x1b[2;1H").unwrap();
+        assert_eq!(shifted, render(&mut raster, &cursor, 3, 8));
+    }
     #[test]
     fn runtime_cursor_matches_focus_and_shape() {
         let mut pixels = vec![0; 8 * 8 * 4];
