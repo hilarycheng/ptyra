@@ -76,6 +76,9 @@ impl<P> Tab<P> {
     pub fn pty(&self) -> Option<&P> {
         self.pty.as_ref()
     }
+    pub fn pty_mut(&mut self) -> Option<&mut P> {
+        self.pty.as_mut()
+    }
     pub fn selections(&self) -> &TabSelections {
         &self.selections
     }

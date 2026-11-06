@@ -1,6 +1,7 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod keyboard;
 mod raster;
+mod sessions;
 use crate::pty::{PtyReadStatus, PtySession, PtySize, PtySpawnRequest};
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::memfd::{MFdFlags, memfd_create};
@@ -116,8 +117,7 @@ struct Runtime {
     running: bool,
     failure: Option<&'static str>,
     raster: raster::Raster,
-    terminal: crate::terminal::Terminal,
-    pty: Option<PtySession>,
+    tabs: crate::tabs::TabRegistry<PtySession>,
     seat: Option<wl_seat::WlSeat>,
     seat_name: Option<u32>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -132,13 +132,9 @@ pub fn run(config: crate::config::Config) -> Result<()> {
     let mut queue = connection.new_event_queue();
     let qh = queue.handle();
     let raster = raster::Raster::load(&config)?;
-    let terminal = crate::terminal::Terminal::with_scrollback(
-        crate::TabId(1),
-        24,
-        80,
-        config.scrollback_lines,
-    )
-    .map_err(|_| "terminal allocation failed")?;
+    let tabs = config
+        .tab_registry()
+        .map_err(|_| "invalid tab configuration")?;
     let mut app = Runtime {
         compositor: None,
         shm: None,
@@ -151,8 +147,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         running: true,
         failure: None,
         raster,
-        terminal,
-        pty: None,
+        tabs,
         seat: None,
         seat_name: None,
         keyboard: None,
@@ -204,7 +199,11 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             trace.add(2, 1);
         }
         app.enqueue_input(bytes)?;
-        if let Some(pty) = &mut app.pty
+        if let Some(pty) = app
+            .tabs
+            .active()
+            .and_then(|id| app.tabs.get_mut(id))
+            .and_then(|tab| tab.pty_mut())
             && pty.pending_write_bytes() > 0
         {
             let result = pty.flush_write().map_err(|_| "PTY write failed")?;
@@ -214,8 +213,10 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                 trace.add(4, count);
             }
         }
-        if let Some(trace) = &mut app.input_trace {
-            trace.report(&app.terminal);
+        if let Some(trace) = &mut app.input_trace
+            && let Some(tab) = app.tabs.active().and_then(|id| app.tabs.get(id))
+        {
+            trace.report(tab.terminal());
         }
         app.draw(&qh)?;
         let writable = match connection.flush() {
@@ -239,7 +240,11 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                     PollFlags::empty()
                 },
         )];
-        if let Some(pty) = &app.pty
+        if let Some(pty) = app
+            .tabs
+            .active()
+            .and_then(|id| app.tabs.get(id))
+            .and_then(|tab| tab.pty())
             && let Some(fd) = pty.master_fd()
         {
             fds.push(PollFd::new(
@@ -297,13 +302,19 @@ pub fn run(config: crate::config::Config) -> Result<()> {
 
 impl Runtime {
     fn application_cursor(&self) -> bool {
-        self.terminal
-            .mode()
+        self.tabs
+            .active()
+            .and_then(|id| self.tabs.get(id))
+            .and_then(|tab| tab.terminal().mode())
             .is_some_and(|mode| mode.contains(alacritty_terminal::term::TermMode::APP_CURSOR))
     }
     fn enqueue_input(&mut self, bytes: Option<Vec<u8>>) -> Result<()> {
         if let Some(bytes) = bytes
-            && let Some(pty) = &mut self.pty
+            && let Some(pty) = self
+                .tabs
+                .active()
+                .and_then(|id| self.tabs.get_mut(id))
+                .and_then(|tab| tab.pty_mut())
         {
             pty.enqueue_write(&bytes)
                 .map_err(|_| "PTY input queue full or closed")?;
@@ -323,52 +334,60 @@ impl Runtime {
             rows: rows.try_into().map_err(|_| "too many rows")?,
             columns: columns.try_into().map_err(|_| "too many columns")?,
         };
-        let snapshot = self.terminal.snapshot().ok_or("terminal unavailable")?;
+        if self.tabs.active().is_none() {
+            self.new_tab(size)?;
+        }
+        let tab = self
+            .tabs
+            .get_mut(self.tabs.active().ok_or("no active tab")?)
+            .ok_or("terminal unavailable")?;
+        let snapshot = tab.terminal().snapshot().ok_or("terminal unavailable")?;
         if snapshot.rows != rows as usize || snapshot.columns != columns as usize {
-            self.terminal
+            tab.terminal_mut()
                 .resize(size.rows, size.columns)
                 .map_err(|_| "terminal size exceeds allocation budget")?;
             self.paint.dirty = true;
         }
-        if let Some(pty) = &mut self.pty {
+        if let Some(pty) = tab.pty_mut() {
             pty.resize(size).map_err(|_| "PTY resize failed")?;
-        } else {
-            let program = std::env::var_os("SHELL")
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "/bin/sh".into());
-            let cwd = std::env::current_dir().map_err(|_| "working directory unavailable")?;
-            self.pty = Some(
-                PtySession::spawn(PtySpawnRequest {
-                    tab: crate::TabId(1),
-                    program: &program,
-                    args: &[],
-                    cwd: &cwd,
-                    size,
-                })
-                .map_err(|_| "cannot start Shell PTY")?,
-            );
         }
         Ok(())
     }
+    fn new_tab(&mut self, size: PtySize) -> Result<crate::TabId> {
+        let program = std::env::var_os("SHELL")
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "/bin/sh".into());
+        let cwd = std::env::current_dir().map_err(|_| "working directory unavailable")?;
+        sessions::spawn_tab(&mut self.tabs, size.rows, size.columns, |request| {
+            PtySession::spawn(PtySpawnRequest {
+                tab: request.tab,
+                program: &program,
+                args: &[],
+                cwd: &cwd,
+                size,
+            })
+            .map_err(|_| "cannot start Shell PTY")
+        })
+    }
     fn read_output(&mut self) -> Result<()> {
-        let Some(pty) = &mut self.pty else {
+        let Some(id) = self.tabs.active() else {
             return Ok(());
         };
         let mut bytes = [0; crate::pty::MAX_PTY_READ_BYTES];
         for _ in 0..4 {
-            let status = pty
-                .read_chunk(&mut bytes)
-                .map_err(|_| "PTY read failed")?
-                .status;
-            if !apply_output(&mut self.terminal, &mut self.paint, status, &bytes)? {
-                self.running = false;
-                break;
-            }
-            if !matches!(status, PtyReadStatus::Data(_)) {
-                break;
+            let result = self
+                .tabs
+                .drain_output(id, &mut bytes)
+                .map_err(|_| "PTY read failed")?;
+            match result.status {
+                PtyReadStatus::Data(_) => self.paint.dirty = true,
+                PtyReadStatus::Eof => {
+                    self.running = false;
+                    break;
+                }
+                _ => break,
             }
         }
-        // EOF drains output before shutdown; Drop reaps the child and closes the master.
         Ok(())
     }
     fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
@@ -421,8 +440,13 @@ impl Runtime {
             .try_reserve(bytes)
             .map_err(|_| "frame allocation failed")?;
         self.pixels.resize(bytes, 0);
+        let terminal = self
+            .tabs
+            .get(self.tabs.active().ok_or("no active tab")?)
+            .ok_or("terminal unavailable")?
+            .terminal();
         self.raster.draw(
-            &self.terminal,
+            terminal,
             self.paint.size,
             &mut self.pixels,
             self.input.focus.target().is_some(),
@@ -446,6 +470,7 @@ impl Runtime {
     }
 }
 
+#[cfg(test)]
 fn apply_output(
     terminal: &mut crate::terminal::Terminal,
     paint: &mut PaintState,

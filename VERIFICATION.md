@@ -11,3 +11,10 @@
 - `python3 tests/native_runtime.py target/debug/ptyra`: PASS in an owned headless Sway session, including configured shortcut hold/release, ordinary keyboard, repeat/focus, rendered output and reconnect.
 - CPU affinity restricted to CPUs 0–1; Cargo build jobs limited to 2.
 - Pre-existing TASK-129 changes are not included in this commit. Actual desktop IME acceptance remains incomplete.
+
+## TASK-131
+
+- Dependencies satisfied. Every runtime terminal and PTY, including the initial Shell, is owned by TabRegistry. Spawn failure rolls back only the new reservation; IDs remain monotonic. Existing tab and cell caps apply.
+- `runtime_new_tab_spawns_one_session`, workspace tests (197 library tests), fmt and Clippy: PASS.
+- `PTYRA_TEST_NEW_TAB=1 python3 tests/native_runtime.py target/debug/ptyra`: PASS; one held shortcut creates exactly one additional real child, and original Shell input still works.
+- Active-tab switching and background PTY drainage are separate following tasks. T129 compatibility edits remain uncommitted.

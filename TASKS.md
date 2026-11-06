@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（129 已勾選；TASK-129、TASK-131–199 共 70 項未勾選）。
+**Total:** 199 atomic TASKS（130 已勾選；TASK-129、TASK-132–199 共 69 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -586,7 +586,7 @@
   - **Dependencies:** `TASK-096`, `TASK-128` | **Unit Test:** `runtime_bindings_route_actions_once`
   - **Done:** 使用 config bindings 產生 Copy/Paste/New/Close/Next/Previous action；press 只觸發一次，相關 release/repeat 唔漏入 Shell；未匹配按鍵保留原路徑；IME toggle 仍由 compositor/IME 擁有。未接通 action 要明確不可用，唔假裝成功。
 
-- [ ] **TASK-131 — Runtime 新 Tab 建立獨立 Shell session**
+- [x] **TASK-131 — Runtime 新 Tab 建立獨立 Shell session**
   - **Dependencies:** `TASK-084`, `TASK-105`, `TASK-127`, `TASK-130` | **Unit Test:** `runtime_new_tab_spawns_one_session`
   - **Done:** 由 `TabRegistry` 管理 runtime，包括第一個 Tab；一次 NewTab 只 spawn 一個 PTY，獨立 grid/history/selection/title；套用 scrollback/tab caps，spawn 失敗只回滾新 Tab，唔影響原 Shell。
 

@@ -137,7 +137,21 @@ fn read_keymap(file: &File, size: usize) -> Result<Keymap> {
 
 impl Runtime {
     fn dispatch_action(&mut self, action: crate::config::bindings::BindingAction) {
-        eprintln!("Ptyra action unavailable: {action:?}");
+        if action == crate::config::bindings::BindingAction::NewTab {
+            let size = self
+                .tabs
+                .active()
+                .and_then(|id| self.tabs.get(id))
+                .and_then(|tab| tab.pty())
+                .map(|pty| pty.current_size());
+            if let Some(size) = size
+                && let Err(error) = self.new_tab(size)
+            {
+                eprintln!("Ptyra: {error}");
+            }
+        } else {
+            eprintln!("Ptyra action unavailable: {action:?}");
+        }
     }
     pub(super) fn remove_keyboard(&mut self) {
         if let Some(keyboard) = self.keyboard.take() {

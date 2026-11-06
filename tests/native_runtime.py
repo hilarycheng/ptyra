@@ -205,6 +205,21 @@ def main():
             keyboard.key(30, False)
             keyboard.sync()
             assert (root / "app.log").read_text().count("Ptyra action unavailable: Copy") == 1
+            if os.environ.get("PTYRA_TEST_NEW_TAB"):
+                children = Path(f"/proc/{app.pid}/task/{app.pid}/children")
+                first = children.read_text().split()
+                assert len(first) == 1
+                keyboard.modifiers(5)
+                keyboard.key(20)  # Ctrl+Shift+T
+                keyboard.sync()
+                wait_until(lambda: len(children.read_text().split()) == 2)
+                time.sleep(0.7)
+                keyboard.key(20, False)
+                keyboard.modifiers(0)
+                keyboard.sync()
+                assert len(children.read_text().split()) == 2
+                assert first[0] in children.read_text().split()
+                print("PASS: one held NewTab shortcut creates exactly one additional independent Shell")
             proof = root / "proof"
             keyboard.text("echo wrongx")
             keyboard.tap(14)  # Backspace
