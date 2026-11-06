@@ -88,6 +88,10 @@ impl SelectionInput {
         let Some(tab) = tabs.get(event.target.tab) else {
             return false;
         };
+        // A held frame still shows the old cells. Never select/copy unseen core updates.
+        if tab.terminal().sync_blocks_selection() {
+            return self.cancel(tabs);
+        }
         let Some(mode) = tab.terminal().mode() else {
             return false;
         };

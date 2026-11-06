@@ -226,6 +226,23 @@ impl<P: TabPty> TabRegistry<P> {
         Ok(())
     }
 
+    pub(crate) fn sync_presented(&mut self) {
+        if let Some(id) = self.active
+            && let Some(tab) = self.get_mut(id)
+        {
+            tab.terminal.sync_presented();
+        }
+    }
+    pub(crate) fn sync_deadline(
+        &mut self,
+        clock: &impl crate::clock::Clock,
+    ) -> Option<crate::clock::Deadline> {
+        self.entries
+            .iter_mut()
+            .filter_map(|tab| tab.terminal.sync_update(clock))
+            .min_by_key(|deadline| deadline.remaining(clock))
+    }
+
     pub fn ids(&self) -> impl Iterator<Item = TabId> + '_ {
         self.entries.iter().map(|tab| tab.id)
     }

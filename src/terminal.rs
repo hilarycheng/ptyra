@@ -1,5 +1,6 @@
 //! Stateful byte-to-grid adapter. No PTY, Wayland, clipboard or renderer I/O.
 mod queries;
+pub(crate) mod sync;
 use crate::{
     TabId,
     clipboard::SelectionKind,
@@ -131,6 +132,28 @@ impl Terminal {
     /// Exhaustion fails closed rather than allowing an old anchor generation to be reused.
     pub(crate) fn content_epoch(&self) -> Option<u64> {
         self.content_epoch
+    }
+
+    pub(crate) fn sync_update(
+        &mut self,
+        clock: &impl crate::clock::Clock,
+    ) -> Option<crate::clock::Deadline> {
+        self.core.as_mut()?.keyboard.sync_mut().update(clock)
+    }
+    pub(crate) fn sync_presented(&mut self) {
+        if let Some(core) = &mut self.core {
+            core.keyboard.sync_mut().presented();
+        }
+    }
+    pub(crate) fn sync_blocks_selection(&self) -> bool {
+        self.core
+            .as_ref()
+            .is_some_and(|core| core.keyboard.sync().blocks_selection())
+    }
+    pub(crate) fn sync_pending(&self) -> bool {
+        self.core
+            .as_ref()
+            .is_some_and(|core| core.keyboard.sync().pending())
     }
 
     pub fn tab(&self) -> TabId {
@@ -421,7 +444,7 @@ impl EventListener for ClipboardEvents {
 
 struct Core {
     term: Term<ClipboardEvents>,
-    parser: Processor<NoSync>,
+    parser: Processor<ImmediateParsing>,
     osc: OscLimit,
     events: ClipboardEvents,
     scrollback_lines: usize,
@@ -440,7 +463,16 @@ impl Core {
                 return false;
             }
             // Check after each parser step: REP can append up to u16::MAX marks.
-            if palette_dispatch {
+            if self.keyboard.sync().query {
+                self.parser.advance(
+                    &mut sync::QueryDispatch {
+                        term: &mut self.term,
+                        events: &self.events,
+                        pending: self.keyboard.sync().pending(),
+                    },
+                    std::slice::from_ref(byte),
+                );
+            } else if palette_dispatch {
                 self.parser.advance(
                     &mut queries::PaletteDispatch {
                         term: &mut self.term,
@@ -544,10 +576,11 @@ impl Dimensions for Size {
     }
 }
 
-// shortcut: process sync updates immediately until the runtime owns their timeout.
+// Intentionally keep parsing/replies immediate. Runtime gates presentation with a bounded deadline.
+// Enabling VTE byte buffering here would invalidate narrow per-dispatch query handlers.
 #[derive(Default)]
-struct NoSync;
-impl Timeout for NoSync {
+struct ImmediateParsing;
+impl Timeout for ImmediateParsing {
     fn set_timeout(&mut self, _: Duration) {}
     fn clear_timeout(&mut self) {}
     fn pending_timeout(&self) -> bool {

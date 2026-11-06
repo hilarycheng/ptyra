@@ -19,6 +19,7 @@ mod scroll;
 mod selection;
 mod selection_overlay;
 mod sessions;
+mod sync;
 use crate::pty::{PtyReadStatus, PtySession, PtySize, PtySpawnRequest};
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::memfd::{MFdFlags, memfd_create};
@@ -238,8 +239,10 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         if !app.running {
             break;
         }
+        sync::refresh(&mut app.tabs, &app.clock);
         app.sync_terminal()?;
         app.read_output(&qh)?;
+        let sync_deadline = sync::refresh(&mut app.tabs, &app.clock);
         let copy_failed = app.clipboard.pump_sends();
         let primary_failed = app.primary.pump_sends();
         if copy_failed || primary_failed {
@@ -359,8 +362,11 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             .map
             .as_ref()
             .and_then(|map| app.input.repeat.deadline(&app.input.focus, map))
-            .map(|deadline| {
-                let remaining = deadline.remaining(&app.clock);
+            .into_iter()
+            .chain(sync_deadline)
+            .map(|deadline| deadline.remaining(&app.clock))
+            .min()
+            .map(|remaining| {
                 PollTimeout::try_from(
                     remaining
                         .as_millis()
@@ -606,7 +612,7 @@ impl Runtime {
         Ok(())
     }
     fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
-        if !self.paint.ready() {
+        if !self.paint.ready() || sync::held(&self.tabs) {
             return Ok(());
         }
         let Some(index) = self
@@ -716,6 +722,7 @@ impl Runtime {
             },
             self.clipboard_notice.is_some() || presented.is_some(),
         );
+        self.tabs.sync_presented();
         self.paint.submitted();
         self.presented_bar = Some(layout);
         if let Some(token) = &presented

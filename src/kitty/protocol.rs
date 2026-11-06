@@ -20,6 +20,7 @@ struct KeyboardState {
     alternate: bool,
     replies: VecDeque<KeyboardFlags>,
     failed: bool,
+    sync: crate::terminal::sync::State,
 }
 
 #[derive(Default)]
@@ -39,8 +40,17 @@ impl KeyboardProtocol {
 
     /// Terminal's OSC and per-feed limits must run before this secondary VTE observer.
     pub(crate) fn advance(&mut self, bytes: &[u8]) -> bool {
+        self.state.sync.query = false;
         self.parser.advance(&mut self.state, bytes);
         !self.state.failed
+    }
+
+    // Share this existing VTE observer rather than add a third ANSI parser for sync modes.
+    pub(crate) fn sync(&self) -> &crate::terminal::sync::State {
+        &self.state.sync
+    }
+    pub(crate) fn sync_mut(&mut self) -> &mut crate::terminal::sync::State {
+        &mut self.state.sync
     }
 
     pub(crate) fn take_reply(&mut self) -> Option<Vec<u8>> {
@@ -53,6 +63,7 @@ impl KeyboardProtocol {
 
 impl Perform for KeyboardState {
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
+        self.sync.csi(params, intermediates, ignore, action);
         if ignore || self.failed || action != 'u' || params.len() > 2 {
             return;
         }
@@ -112,6 +123,7 @@ impl Perform for KeyboardState {
 
     fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
         if !ignore && intermediates.is_empty() && byte == b'c' {
+            self.sync.reset();
             self.active = ModeStack::default();
             self.inactive = ModeStack::default();
             self.alternate = false;

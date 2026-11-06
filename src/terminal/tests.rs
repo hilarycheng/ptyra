@@ -614,7 +614,7 @@ fn osc52_read_is_denied_by_default() {
                         },
                         Probe(events.clone()),
                     );
-                    let mut parser = Processor::<NoSync>::new();
+                    let mut parser = Processor::<ImmediateParsing>::new();
                     for round in 1..=2 {
                         for chunk in query.as_bytes().chunks(chunk_size) {
                             parser.advance(&mut core, chunk);

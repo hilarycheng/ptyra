@@ -736,7 +736,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-100`, `TASK-140`, `TASK-158` | **Unit Test:** `runtime_hyperlink_open_requires_explicit_click`
   - **Done:** 將既有 Ctrl+click HTTP(S) gate 接到 adapter，以 literal argv 開啟連結，唔經 shell 字串；scrollback hit-test 正確，普通 output/hover 唔執行；失敗只回報 metadata，無 URI payload logs。
 
-- [ ] **TASK-166 — Synchronized update 使用有界 runtime timeout**
+- [x] **TASK-166 — Synchronized update 使用有界 runtime timeout**
   - **Dependencies:** `TASK-006`, `TASK-017`, `TASK-026`, `TASK-127` | **Unit Test:** `runtime_sync_update_timeout_releases_frame`
   - **Done:** 解決 `NoSync` 註記：支援 core 同步更新時延後 presentation 至結束或有界 deadline，缺結束 sequence 亦唔永久凍結畫面；不停止 keyboard/PTY drain，唔用固定 busy polling；未接通前不宣稱支援。
 

@@ -248,6 +248,9 @@ def main():
                 keyboard.send(primary_pointer, 2, u32(0, 274, 0))
                 keyboard.send(primary_pointer, 4)
                 keyboard.sync()
+            if os.environ.get("PTYRA_TEST_SYNC"):
+                from native_sync import check_sync
+                check_sync(root, env, keyboard, app, wait_until, ipc, nodes)
             if os.environ.get("PTYRA_TEST_HYPERLINK"):
                 from native_hyperlink import check_hyperlink
                 check_hyperlink(root, keyboard, app, wait_until, ipc, nodes, u32)
