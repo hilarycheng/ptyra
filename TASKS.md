@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（130 已勾選；TASK-129、TASK-132–199 共 69 項未勾選）。
+**Total:** 199 atomic TASKS（131 已勾選；TASK-129、TASK-133–199 共 68 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -590,7 +590,7 @@
   - **Dependencies:** `TASK-084`, `TASK-105`, `TASK-127`, `TASK-130` | **Unit Test:** `runtime_new_tab_spawns_one_session`
   - **Done:** 由 `TabRegistry` 管理 runtime，包括第一個 Tab；一次 NewTab 只 spawn 一個 PTY，獨立 grid/history/selection/title；套用 scrollback/tab caps，spawn 失敗只回滾新 Tab，唔影響原 Shell。
 
-- [ ] **TASK-132 — 將多個 PTY 接入同一 poll loop**
+- [x] **TASK-132 — 將多個 PTY 接入同一 poll loop**
   - **Dependencies:** `TASK-090`, `TASK-102`, `TASK-131` | **Unit Test:** `runtime_multi_pty_poll_is_fair`
   - **Done:** 依 ready FD 同 TabId drain/flush 對應 session；inactive Tab 繼續收 output；設每輪總 budget 同公平輪轉，flood 唔餓死 keyboard/Wayland/其他 PTY，idle 唔忙等。
 

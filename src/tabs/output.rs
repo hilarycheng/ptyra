@@ -90,7 +90,7 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
     #[test]
-    fn pty_flood_is_bounded_per_tick() {
+    fn runtime_multi_pty_poll_is_fair() {
         struct Flood(TabId);
         impl TabPty for Flood {
             fn tab(&self) -> TabId {

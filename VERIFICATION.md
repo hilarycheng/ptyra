@@ -18,3 +18,10 @@
 - `runtime_new_tab_spawns_one_session`, workspace tests (197 library tests), fmt and Clippy: PASS.
 - `PTYRA_TEST_NEW_TAB=1 python3 tests/native_runtime.py target/debug/ptyra`: PASS; one held shortcut creates exactly one additional real child, and original Shell input still works.
 - Active-tab switching and background PTY drainage are separate following tasks. T129 compatibility edits remain uncommitted.
+
+## TASK-132
+
+- Dependencies satisfied. One poll loop registers every live PTY and routes readiness by TabId. The existing rotating drain limits each dispatch to four sessions and 64 KiB; hidden output does not redraw the active grid. Pending writes are flushed in the same bounded service pass.
+- `runtime_multi_pty_poll_is_fair`, workspace regression, fmt, Clippy: PASS.
+- `PTYRA_TEST_NEW_TAB=1 PTYRA_TEST_MULTI_PTY=1 python3 tests/native_runtime.py target/debug/ptyra`: PASS; hidden Shell drains 256 KiB and active keyboard remains responsive.
+- Per-tab EOF handling remains TASK-135.

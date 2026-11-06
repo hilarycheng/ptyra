@@ -118,6 +118,7 @@ struct Runtime {
     failure: Option<&'static str>,
     raster: raster::Raster,
     tabs: crate::tabs::TabRegistry<PtySession>,
+    ready_pty: Vec<crate::TabId>,
     seat: Option<wl_seat::WlSeat>,
     seat_name: Option<u32>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -148,6 +149,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         failure: None,
         raster,
         tabs,
+        ready_pty: Vec::new(),
         seat: None,
         seat_name: None,
         keyboard: None,
@@ -240,22 +242,22 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                     PollFlags::empty()
                 },
         )];
-        if let Some(pty) = app
-            .tabs
-            .active()
-            .and_then(|id| app.tabs.get(id))
-            .and_then(|tab| tab.pty())
-            && let Some(fd) = pty.master_fd()
-        {
-            fds.push(PollFd::new(
-                fd,
-                PollFlags::POLLIN
-                    | if pty.pending_write_bytes() > 0 {
-                        PollFlags::POLLOUT
-                    } else {
-                        PollFlags::empty()
-                    },
-            ));
+        let mut polled_tabs = Vec::new();
+        for id in app.tabs.ids() {
+            if let Some(pty) = app.tabs.get(id).and_then(|tab| tab.pty())
+                && let Some(fd) = pty.master_fd()
+            {
+                polled_tabs.push(id);
+                fds.push(PollFd::new(
+                    fd,
+                    PollFlags::POLLIN
+                        | if pty.pending_write_bytes() > 0 {
+                            PollFlags::POLLOUT
+                        } else {
+                            PollFlags::empty()
+                        },
+                ));
+            }
         }
         let timeout = app
             .input
@@ -281,6 +283,21 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             .revents()
             .unwrap_or(PollFlags::empty())
             .intersects(PollFlags::POLLIN | PollFlags::POLLERR | PollFlags::POLLHUP);
+        app.ready_pty = polled_tabs
+            .into_iter()
+            .zip(fds.iter().skip(1))
+            .filter_map(|(id, fd)| {
+                fd.revents()
+                    .unwrap_or(PollFlags::empty())
+                    .intersects(
+                        PollFlags::POLLIN
+                            | PollFlags::POLLOUT
+                            | PollFlags::POLLERR
+                            | PollFlags::POLLHUP,
+                    )
+                    .then_some(id)
+            })
+            .collect();
         drop(fds);
         if wayland_ready {
             match guard.read() {
@@ -370,24 +387,26 @@ impl Runtime {
         })
     }
     fn read_output(&mut self) -> Result<()> {
-        let Some(id) = self.tabs.active() else {
-            return Ok(());
-        };
         let mut bytes = [0; crate::pty::MAX_PTY_READ_BYTES];
-        for _ in 0..4 {
-            let result = self
-                .tabs
-                .drain_output(id, &mut bytes)
-                .map_err(|_| "PTY read failed")?;
-            match result.status {
-                PtyReadStatus::Data(_) => self.paint.dirty = true,
-                PtyReadStatus::Eof => {
-                    self.running = false;
-                    break;
-                }
-                _ => break,
+        let mut results = Vec::new();
+        self.tabs
+            .drain_ready(&self.ready_pty, &mut bytes, |id, result| {
+                results.push((id, result))
+            })
+            .map_err(|_| "PTY dispatch failed")?;
+        for (id, result) in results {
+            match result.map_err(|_| "PTY read failed")?.status {
+                PtyReadStatus::Data(_) if self.tabs.active() == Some(id) => self.paint.dirty = true,
+                PtyReadStatus::Eof => self.running = false,
+                _ => {}
+            }
+            if let Some(pty) = self.tabs.get_mut(id).and_then(|tab| tab.pty_mut())
+                && pty.pending_write_bytes() > 0
+            {
+                pty.flush_write().map_err(|_| "PTY write failed")?;
             }
         }
+        self.ready_pty.clear();
         Ok(())
     }
     fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<()> {

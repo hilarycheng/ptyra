@@ -173,6 +173,8 @@ def main():
                 wrapper.write_text("#!/bin/sh\nexec /usr/bin/fish --no-config --interactive\n")
             else:
                 wrapper.write_text("#!/bin/sh\nexec /bin/bash --noprofile --norc\n")
+            if os.environ.get("PTYRA_TEST_MULTI_PTY"):
+                wrapper.write_text(f"#!/bin/sh\nif mkdir '{root}/first' 2>/dev/null; then :; else head -c 262144 /dev/zero | tr '\\000' x; echo drained > '{root}/drained'; fi\nexec /bin/bash --noprofile --norc\n")
             wrapper.chmod(0o700)
             env["SHELL"] = str(wrapper)
             if os.environ.get("PTYRA_TEST_TRACE"):
@@ -219,6 +221,9 @@ def main():
                 keyboard.sync()
                 assert len(children.read_text().split()) == 2
                 assert first[0] in children.read_text().split()
+                if os.environ.get("PTYRA_TEST_MULTI_PTY"):
+                    wait_until(lambda: (root / "drained").exists())
+                    print("PASS: hidden Shell drains 256 KiB without starving active input")
                 print("PASS: one held NewTab shortcut creates exactly one additional independent Shell")
             proof = root / "proof"
             keyboard.text("echo wrongx")
