@@ -222,10 +222,31 @@ impl Raster {
         focused: bool,
         cursor_visible: bool,
     ) -> Result<()> {
+        self.draw_rows(terminal, size, pixels, focused, cursor_visible, 0..size.1)
+    }
+
+    // Whole cell rows preserve wide/combining glyph ownership without a per-pixel scissor.
+    pub(super) fn draw_rows(
+        &mut self,
+        terminal: &Terminal,
+        size: (u32, u32),
+        pixels: &mut [u8],
+        focused: bool,
+        cursor_visible: bool,
+        rows: std::ops::Range<u32>,
+    ) -> Result<()> {
         let (width, height) = size;
         if pixels.len() != width as usize * height as usize * 4 {
             return Err("invalid raster buffer");
         }
+        if rows.start > rows.end
+            || rows.end > height
+            || !rows.start.is_multiple_of(self.cell_height)
+            || (rows.end != height && !rows.end.is_multiple_of(self.cell_height))
+        {
+            return Err("invalid raster damage rows");
+        }
+        let damage_rows = rows;
         let snapshot = terminal.snapshot().ok_or("terminal unavailable")?;
         let colors = snapshot.content.colors;
         let display_offset = snapshot.content.display_offset;
@@ -233,13 +254,17 @@ impl Raster {
         let cell_height = self.cell_height;
         let viewport_y = |line: i32| {
             let row = display_offset.checked_add_signed(line as isize)?;
-            (row < rows).then_some(row as u32 * cell_height)
+            let y = row as u32 * cell_height;
+            (row < rows && damage_rows.contains(&y)).then_some(y)
         };
         let default_bg = color(
             Color::Named(alacritty_terminal::vte::ansi::NamedColor::Background),
             colors,
         );
-        for pixel in pixels.chunks_exact_mut(4) {
+        let stride = width as usize * 4;
+        for pixel in pixels[damage_rows.start as usize * stride..damage_rows.end as usize * stride]
+            .chunks_exact_mut(4)
+        {
             pixel.copy_from_slice(&(0xff000000 | default_bg).to_ne_bytes());
         }
         // Paint backgrounds first so wide cells never erase the preceding glyph.
@@ -438,6 +463,321 @@ fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: 
 mod tests {
     use super::*;
     use crate::renderer::palette::CURSOR;
+    #[test]
+    fn runtime_partial_damage_preserves_other_pixels() {
+        let font = FontVec::try_from_vec(
+            include_bytes!("../../tests/fixtures/fallback-primary.ttf").to_vec(),
+        )
+        .unwrap();
+        let mut raster = Raster::new(vec![font], &Config::default()).unwrap();
+        let size = (raster.cell_width * 8, raster.cell_height * 4 + 3);
+        let mut terminal = Terminal::with_scrollback(crate::TabId(1), 4, 8, 0).unwrap();
+        terminal
+            .feed(crate::TabId(1), b"\x1b[?25lA\x1b[2;1HB\x1b[3;1HC")
+            .unwrap();
+        let mut pixels = vec![0x55; (size.0 * size.1 * 4) as usize];
+        raster
+            .draw_rows(
+                &terminal,
+                size,
+                &mut pixels,
+                true,
+                true,
+                raster.cell_height..2 * raster.cell_height,
+            )
+            .unwrap();
+        let stride = size.0 as usize * 4;
+        assert!(
+            pixels[..raster.cell_height as usize * stride]
+                .iter()
+                .all(|&p| p == 0x55)
+        );
+        assert!(
+            pixels[2 * raster.cell_height as usize * stride..]
+                .iter()
+                .all(|&p| p == 0x55)
+        );
+        let preserved = pixels.clone();
+        for rows in [
+            1..raster.cell_height,
+            0..size.1 + 1,
+            std::ops::Range {
+                start: raster.cell_height,
+                end: 0,
+            },
+        ] {
+            assert!(
+                raster
+                    .draw_rows(&terminal, size, &mut pixels, true, true, rows)
+                    .is_err()
+            );
+            assert_eq!(pixels, preserved, "invalid damage cannot modify pixels");
+        }
+        raster
+            .draw_rows(&terminal, size, &mut pixels, true, true, 0..0)
+            .unwrap();
+        assert_eq!(pixels, preserved);
+
+        // A retained four-row grid can be clipped to one row plus three pixels.
+        let clipped = (size.0, raster.cell_height + 3);
+        let mut pixels = vec![0; (clipped.0 * clipped.1 * 4) as usize];
+        raster
+            .draw(&terminal, clipped, &mut pixels, true, true)
+            .unwrap();
+        terminal.damage_rows();
+        terminal.damage_presented();
+        for text in [b"\x1b[2;1HQ\x1b[?25h".as_slice(), b"\x1b[4;1H", b"Z"] {
+            terminal.feed(crate::TabId(1), text).unwrap();
+            let rows = terminal.damage_rows().unwrap();
+            if let Some(rows) =
+                super::super::damage::Band::terminal(rows, 4, clipped.1, raster.cell_height)
+            {
+                raster
+                    .draw_rows(&terminal, clipped, &mut pixels, true, true, rows.range())
+                    .unwrap();
+            }
+            let mut full = vec![0; pixels.len()];
+            raster
+                .draw(&terminal, clipped, &mut full, true, true)
+                .unwrap();
+            assert_eq!(
+                pixels, full,
+                "retained-grid damage is clipped to visible pixels"
+            );
+            terminal.damage_presented();
+        }
+    }
+
+    #[test]
+    fn runtime_partial_frames_match_full_raster_and_reused_buffers() {
+        use super::super::{bar, damage, notice, selection_overlay};
+        use crate::{
+            TabId,
+            selection::Screen,
+            tabs::{SelectionAction, TabPty, TabRegistry},
+        };
+        use alacritty_terminal::index::{Column, Line, Point};
+        struct Fake;
+        impl TabPty for Fake {
+            fn tab(&self) -> TabId {
+                TabId(1)
+            }
+        }
+        let fonts = [
+            include_bytes!("../../tests/fixtures/fallback-primary.ttf").as_slice(),
+            include_bytes!("../../tests/fixtures/fallback-cjk.ttf").as_slice(),
+            include_bytes!("../../tests/fixtures/fallback-mark.ttf").as_slice(),
+        ]
+        .into_iter()
+        .map(|f| FontVec::try_from_vec(f.to_vec()).unwrap())
+        .collect();
+        let mut raster = Raster::new(fonts, &Config::default()).unwrap();
+        let mut tabs = TabRegistry::<Fake>::with_scrollback(20).unwrap();
+        tabs.insert(TabId(1), 6, 12).unwrap();
+        tabs.insert(TabId(2), 6, 12).unwrap();
+        let cell_height = raster.cell_height;
+        let mut damage = damage::State::default();
+        let size = (
+            12 * raster.cell_width,
+            6 * raster.cell_height + raster.cell_height + 8 + 3,
+        );
+        let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
+        let mut slots = [pixels.clone(), pixels.clone()];
+        let mut index = 0;
+        let mut frame = |tabs: &mut TabRegistry<Fake>,
+                         visible,
+                         focused,
+                         message: Option<notice::Notice>| {
+            let id = tabs.active().unwrap();
+            let layout = bar::Layout::new(tabs, size, (raster.cell_width, raster.cell_height), 1);
+            let terminal = tabs.get_mut(id).unwrap().terminal_mut();
+            let total_rows = terminal.snapshot().unwrap().rows;
+            let changed = terminal.damage_rows().and_then(|rows| {
+                damage::Band::terminal(rows, total_rows, layout.content.1, raster.cell_height)
+            });
+            let tab = tabs.get(id).unwrap();
+            let mut overlays = selection_overlay::bounds(tab, raster.cell_height)
+                .map(|b| b.shifted(layout.height));
+            if let Some(message) = message {
+                let height = notice::height(size, (raster.cell_width, raster.cell_height), message);
+                damage::Band::add(&mut overlays, damage::Band::new(size.1 - height, size.1));
+            }
+            let plan = damage.prepare(
+                damage::View {
+                    tab: id,
+                    size,
+                    cell: (raster.cell_width, raster.cell_height),
+                    scale: 1,
+                    origin: layout.height,
+                    titles: tabs
+                        .ids()
+                        .map(|id| (id, tabs.get(id).unwrap().title().to_owned()))
+                        .collect(),
+                },
+                changed,
+                overlays,
+            );
+            let offset = (size.0 * layout.height * 4) as usize;
+            let before = pixels.clone();
+            if let Some(rows) = plan.content {
+                raster
+                    .draw_rows(
+                        tab.terminal(),
+                        layout.content,
+                        &mut pixels[offset..],
+                        focused,
+                        visible,
+                        rows.range(),
+                    )
+                    .unwrap();
+                selection_overlay::draw_rows(
+                    tab,
+                    layout.content,
+                    (raster.cell_width, raster.cell_height),
+                    &mut pixels[offset..],
+                    rows.range(),
+                )
+                .unwrap();
+            }
+            if plan.bar {
+                layout
+                    .draw(tabs, &mut raster, size, &mut pixels[..offset])
+                    .unwrap();
+            }
+            if let Some(message) = message {
+                notice::draw(&mut raster, size, &mut pixels, message).unwrap();
+            }
+            for y in 0..size.1 {
+                if !plan
+                    .surface
+                    .iter()
+                    .flatten()
+                    .any(|b| b.range().contains(&y))
+                {
+                    let start = (y * size.0 * 4) as usize;
+                    assert_eq!(
+                        &pixels[start..start + (size.0 * 4) as usize],
+                        &before[start..start + (size.0 * 4) as usize]
+                    );
+                }
+            }
+            let mut full = vec![0; pixels.len()];
+            raster
+                .draw(
+                    tab.terminal(),
+                    layout.content,
+                    &mut full[offset..],
+                    focused,
+                    visible,
+                )
+                .unwrap();
+            selection_overlay::draw(
+                tab,
+                layout.content,
+                (raster.cell_width, raster.cell_height),
+                &mut full[offset..],
+            )
+            .unwrap();
+            layout
+                .draw(tabs, &mut raster, size, &mut full[..offset])
+                .unwrap();
+            if let Some(message) = message {
+                notice::draw(&mut raster, size, &mut full, message).unwrap();
+            }
+            assert_eq!(pixels, full, "partial frame differs from full composition");
+            if let Some(stale) = damage.stale(index) {
+                let start = (stale.start * size.0 * 4) as usize;
+                let end = (stale.end * size.0 * 4) as usize;
+                slots[index][start..end].copy_from_slice(&pixels[start..end]);
+            }
+            assert_eq!(slots[index], full, "alternating slot retains stale pixels");
+            damage.submitted(index);
+            tabs.get_mut(id).unwrap().terminal_mut().damage_presented();
+            index = 1 - index;
+            plan
+        };
+        let feed = |tabs: &mut TabRegistry<Fake>, bytes: &[u8]| {
+            let id = tabs.active().unwrap();
+            tabs.get_mut(id)
+                .unwrap()
+                .terminal_mut()
+                .feed(id, bytes)
+                .unwrap();
+        };
+        feed(
+            &mut tabs,
+            "\x1b[?25lA\x1b[2;1H中e\u{301}\x1b[3;1H\x1b[1;3;4:3;9mAA\x1b[0m\x1b[4;1HZZ".as_bytes(),
+        );
+        frame(&mut tabs, true, true, None);
+        feed(&mut tabs, b"\x1b[4;1HQ");
+        let one = frame(&mut tabs, true, true, None);
+        assert!(!one.bar);
+        assert_eq!(
+            one.content.unwrap().end - one.content.unwrap().start,
+            cell_height
+        );
+        for bytes in [
+            "\x1b[2;2H ",
+            "\x1b[2;1H中e\u{301}",
+            "\x1b[2;4H\u{301}",
+            "\x1b[3;1H\x1b[K",
+            "\x1b[?25h\x1b[2;1H",
+            "\x1b[3 q",
+            "\x1b[5 q",
+        ] {
+            feed(&mut tabs, bytes.as_bytes());
+            frame(&mut tabs, true, true, None);
+        }
+        frame(&mut tabs, false, true, None);
+        frame(&mut tabs, true, false, None);
+        frame(&mut tabs, true, true, None);
+        let point = Point::new(Line(1), Column(1));
+        let tab = tabs.get_mut(TabId(1)).unwrap();
+        tab.select(Screen::Main, SelectionAction::Press, point);
+        tab.select(Screen::Main, SelectionAction::Release, point);
+        frame(&mut tabs, true, true, None);
+        frame(&mut tabs, false, true, None); // Repainting selection must not XOR it twice.
+        let point = Point::new(Line(3), Column(0));
+        let tab = tabs.get_mut(TabId(1)).unwrap();
+        tab.select(Screen::Main, SelectionAction::Press, point);
+        tab.select(Screen::Main, SelectionAction::Release, point);
+        frame(&mut tabs, true, true, None);
+        feed(&mut tabs, b"\x1b[4;2HB"); // Content epoch clears the prior selection.
+        frame(&mut tabs, true, true, None);
+        frame(&mut tabs, true, true, Some(notice::Notice::TransferFailed));
+        frame(&mut tabs, true, true, Some(notice::Notice::Empty));
+        frame(&mut tabs, true, true, None);
+        feed(&mut tabs, b"\x1b]10;#123456\x07");
+        frame(&mut tabs, true, true, None);
+        feed(&mut tabs, b"\x1b]110\x07");
+        frame(&mut tabs, true, true, None);
+        feed(&mut tabs, b"\x1b[?1049hOther screen");
+        frame(&mut tabs, true, true, None);
+        feed(&mut tabs, b"\x1b[?1049l");
+        frame(&mut tabs, true, true, None);
+        feed(&mut tabs, b"\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7");
+        frame(&mut tabs, true, true, None);
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .scroll_viewport(alacritty_terminal::grid::Scroll::Top)
+            .unwrap();
+        frame(&mut tabs, true, true, None);
+        feed(&mut tabs, b"\r\nmore");
+        frame(&mut tabs, true, true, None);
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .scroll_viewport(alacritty_terminal::grid::Scroll::Bottom)
+            .unwrap();
+        frame(&mut tabs, true, true, None);
+        assert!(tabs.activate(TabId(2)));
+        feed(&mut tabs, b"Other tab");
+        frame(&mut tabs, true, true, None);
+        assert!(tabs.activate(TabId(1)));
+        frame(&mut tabs, true, true, None);
+    }
+
     #[test]
     fn runtime_cursor_blink_preserves_pixels_and_grid() {
         let font = FontVec::try_from_vec(

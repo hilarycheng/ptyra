@@ -440,3 +440,25 @@ no package/version/lockfile change, new native library, app unsafe or thread.
 License and maintenance remain those of the previously reviewed MIT crate.
 The optional protocol is bound at version 1; absence never falls back to Clipboard.
 This feature does not itself implement or claim acceptance of other unstable protocols.
+
+## Runtime partial presentation — TASK-171
+
+The pinned alacritty core's damage iterator feeds whole-cell-row raster bands.
+The staging image persists; each of two SHM slots keeps one bounded stale band
+and is repaired before its next attachment, only after release. Surface damage
+uses the new frame's bar/content bands, rather than the larger buffer-repair band.
+Resize, scale, and active-Tab changes force full composition. Selection, notice,
+and paste overlays restore their old/new rows before painting; cursor movement
+and the one-row preedit use the core's old/current cursor damage. The runtime
+preedit check runs in the combined TASK-129 worktree; TASK-129 and desktop
+candidate placement remain unchecked.
+
+This deliberately redraws complete rows (including wide/combining/style ink),
+not individual pixels. Separated changes can merge into a larger band. The grid
+iterator is still scanned, but unrelated rows are not cleared/rasterized, and an
+unchanged Tab strip is not regenerated. This is not a CPU/RAM benchmark claim.
+Damage is inspected only after configure/frame/sync/free-slot gates and reset
+after successful presentation. The compositor's release ownership is unchanged.
+No new crate, native library, unsafe, FFI, thread, subprocess, payload log, network
+access, installation, or global setting change. Desktop/Fcitx5/GPU acceptance is
+separate; the existing font-parser maintenance/complexity advisory is unresolved.

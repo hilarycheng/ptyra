@@ -73,6 +73,10 @@ fn geometry(size: (u32, u32), cell: (u32, u32), notice: Notice) -> Option<(u16, 
     (height <= size.1).then_some((rows as u16, columns as u16, height))
 }
 
+pub(super) fn height(size: (u32, u32), cell: (u32, u32), notice: Notice) -> u32 {
+    geometry(size, cell, notice).map_or(size.1.min(cell.1), |(_, _, height)| height)
+}
+
 pub(super) fn draw(
     raster: &mut super::raster::Raster,
     size: (u32, u32),

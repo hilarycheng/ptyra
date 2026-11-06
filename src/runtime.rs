@@ -2,6 +2,7 @@
 mod bar;
 mod clipboard;
 mod cursor;
+mod damage;
 mod notice;
 mod osc52;
 mod primary;
@@ -143,6 +144,7 @@ struct Runtime {
     paint: PaintState,
     output_scale: scale::State,
     cursor: cursor::State,
+    damage: damage::State,
     outputs: std::collections::BTreeMap<u32, wl_output::WlOutput>,
     slots: [Option<Slot>; 2],
     pixels: Vec<u8>,
@@ -192,6 +194,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         paint: PaintState::default(),
         output_scale: scale::State::default(),
         cursor: cursor::State::default(),
+        damage: damage::State::default(),
         outputs: std::collections::BTreeMap::new(),
         slots: [None, None],
         pixels: Vec::new(),
@@ -675,6 +678,7 @@ impl Runtime {
                 index,
             );
             pool.destroy();
+            self.damage.invalidate_slot(index, height);
             self.slots[index] = Some(Slot {
                 file,
                 buffer,
@@ -682,42 +686,100 @@ impl Runtime {
                 busy: false,
             });
         }
-        self.pixels.clear();
         self.pixels
-            .try_reserve(bytes)
+            .try_reserve(bytes.saturating_sub(self.pixels.len()))
             .map_err(|_| "frame allocation failed")?;
         self.pixels.resize(bytes, 0);
         let (bar_height, content_size) = self.content_geometry();
         let content_offset = (bar_height * self.paint.buffer_size.0) as usize * 4;
-        let tab = self
+        let active = self.tabs.active().ok_or("no active tab")?;
+        let terminal = self
             .tabs
-            .get(self.tabs.active().ok_or("no active tab")?)
-            .ok_or("terminal unavailable")?;
-        let terminal = tab.terminal();
-        self.raster.draw(
-            terminal,
-            content_size,
-            &mut self.pixels[content_offset..],
-            cursor::focused(&self.tabs, &self.input.focus),
-            self.cursor.visible(),
-        )?;
-        selection_overlay::draw(
-            tab,
-            content_size,
-            (self.raster.cell_width, self.raster.cell_height),
-            &mut self.pixels[content_offset..],
-        )?;
-        let layout = self.tab_layout();
-        layout.draw(
-            &self.tabs,
-            &mut self.raster,
-            self.paint.buffer_size,
-            &mut self.pixels[..content_offset],
-        )?;
+            .get_mut(active)
+            .ok_or("terminal unavailable")?
+            .terminal_mut();
+        let rows = terminal.snapshot().ok_or("terminal unavailable")?.rows;
+        let terminal_damage = terminal.damage_rows().and_then(|damage| {
+            damage::Band::terminal(damage, rows, content_size.1, self.raster.cell_height)
+        });
         let prompt = self
             .paste
             .as_ref()
             .and_then(|paste| paste.prompt_token(&self.input.focus));
+        let overlay_height = if prompt.is_some() {
+            paste::prompt_height(
+                self.paint.buffer_size,
+                (self.raster.cell_width, self.raster.cell_height),
+            )
+        } else {
+            self.clipboard_notice.map_or(0, |notice| {
+                notice::height(
+                    self.paint.buffer_size,
+                    (self.raster.cell_width, self.raster.cell_height),
+                    notice,
+                )
+            })
+        };
+        let tab = self.tabs.get(active).ok_or("terminal unavailable")?;
+        let mut overlays =
+            selection_overlay::bounds(tab, self.raster.cell_height).map(|b| b.shifted(bar_height));
+        damage::Band::add(
+            &mut overlays,
+            damage::Band::new(height - overlay_height, height),
+        );
+        let plan = self.damage.prepare(
+            damage::View {
+                tab: active,
+                size: self.paint.buffer_size,
+                cell: (self.raster.cell_width, self.raster.cell_height),
+                scale: self.paint.scale,
+                origin: bar_height,
+                titles: self
+                    .tabs
+                    .ids()
+                    .filter_map(|id| self.tabs.get(id).map(|tab| (id, tab.title().to_owned())))
+                    .collect(),
+            },
+            terminal_damage,
+            overlays,
+        );
+        if plan.surface.iter().all(Option::is_none) {
+            self.tabs
+                .get_mut(active)
+                .ok_or("terminal unavailable")?
+                .terminal_mut()
+                .damage_presented();
+            self.tabs.sync_presented();
+            self.paint.dirty = false;
+            return Ok(());
+        }
+        let terminal = tab.terminal();
+        if let Some(rows) = plan.content {
+            self.raster.draw_rows(
+                terminal,
+                content_size,
+                &mut self.pixels[content_offset..],
+                cursor::focused(&self.tabs, &self.input.focus),
+                self.cursor.visible(),
+                rows.range(),
+            )?;
+            selection_overlay::draw_rows(
+                tab,
+                content_size,
+                (self.raster.cell_width, self.raster.cell_height),
+                &mut self.pixels[content_offset..],
+                rows.range(),
+            )?;
+        }
+        let layout = self.tab_layout();
+        if plan.bar {
+            layout.draw(
+                &self.tabs,
+                &mut self.raster,
+                self.paint.buffer_size,
+                &mut self.pixels[..content_offset],
+            )?;
+        }
         if prompt.is_none()
             && let Some(notice) = self.clipboard_notice
         {
@@ -736,16 +798,33 @@ impl Runtime {
             None
         };
         let slot = self.slots[index].as_mut().ok_or("frame slot unavailable")?;
-        slot.file
-            .write_all_at(&self.pixels, 0)
-            .map_err(|_| "frame write failed")?;
+        if let Some(stale) = self.damage.stale(index) {
+            let start = stale.start as usize * width as usize * 4;
+            let end = stale.end as usize * width as usize * 4;
+            slot.file
+                .write_all_at(&self.pixels[start..end], start as u64)
+                .map_err(|_| "frame write failed")?;
+        }
         let surface = self.surface.as_ref().ok_or("surface unavailable")?;
         surface.set_buffer_scale(self.paint.scale as i32);
         surface.attach(Some(&slot.buffer), 0, 0);
-        surface.damage_buffer(0, 0, width as i32, height as i32);
+        for band in plan.surface.into_iter().flatten() {
+            surface.damage_buffer(
+                0,
+                band.start as i32,
+                width as i32,
+                (band.end - band.start) as i32,
+            );
+        }
         surface.frame(qh, ());
         surface.commit();
         slot.busy = true;
+        self.damage.submitted(index);
+        self.tabs
+            .get_mut(active)
+            .ok_or("terminal unavailable")?
+            .terminal_mut()
+            .damage_presented();
         self.presented_hyperlink = hyperlink::Presented::capture(
             &self.tabs,
             selection::Geometry {

@@ -758,7 +758,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-006`, `TASK-036`, `TASK-104`, `TASK-126` | **Unit Test:** `runtime_cursor_blink_has_no_idle_busy_loop`
   - **Done:** 消費 core cursor-blink state，fake clock 驗證有限 deadline；Hidden/unfocused/非 active view 不持續 blink，Block/Beam/Underline 正確恢復；只有 cursor dirty 時才排 frame，唔靠高頻輪詢。
 
-- [ ] **TASK-171 — Runtime 採用正確 dirty-region presentation**
+- [x] **TASK-171 — Runtime 採用正確 dirty-region presentation**
   - **Dependencies:** `TASK-016`, `TASK-038`, `TASK-091`, `TASK-126`, `TASK-143`, `TASK-158` | **Unit Test:** `runtime_partial_damage_preserves_other_pixels`
   - **Done:** terminal/selection/preedit/cursor damage 接到 raster 同 surface damage；double-buffer reuse 保留未更新 pixels，resize/Tab switch 需要時完整重畫；一格更新唔無條件重畫整窗，idle/hidden view 不新增 frame。
 

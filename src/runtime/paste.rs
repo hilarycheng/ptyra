@@ -87,6 +87,10 @@ fn prompt_geometry(size: (u32, u32), cell: (u32, u32)) -> Option<(u16, u16, u32)
     let height = rows.checked_mul(cell.1.max(1))?;
     (height <= size.1).then_some((rows as u16, columns as u16, height))
 }
+pub(super) fn prompt_height(size: (u32, u32), cell: (u32, u32)) -> u32 {
+    prompt_geometry(size, cell).map_or(0, |(_, _, height)| height)
+}
+
 pub(super) fn draw_prompt(
     raster: &mut super::raster::Raster,
     size: (u32, u32),

@@ -140,6 +140,29 @@ impl Terminal {
     ) -> Option<crate::clock::Deadline> {
         self.core.as_mut()?.keyboard.sync_mut().update(clock)
     }
+    /// Read only when a visible frame can be drawn. Core damage includes cursor movement;
+    /// retain it until successful submission, including across held or unavailable frames.
+    pub(crate) fn damage_rows(&mut self) -> Option<(usize, usize)> {
+        let term = &mut self.core.as_mut()?.term;
+        let rows = term.screen_lines();
+        match term.damage() {
+            alacritty_terminal::term::TermDamage::Full => Some((0, rows)),
+            alacritty_terminal::term::TermDamage::Partial(lines) => {
+                lines.fold(None, |bounds, line| {
+                    Some(match bounds {
+                        None => (line.line, line.line + 1),
+                        Some((start, end)) => (start.min(line.line), end.max(line.line + 1)),
+                    })
+                })
+            }
+        }
+    }
+    pub(crate) fn damage_presented(&mut self) {
+        if let Some(core) = &mut self.core {
+            core.term.reset_damage();
+        }
+    }
+
     pub(crate) fn sync_presented(&mut self) {
         if let Some(core) = &mut self.core {
             core.keyboard.sync_mut().presented();

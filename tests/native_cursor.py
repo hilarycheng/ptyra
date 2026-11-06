@@ -41,7 +41,7 @@ finally:
         wait_until((root / f'cursor-{phase}.ready').exists)
         phase += 1
     output = json.loads(ipc('-t', 'get_outputs'))[0]['name']
-    def pixels():
+    def pixels(columns=1, rows=1):
         node = next(n for n in nodes(json.loads(ipc('-t', 'get_tree'))) if n.get('app_id') == 'ptyra')
         rect, window = node['rect'], node['window_rect']
         x, y = rect['x'] + window['x'], rect['y'] + window['y'] + 28
@@ -49,7 +49,7 @@ finally:
         _, dimensions, _, data = ppm.split(b'\n', 3)
         width, height = map(int, dimensions.split())
         assert (width, height) == (800, 600)
-        return b''.join(data[((y + row) * width + x) * 3:((y + row) * width + x + 12) * 3] for row in range(20))
+        return b''.join(data[((y + row) * width + x) * 3:((y + row) * width + x + columns * 12) * 3] for row in range(rows * 20))
     bg = bytes.fromhex('181818')
     empty = bg * 240
     block = bytes.fromhex('e7e7e7') * 240
@@ -67,7 +67,7 @@ finally:
     def idle():
         def ticks():
             return sum(map(int, open('/proc/' + str(app.pid) + '/stat').read().split()[13:15]))
-        # Exclude the one full-buffer focus/Tab transition paint before sampling idle.
+        # Exclude focus/Tab transition paint before sampling idle.
         time.sleep(1.1)
         before = ticks(); time.sleep(1.1)
         delta = ticks() - before
@@ -104,6 +104,20 @@ finally:
     observe(block); stable(block); idle()
     command(b'\x1b[1 q\x1b[0 q')
     observe(block); stable(block)
+    # Repeated single-cell edits must retain every other row across native SHM reuse.
+    command(b'\x1bc\x1b[?25l\x1b[2J\x1b[H')
+    expected = bytearray(bg * (8 * 12 * 6 * 20))
+    wait_until(lambda: pixels(8, 6) == expected)
+    for step in range(24):
+        row, col = (step * 5) % 6, (step * 3) % 8
+        code, rgb = [(41, 'cc0000'), (42, '4e9a06'), (44, '3465a4')][step % 3]
+        command(f'\x1b[{row + 1};{col + 1}H\x1b[{code}m \x1b[0m'.encode())
+        for y in range(row * 20, (row + 1) * 20):
+            start = (y * 8 * 12 + col * 12) * 3
+            expected[start:start + 36] = bytes.fromhex(rgb) * 12
+        wait_until(lambda: pixels(8, 6) == expected)
+    stable(pixels()); idle()
+    print('PASS: native repeated single-cell edits preserve untouched pixels through SHM reuse')
     (root / 'cursor-stop').touch(); wait_until((root / 'cursor-done').exists)
     assert app.poll() is None, (root / 'app.log').read_text()
     print('PASS: native silent block/beam/underline blink and steady modes, DEC12/25, RIS/default reset, focus restoration, inactive/background-tab idle and source-tab shape restoration')

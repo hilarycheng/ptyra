@@ -10,11 +10,31 @@ use crate::{
     window::WindowSize,
 };
 
+#[cfg(test)]
 pub(super) fn draw<P>(
     tab: &Tab<P>,
     size: (u32, u32),
     cell: (u32, u32),
     pixels: &mut [u8],
+) -> Result<()> {
+    draw_rows(tab, size, cell, pixels, 0..size.1)
+}
+
+pub(super) fn bounds<P>(tab: &Tab<P>, cell_height: u32) -> Option<super::damage::Band> {
+    let selection = tab.selection_range()?;
+    let snapshot = tab.terminal().snapshot()?;
+    let offset = snapshot.content.display_offset as i64;
+    let start = (offset + i64::from(selection.start.line.0)).clamp(0, snapshot.rows as i64);
+    let end = (offset + i64::from(selection.end.line.0) + 1).clamp(0, snapshot.rows as i64);
+    super::damage::Band::new(start as u32 * cell_height, end as u32 * cell_height)
+}
+
+pub(super) fn draw_rows<P>(
+    tab: &Tab<P>,
+    size: (u32, u32),
+    cell: (u32, u32),
+    pixels: &mut [u8],
+    rows: std::ops::Range<u32>,
 ) -> Result<()> {
     if u64::from(size.0) * u64::from(size.1) > super::MAX_PIXELS as u64
         || pixels.len() != size.0 as usize * size.1 as usize * 4
@@ -37,7 +57,9 @@ pub(super) fn draw<P>(
             continue;
         };
         // Invert RGB only so glyph contrast and alpha are preserved in this independent layer.
-        for y in rect.y as u32..(rect.y as u32 + rect.height).min(size.1) {
+        for y in
+            (rect.y as u32).max(rows.start)..(rect.y as u32 + rect.height).min(size.1).min(rows.end)
+        {
             for x in rect.x as u32..(rect.x as u32 + rect.width).min(size.0) {
                 let offset = (y * size.0 + x) as usize * 4;
                 let pixel =
