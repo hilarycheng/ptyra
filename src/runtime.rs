@@ -1,6 +1,7 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod bar;
 mod clipboard;
+mod cursor;
 mod notice;
 mod osc52;
 mod primary;
@@ -141,6 +142,7 @@ struct Runtime {
     surface: Option<wl_surface::WlSurface>,
     paint: PaintState,
     output_scale: scale::State,
+    cursor: cursor::State,
     outputs: std::collections::BTreeMap<u32, wl_output::WlOutput>,
     slots: [Option<Slot>; 2],
     pixels: Vec<u8>,
@@ -189,6 +191,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         surface: None,
         paint: PaintState::default(),
         output_scale: scale::State::default(),
+        cursor: cursor::State::default(),
         outputs: std::collections::BTreeMap::new(),
         slots: [None, None],
         pixels: Vec::new(),
@@ -305,6 +308,12 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             top.set_title(title.to_owned());
             window_title = title.to_owned();
         }
+        app.paint.dirty |= app.cursor.refresh(
+            &app.tabs,
+            &app.input.focus,
+            app.paint.configured,
+            &app.clock,
+        );
         app.draw(&qh)?;
         let writable = match connection.flush() {
             Ok(()) => false,
@@ -379,6 +388,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             .and_then(|map| app.input.repeat.deadline(&app.input.focus, map))
             .into_iter()
             .chain(sync_deadline)
+            .chain(app.cursor.deadline())
             .map(|deadline| deadline.remaining(&app.clock))
             .min()
             .map(|remaining| {
@@ -688,7 +698,8 @@ impl Runtime {
             terminal,
             content_size,
             &mut self.pixels[content_offset..],
-            self.input.focus.target().is_some(),
+            cursor::focused(&self.tabs, &self.input.focus),
+            self.cursor.visible(),
         )?;
         selection_overlay::draw(
             tab,

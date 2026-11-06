@@ -1,5 +1,12 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Runtime cursor blinking — TASK-170 (2026-11-06)
+
+- Reuses pinned core `cursor_style().blinking` for DEC12 and DECSCUSR. No new dependency, unsafe, FFI, thread, subprocess, payload log or global setting. Default/RIS/DECSCUSR0 keep the core's steady block default; DECSCUSR1/3/5 blink block/underline/beam, and 2/4/6 are steady.
+- One active-view 500 ms deadline joins the existing blocking poll timeout. Hidden cursor, offscreen history cursor, unconfigured surface, stale focus target, inactive Tab and unfocused view do not arm it. Focus/Tab/position/shape/mode changes restore a visible phase; identical refreshes and unrelated/background output do not postpone it. A late wake toggles once and rearms from now, never catches up; clock overflow cancels the timer and keeps the cursor visible.
+- Only a changed effective cursor appearance adds dirty work. Existing synchronized-update hold, frame callback and available SHM slot gates remain authoritative. The raster suppresses only cursor ink during the off phase, leaves terminal cells unchanged, and restores each original shape; unfocused cursor remains a steady hollow outline. Full-buffer raster/presentation remains the pre-TASK-171 policy, not a partial-damage claim.
+- Fake-clock tests cover boundaries, focus epochs/Tab lifecycle, history, reset, overflow and frame/sync gates. Synthetic-font pixel tests cover restoration at scale 1/2/1. `PTYRA_TEST_CURSOR=1` uses only private Fontconfig and an owned headless Sway to exercise silent PTY blinking, modes, focus/Tab restoration and inactive-view idle checks. These checks do not replace desktop/AMD/Mesa/Fcitx5 acceptance or a performance benchmark.
+
 ## Runtime SGR styles — TASK-169 (2026-11-06)
 
 - No new dependency, unsafe, FFI, font process or global setting. Font/outline/cache caps and the known TASK-126 font-parser advisory remain unchanged.

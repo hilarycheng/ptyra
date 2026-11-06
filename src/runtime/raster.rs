@@ -220,6 +220,7 @@ impl Raster {
         size: (u32, u32),
         pixels: &mut [u8],
         focused: bool,
+        cursor_visible: bool,
     ) -> Result<()> {
         let (width, height) = size;
         if pixels.len() != width as usize * height as usize * 4 {
@@ -315,7 +316,8 @@ impl Raster {
             .ok_or("terminal unavailable")?
             .content
             .cursor;
-        if cursor.shape != CursorShape::Hidden
+        if cursor_visible
+            && cursor.shape != CursorShape::Hidden
             && let Some(y) = viewport_y(cursor.point.line.0)
         {
             let x = cursor.point.column.0 as u32 * self.cell_width;
@@ -437,6 +439,60 @@ mod tests {
     use super::*;
     use crate::renderer::palette::CURSOR;
     #[test]
+    fn runtime_cursor_blink_preserves_pixels_and_grid() {
+        let font = FontVec::try_from_vec(
+            include_bytes!("../../tests/fixtures/fallback-primary.ttf").to_vec(),
+        )
+        .unwrap();
+        let mut raster = Raster::new(vec![font], &Config::default()).unwrap();
+        let tab = crate::TabId(1);
+        let mut terminal = Terminal::new(tab, 2, 8).unwrap();
+        terminal.feed(tab, b"AB\x1b[H").unwrap();
+        for scale in [1, 2, 1] {
+            raster.set_scale(scale);
+            let size = (8 * raster.cell_width, 2 * raster.cell_height);
+            let render = |raster: &mut Raster, terminal: &Terminal, visible, focused| {
+                let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
+                raster
+                    .draw(terminal, size, &mut pixels, focused, visible)
+                    .unwrap();
+                pixels
+            };
+            terminal.feed(tab, b"\x1b[?25l").unwrap();
+            let no_cursor = render(&mut raster, &terminal, true, true);
+            terminal.feed(tab, b"\x1b[?25h").unwrap();
+            for shape in [1, 3, 5] {
+                terminal
+                    .feed(tab, format!("\x1b[{shape} q").as_bytes())
+                    .unwrap();
+                let grid = terminal.grid().unwrap().clone();
+                let visible = render(&mut raster, &terminal, true, true);
+                assert_ne!(visible, no_cursor);
+                assert_eq!(render(&mut raster, &terminal, false, true), no_cursor);
+                assert_eq!(render(&mut raster, &terminal, true, true), visible);
+                assert_eq!(
+                    terminal.grid().unwrap(),
+                    &grid,
+                    "blink rendering cannot mutate terminal cells"
+                );
+                let hollow = render(&mut raster, &terminal, true, false);
+                assert_ne!(hollow, no_cursor);
+                assert_eq!(render(&mut raster, &terminal, true, false), hollow);
+                for y in 0..size.1 {
+                    for x in 0..size.0 {
+                        if x >= raster.cell_width || y >= raster.cell_height {
+                            let offset = ((y * size.0 + x) * 4) as usize;
+                            assert_eq!(
+                                &visible[offset..offset + 4],
+                                &no_cursor[offset..offset + 4]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
     fn runtime_sgr_styles_match_terminal_cells() {
         let fonts = [
             include_bytes!("../../tests/fixtures/fallback-primary.ttf").as_slice(),
@@ -464,7 +520,9 @@ mod tests {
                 .unwrap();
             let size = (8 * raster.cell_width, raster.cell_height);
             let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
-            raster.draw(&terminal, size, &mut pixels, true).unwrap();
+            raster
+                .draw(&terminal, size, &mut pixels, true, true)
+                .unwrap();
             pixels
         };
         let pixel = |pixels: &[u8], scale: u32, x: u32, y: u32| {
@@ -629,7 +687,7 @@ mod tests {
         terminal.feed(tab, b"\x1b[?25l\x1b[1;3;4:3;9mA").unwrap();
         let size = (8 * tiny.cell_width, 2 * tiny.cell_height);
         let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
-        tiny.draw(&terminal, size, &mut pixels, true).unwrap();
+        tiny.draw(&terminal, size, &mut pixels, true, true).unwrap();
         assert!(
             pixels[(tiny.cell_height * size.0 * 4) as usize..]
                 .chunks_exact(4)
@@ -673,7 +731,9 @@ mod tests {
             terminal.feed(tab, text.as_bytes()).unwrap();
             let size = (8 * raster.cell_width, 2 * raster.cell_height);
             let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
-            raster.draw(&terminal, size, &mut pixels, true).unwrap();
+            raster
+                .draw(&terminal, size, &mut pixels, true, true)
+                .unwrap();
             pixels
         };
         let mut at_scale_one = None;
@@ -756,7 +816,9 @@ mod tests {
         let draw = |raster: &mut Raster| {
             let size = (8 * raster.cell_width, 2 * raster.cell_height);
             let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
-            raster.draw(&terminal, size, &mut pixels, true).unwrap();
+            raster
+                .draw(&terminal, size, &mut pixels, true, true)
+                .unwrap();
             pixels
         };
         let original = draw(&mut raster);
@@ -792,7 +854,9 @@ mod tests {
         terminal.feed(crate::TabId(1), b"\x1b]4;1;#123456\x07\x1b]12;#abcdef\x07\x1b[41m \x1b[0m\x1b[6 q\x1b]4;1;?\x07\x1b]12;?\x07").unwrap();
         let size = (8 * raster.cell_width, 2 * raster.cell_height);
         let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
-        raster.draw(&terminal, size, &mut pixels, true).unwrap();
+        raster
+            .draw(&terminal, size, &mut pixels, true, true)
+            .unwrap();
         let pixel = |x: u32, y: u32| {
             let offset = ((y * size.0 + x) * 4) as usize;
             u32::from_ne_bytes(pixels[offset..offset + 4].try_into().unwrap())
@@ -807,7 +871,9 @@ mod tests {
         terminal
             .feed(crate::TabId(1), b"\x1b]112\x07\x1b]12;?\x07")
             .unwrap();
-        raster.draw(&terminal, size, &mut pixels, true).unwrap();
+        raster
+            .draw(&terminal, size, &mut pixels, true, true)
+            .unwrap();
         let offset = (raster.cell_width * 4) as usize;
         assert_eq!(
             u32::from_ne_bytes(pixels[offset..offset + 4].try_into().unwrap()),
@@ -831,7 +897,9 @@ mod tests {
         let render = |raster: &mut Raster, terminal: &Terminal, rows, columns| {
             let size = (columns * raster.cell_width, rows * raster.cell_height);
             let mut pixels = vec![0x55; (size.0 * size.1 * 4) as usize];
-            raster.draw(terminal, size, &mut pixels, true).unwrap();
+            raster
+                .draw(terminal, size, &mut pixels, true, true)
+                .unwrap();
             pixels
         };
         let expected = render(&mut raster, &history, 3, 8);
@@ -919,7 +987,7 @@ mod tests {
             .unwrap();
         let mut pixels = vec![0; 128 * 64 * 4];
         raster
-            .draw(&terminal, (128, 64), &mut pixels, true)
+            .draw(&terminal, (128, 64), &mut pixels, true, true)
             .unwrap();
         let colors: std::collections::BTreeSet<_> = pixels
             .chunks_exact(4)
@@ -933,7 +1001,7 @@ mod tests {
         assert!(!raster.cache.is_empty());
         assert!(
             raster
-                .draw(&terminal, (128, 64), &mut pixels[..16], true)
+                .draw(&terminal, (128, 64), &mut pixels[..16], true, true)
                 .is_err()
         );
     }

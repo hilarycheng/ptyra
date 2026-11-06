@@ -754,7 +754,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-035`, `TASK-126`, `TASK-168` | **Unit Test:** `runtime_sgr_styles_match_terminal_cells`
   - **Done:** 明確支援並測試 bold/dim/italic、underline variants、strikeout 同 inverse/hidden 嘅畫面效果；cache key 分辨需要嘅 face/style/size，唔錯用 regular mask；不支援樣式列明，terminfo 唔虛報。
 
-- [ ] **TASK-170 — Cursor blink 跟 mode / focus 事件驅動**
+- [x] **TASK-170 — Cursor blink 跟 mode / focus 事件驅動**
   - **Dependencies:** `TASK-006`, `TASK-036`, `TASK-104`, `TASK-126` | **Unit Test:** `runtime_cursor_blink_has_no_idle_busy_loop`
   - **Done:** 消費 core cursor-blink state，fake clock 驗證有限 deadline；Hidden/unfocused/非 active view 不持續 blink，Block/Beam/Underline 正確恢復；只有 cursor dirty 時才排 frame，唔靠高頻輪詢。
 

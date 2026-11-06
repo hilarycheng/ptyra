@@ -329,6 +329,13 @@ impl Terminal {
         self.core.as_ref().map(|core| core.term.mode())
     }
 
+    /// DEC12/DECSCUSR policy from the core; visibility/viewport/focus are renderer concerns.
+    pub(crate) fn cursor_blinking(&self) -> bool {
+        self.core
+            .as_ref()
+            .is_some_and(|core| core.term.cursor_style().blinking)
+    }
+
     /// Borrows visible content without copying the grid or scrollback.
     /// None means the adapter stopped. The borrow prevents concurrent mutation.
     ///

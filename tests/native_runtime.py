@@ -188,7 +188,7 @@ def main():
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE") or os.environ.get("PTYRA_TEST_PRIMARY") or os.environ.get("PTYRA_TEST_NO_PRIMARY"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
             (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else ("clipboard_bytes=16\n" if os.environ.get("PTYRA_TEST_OSC52") or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "")) + ("osc52_write=true\n" if os.environ.get("PTYRA_TEST_OSC52") == "enabled" or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n" + ("scroll_top='Alt+Home'\n" if os.environ.get("PTYRA_TEST_SCROLL") else ""))
-            if os.environ.get("PTYRA_TEST_FONTS") or os.environ.get("PTYRA_TEST_STYLES"):
+            if os.environ.get("PTYRA_TEST_FONTS") or os.environ.get("PTYRA_TEST_STYLES") or os.environ.get("PTYRA_TEST_CURSOR"):
                 from native_fonts import configure_fonts
                 configure_fonts(root, env)
             if os.environ.get("PTYRA_TEST_HYPERLINK"):
@@ -257,6 +257,9 @@ def main():
             if os.environ.get("PTYRA_TEST_STYLES"):
                 from native_styles import check_styles
                 check_styles(root, env, keyboard, app, wait_until, ipc, nodes)
+            if os.environ.get("PTYRA_TEST_CURSOR"):
+                from native_cursor import check_cursor
+                check_cursor(root, env, keyboard, app, wait_until, ipc, nodes)
             if os.environ.get("PTYRA_TEST_SCALE"):
                 from native_scale import check_scale
                 check_scale(root, env, keyboard, app, wait_until, ipc, nodes, u32)
@@ -793,17 +796,18 @@ finally:
                 ipc('[app_id="ptyra"] floating enable')
                 ipc('[app_id="ptyra"] resize set width 640 height 400')
                 time.sleep(0.2)
-                keyboard.text("stty size > " + str(root / "size1"))
+                keyboard.text("stty size > " + str(root / "size1.pending") + "; mv " + str(root / "size1.pending") + " " + str(root / "size1"))
                 keyboard.tap(28)
                 keyboard.modifiers(4)
                 keyboard.tap(109)
                 keyboard.modifiers(0)
-                keyboard.text("stty size > " + str(root / "size2"))
+                keyboard.text("stty size > " + str(root / "size2.pending") + "; mv " + str(root / "size2.pending") + " " + str(root / "size2"))
                 keyboard.tap(28)
                 keyboard.sync()
-                wait_until(lambda: (root / "size2").exists())
-                assert (root / "size1").read_text() == (root / "size2").read_text()
-                assert all(int(value) > 0 for value in (root / "size1").read_text().split())
+                wait_until(lambda: (root / "size1").exists() and (root / "size2").exists())
+                size1, size2 = [(root / name).read_text() for name in ["size1", "size2"]]
+                assert size1 == size2, (size1, size2)
+                assert re.fullmatch(r"[1-9]\d* [1-9]\d*\n", size1), size1
                 keyboard.modifiers(4)
                 keyboard.tap(104)
                 keyboard.modifiers(0)

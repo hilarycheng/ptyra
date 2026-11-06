@@ -107,6 +107,7 @@ pub(super) fn draw(
         (size.0, height),
         pixels.get_mut(offset..).ok_or("invalid notice buffer")?,
         false,
+        true,
     )
 }
 

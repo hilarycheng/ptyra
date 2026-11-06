@@ -122,7 +122,7 @@ impl Layout {
                 .feed(TabId(0), chunk)
                 .map_err(|_| "tab strip text rejected")?;
         }
-        raster.draw(&strip, (size.0, self.height), pixels, false)
+        raster.draw(&strip, (size.0, self.height), pixels, false, true)
     }
 }
 

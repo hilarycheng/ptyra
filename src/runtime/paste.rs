@@ -117,6 +117,7 @@ pub(super) fn draw_prompt(
             .get_mut(offset..)
             .ok_or("invalid paste prompt buffer")?,
         false,
+        true,
     )?;
     Ok(true)
 }
