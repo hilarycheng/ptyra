@@ -280,7 +280,9 @@ impl Runtime {
                 .repeat
                 .configure(rate, delay)
                 .map_err(|_| "invalid keyboard repeat settings")?,
-            wl_keyboard::Event::Key { key, state, .. } => {
+            wl_keyboard::Event::Key {
+                key, state, serial, ..
+            } => {
                 let pressed = match state {
                     WEnum::Value(wl_keyboard::KeyState::Pressed) => true,
                     WEnum::Value(wl_keyboard::KeyState::Released) => false,
@@ -288,6 +290,16 @@ impl Runtime {
                 };
                 if let Some(trace) = &mut self.input_trace {
                     trace.add(usize::from(!pressed), 1);
+                }
+                if pressed
+                    && let (Some(seat), Some(target)) = (self.seat_name, self.input.focus.target())
+                {
+                    self.clipboard.binding.record(
+                        crate::clipboard::SeatId(seat),
+                        target,
+                        serial,
+                        crate::clipboard::InputSerialEvent::KeyPress,
+                    );
                 }
                 let bytes = self
                     .input

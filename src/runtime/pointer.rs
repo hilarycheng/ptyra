@@ -101,6 +101,7 @@ impl PointerInput {
 }
 impl Runtime {
     pub(super) fn cancel_pointer_drag(&mut self) {
+        self.clipboard.binding.focus(None);
         self.pointer_input.cancel_drag();
         self.paint.dirty |= self.selection_input.cancel(&mut self.tabs);
     }
@@ -114,6 +115,20 @@ impl Runtime {
     pub(super) fn route_pointer(&mut self, event: Routed) {
         if self.tabs.active() != Some(event.target.tab) {
             return;
+        }
+        if let Kind::Button {
+            pressed: true,
+            serial,
+            ..
+        } = event.kind
+            && let Some(seat) = self.seat_name
+        {
+            self.clipboard.binding.record(
+                SeatId(seat),
+                event.target,
+                serial,
+                InputSerialEvent::PointerButtonPress,
+            );
         }
         // Only the last submitted layout is clickable, and only at its current size.
         if self.trace_pointer {

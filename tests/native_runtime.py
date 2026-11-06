@@ -183,6 +183,8 @@ def main():
                 env["PTYRA_TRACE_INPUT"] = "1"
             if os.environ.get("PTYRA_TEST_POINTER"):
                 env["PTYRA_TRACE_POINTER"] = "1"
+            if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE"):
+                env["PTYRA_TRACE_CLIPBOARD"] = "1"
             (root / "test.toml").write_text("[bindings]\ncopy='Ctrl+Shift+a'\n")
             keyboard = Keyboard(display, keymap.read_bytes())
             with open(root / "app.log", "w") as log:
@@ -192,6 +194,10 @@ def main():
             wait_until(lambda: any(n.get("app_id") == "ptyra" for n in nodes(json.loads(ipc("-t", "get_tree")))))
             time.sleep(0.2)
             assert app.poll() is None, (root / "app.log").read_text()
+            if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE"):
+                wait_until(lambda: "Ptyra clipboard: device bound" in (root / "app.log").read_text())
+                assert (root / "app.log").read_text().count("Ptyra clipboard: device bound") == 1
+                print("PASS: native seat binds exactly one clipboard data device")
             if os.environ.get("PTYRA_TEST_TRACE"):
                 keyboard.key(30)
                 keyboard.sync()

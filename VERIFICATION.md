@@ -113,3 +113,10 @@
 - `runtime_selection_survives_only_valid_anchors` initially failed, then PASS. Additional regressions cover immediate click-count reset across screen round trips, epoch exhaustion, and the generic renderer snapshot. Review found and fixed the generic renderer's raw-selection accessor; its new regression failed before the fix.
 - Final workspace regression (213 library tests in combined tree; 211 without T129), fmt and Clippy PASS on both trees. Native selection/pixels/lifecycle matrix PASS on both, including visible highlight removal after actual PTY output. Desktop acceptance remains NOT RUN.
 - Deliberate limitation: selection is cleared by new output rather than maintained through reflow/scroll mutations. This prevents stale row/column anchors from copying unrelated text; stable history interaction remains TASK-159.
+
+## TASK-145
+
+- Dependencies satisfied. Runtime binds one data device to the selected seat and manager, with monotonic device identity. Seat/global removal releases the device and clears pending serial state; stale objects cannot change current state. Both actual keyboard press and pointer press serials are recorded against the originating seat/Tab; focus/tab changes invalidate them.
+- Requires wl_data_device_manager v2 or newer so the device has an explicit release request. v1/missing manager leaves Clipboard unavailable without stopping the terminal. Manager itself has no protocol destructor. Incoming offers are explicitly destroyed until TASK-148 connects offer ownership; Copy/Paste remain later tasks.
+- `runtime_data_device_tracks_seat_lifecycle`, full workspace, fmt and Clippy: PASS in combined and standalone staged trees. Native owned-headless matrix confirms exactly one device binding and existing pointer/selection/output/reconnect behavior on both trees.
+- The first incremental rustc run crashed while serializing its compiler cache. Retried with `CARGO_INCREMENTAL=0 RUST_MIN_STACK=16777216`; all final checks above passed. CPU affinity remained 0–1 and build jobs=2. No system settings changed. Desktop clipboard interoperability is NOT RUN.

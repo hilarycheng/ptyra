@@ -1,5 +1,6 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod bar;
+mod clipboard;
 mod keyboard;
 mod pointer;
 mod raster;
@@ -132,6 +133,7 @@ struct Runtime {
     pointer: Option<wayland_client::protocol::wl_pointer::WlPointer>,
     pointer_input: pointer::PointerInput,
     selection_input: selection::SelectionInput,
+    clipboard: clipboard::Clipboard,
     trace_pointer: bool,
     input: keyboard::KeyboardInput,
     clock: crate::clock::MonotonicClock,
@@ -170,6 +172,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         pointer: None,
         pointer_input: pointer::PointerInput::default(),
         selection_input: selection::SelectionInput::default(),
+        clipboard: clipboard::Clipboard::default(),
         trace_pointer: std::env::var_os("PTYRA_TRACE_POINTER").as_deref()
             == Some(std::ffi::OsStr::new("1")),
         input: keyboard::KeyboardInput {
@@ -621,12 +624,17 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
                     state.seat = Some(registry.bind(name, version.min(7), qh, ()));
                     state.seat_name = Some(name);
                 }
+                "wl_data_device_manager" if version >= 2 && state.clipboard.manager.is_none() => {
+                    state.clipboard.manager =
+                        Some((name, registry.bind(name, version.min(3), qh, ())));
+                }
                 _ => {}
             },
             wl_registry::Event::GlobalRemove { name } if state.globals.contains(&name) => {
                 state.fail("required Wayland global removed")
             }
             wl_registry::Event::GlobalRemove { name } if state.seat_name == Some(name) => {
+                state.remove_clipboard_device();
                 state.remove_keyboard();
                 state.remove_pointer();
                 if let Some(seat) = state.seat.take() {
@@ -634,8 +642,18 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
                 }
                 state.seat_name = None;
             }
+            wl_registry::Event::GlobalRemove { name }
+                if state
+                    .clipboard
+                    .manager
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == name) =>
+            {
+                state.clipboard.remove_manager();
+            }
             _ => {}
         }
+        state.bind_clipboard(qh);
     }
 }
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for Runtime {
