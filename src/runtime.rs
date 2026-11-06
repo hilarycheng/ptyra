@@ -9,6 +9,7 @@ mod clipboard_offers;
 mod clipboard_receive;
 mod clipboard_send;
 mod focus_reports;
+mod hyperlink;
 mod keyboard;
 mod mouse;
 mod paste;
@@ -145,6 +146,8 @@ struct Runtime {
     pointer_input: pointer::PointerInput,
     selection_input: selection::SelectionInput,
     wheel: scroll::Wheel,
+    hyperlinks: hyperlink::Opener,
+    presented_hyperlink: Option<hyperlink::Presented>,
     clipboard: clipboard::Clipboard,
     primary: primary::Primary,
     paste: Option<paste::Paste>,
@@ -189,6 +192,8 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         pointer_input: pointer::PointerInput::default(),
         selection_input: selection::SelectionInput::default(),
         wheel: scroll::Wheel::default(),
+        hyperlinks: hyperlink::Opener::default(),
+        presented_hyperlink: None,
         clipboard: clipboard::Clipboard::new(config.clipboard_bytes),
         primary: primary::Primary::new(config.clipboard_bytes),
         paste: None,
@@ -241,6 +246,9 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             app.show_clipboard_notice(notice::Notice::TransferFailed);
         }
         app.pump_paste();
+        if app.hyperlinks.pump() {
+            app.show_clipboard_notice(notice::Notice::HyperlinkFailed);
+        }
         if !app.running {
             break;
         }
@@ -342,6 +350,9 @@ pub fn run(config: crate::config::Config) -> Result<()> {
                 polled_receives.push((selection, id, fds.len()));
                 fds.push(PollFd::new(file.as_fd(), PollFlags::POLLIN));
             }
+        }
+        for stream in app.hyperlinks.fds() {
+            fds.push(PollFd::new(stream.as_fd(), PollFlags::POLLIN));
         }
         let timeout = app
             .input
@@ -696,6 +707,15 @@ impl Runtime {
         surface.frame(qh, ());
         surface.commit();
         slot.busy = true;
+        self.presented_hyperlink = hyperlink::Presented::capture(
+            &self.tabs,
+            selection::Geometry {
+                origin: bar_height,
+                size: content_size,
+                cell: (self.raster.cell_width, self.raster.cell_height),
+            },
+            self.clipboard_notice.is_some() || presented.is_some(),
+        );
         self.paint.submitted();
         self.presented_bar = Some(layout);
         if let Some(token) = &presented

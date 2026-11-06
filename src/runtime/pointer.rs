@@ -147,6 +147,11 @@ impl Runtime {
                 InputSerialEvent::PointerButtonPress,
             );
         }
+        let link_frame = if self.clipboard_notice.is_none() && self.presented_paste.is_none() {
+            self.presented_hyperlink
+        } else {
+            None
+        };
         if matches!(event.kind, Kind::Button { pressed: true, .. }) {
             self.clear_clipboard_notice();
         }
@@ -211,6 +216,25 @@ impl Runtime {
                     && self.clipboard_notice != Some(super::notice::Notice::MouseRejected)
                 {
                     self.show_clipboard_notice(super::notice::Notice::MouseRejected);
+                }
+                return;
+            }
+        }
+        // Application mouse owns its gestures. Shift+Ctrl+click uses the local override.
+        match super::hyperlink::route(
+            &self.tabs,
+            &event,
+            geometry,
+            link_frame.as_ref(),
+            modifiers,
+            self.input.focus.target(),
+            |request| self.hyperlinks.open(request),
+        ) {
+            Ok(false) => {}
+            result => {
+                self.paint.dirty |= self.selection_input.cancel(&mut self.tabs);
+                if result.is_err() {
+                    self.show_clipboard_notice(super::notice::Notice::HyperlinkFailed);
                 }
                 return;
             }

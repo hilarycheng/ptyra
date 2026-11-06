@@ -15,6 +15,7 @@ pub(super) enum Notice {
     ReplyRejected,
     MouseRejected,
     FocusRejected,
+    HyperlinkFailed,
 }
 impl Notice {
     pub fn from_error(error: &str) -> Self {
@@ -54,6 +55,7 @@ impl Notice {
             Self::NoSerial => "Copy needs an input event.",
             Self::TargetChanged => "Paste target changed.",
             Self::Busy => "Clipboard transfer busy.",
+            Self::HyperlinkFailed => "Link could not be opened: unavailable or busy.",
             Self::FocusRejected => "Focus report rejected: input unavailable.",
             Self::MouseRejected => "Mouse report rejected: input unavailable.",
             Self::ReplyRejected => "Terminal reply rejected: queue limit.",

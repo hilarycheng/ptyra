@@ -732,7 +732,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-012`, `TASK-027`, `TASK-128`, `TASK-130` | **Unit Test:** `legacy_keypad_obeys_terminal_modes`
   - **Done:** 針對現有 encoder 未處理嘅 keypad keys/APP_KEYPAD、NumLock 同 modified navigation 建立明確 mapping；不改已驗證 Enter/arrows/Ctrl+C/F-keys；unsupported keys 明確記錄，普通 legacy Shell 唔意外收到 Kitty-only sequences。
 
-- [ ] **TASK-165 — 明確使用者 click 才執行 hyperlink opener**
+- [x] **TASK-165 — 明確使用者 click 才執行 hyperlink opener**
   - **Dependencies:** `TASK-100`, `TASK-140`, `TASK-158` | **Unit Test:** `runtime_hyperlink_open_requires_explicit_click`
   - **Done:** 將既有 Ctrl+click HTTP(S) gate 接到 adapter，以 literal argv 開啟連結，唔經 shell 字串；scrollback hit-test 正確，普通 output/hover 唔執行；失敗只回報 metadata，無 URI payload logs。
 
