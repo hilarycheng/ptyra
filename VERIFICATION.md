@@ -51,3 +51,10 @@
 - Terminal content deducts one font-height plus 8 pixels for the tab strip; terminal drawing uses the remaining buffer.
 - `runtime_resize_updates_tab_budgets`, workspace regression, fmt, Clippy: PASS.
 - Native multi-tab test additionally with `PTYRA_TEST_RESIZE_TABS=1`: PASS; both real Shells report identical resized PTY dimensions, and input/exit isolation still pass.
+
+## TASK-137
+
+- Dependencies satisfied. The native buffer draws tab numbers/titles and a blue active state in a reserved strip above terminal rows. Bounded pages always include the active Tab; Next/Previous reaches off-page tabs. No compositor-tabbed substitute is used.
+- `runtime_tab_bar_layout_reserves_content_area`, workspace regression, fmt, Clippy: PASS.
+- Native multi-tab test with `PTYRA_TEST_TAB_BAR=1`: PASS, including compositor pixel evidence and resize. Screenshot visually inspected; strip cursor artifact removed and regression rerun.
+- T140 precedes T138 because pointer binding is a declared dependency of tab clicking.

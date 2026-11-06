@@ -244,6 +244,9 @@ def main():
                 assert proof2.read_text().strip() in children.read_text().split()
                 assert len(children.read_text().split()) == 2
                 print("PASS: new Tab activation and previous Tab shortcut route input without spawning")
+            if os.environ.get("PTYRA_TEST_TAB_BAR"):
+                wait_until(lambda: b"\x34\x65\xa4" * 24 in subprocess.check_output(["grim", "-t", "ppm", "-"], env=env))
+                print("PASS: native compositor pixels contain the active GUI tab strip")
             if os.environ.get("PTYRA_TEST_RESIZE_TABS"):
                 ipc('[app_id="ptyra"] floating enable')
                 ipc('[app_id="ptyra"] resize set width 640 height 400')

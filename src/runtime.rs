@@ -1,4 +1,5 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
+mod bar;
 mod keyboard;
 mod raster;
 mod sessions;
@@ -345,9 +346,16 @@ impl Runtime {
         }
         Ok(())
     }
+    fn tab_layout(&self) -> bar::Layout {
+        bar::Layout::new(
+            &self.tabs,
+            self.paint.size,
+            (self.raster.cell_width, self.raster.cell_height),
+        )
+    }
     fn content_geometry(&self) -> (u32, (u32, u32)) {
-        let bar = (self.raster.cell_height + 8).min(self.paint.size.1.saturating_sub(1));
-        (bar, (self.paint.size.0, self.paint.size.1 - bar))
+        let layout = self.tab_layout();
+        (layout.height, layout.content)
     }
     fn sync_terminal(&mut self) -> Result<()> {
         if !self.paint.configured {
@@ -499,6 +507,13 @@ impl Runtime {
             content_size,
             &mut self.pixels[content_offset..],
             self.input.focus.target().is_some(),
+        )?;
+        let layout = self.tab_layout();
+        layout.draw(
+            &self.tabs,
+            &mut self.raster,
+            self.paint.size,
+            &mut self.pixels[..content_offset],
         )?;
         let slot = self.slots[index].as_mut().ok_or("frame slot unavailable")?;
         slot.file
