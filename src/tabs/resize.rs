@@ -6,10 +6,25 @@ impl<P: TabPty> TabRegistry<P> {
     /// Validate every grid and the combined reservation before mutating any Tab.
     pub fn resize_all(&mut self, rows: u16, columns: u16) -> Result<bool, AppError> {
         let invalid = || AppError::new(Component::Terminal, ErrorKind::InvalidInput);
-        let reservation = crate::terminal::cell_reservation(rows, columns, self.scrollback_lines)
+        crate::terminal::cell_reservation(rows, columns, self.scrollback_lines)
             .ok_or_else(invalid)?;
-        if reservation
-            .checked_mul(self.entries.len())
+        // The core retains Vec row capacities on shrink. Keep conservative high-water
+        // dimensions until close instead of lending retained capacity to new Tabs.
+        let reservations: Vec<_> = self
+            .entries
+            .iter()
+            .map(|tab| {
+                crate::terminal::cell_reservation(
+                    rows.max(tab.reserved_rows),
+                    columns.max(tab.reserved_columns),
+                    self.scrollback_lines,
+                )
+                .ok_or_else(invalid)
+            })
+            .collect::<Result<_, _>>()?;
+        if reservations
+            .iter()
+            .try_fold(0usize, |sum, value| sum.checked_add(*value))
             .is_none_or(|total| total > MAX_TOTAL_TAB_CELLS)
             || self
                 .entries
@@ -19,13 +34,15 @@ impl<P: TabPty> TabRegistry<P> {
             return Err(invalid());
         }
         let mut changed = false;
-        for tab in &mut self.entries {
+        for (tab, reservation) in self.entries.iter_mut().zip(reservations) {
             let snapshot = tab.terminal.snapshot().ok_or_else(invalid)?;
             if snapshot.rows != usize::from(rows) || snapshot.columns != usize::from(columns) {
                 tab.terminal
                     .resize(rows, columns)
                     .map_err(|error| error.error)?;
                 tab.reserved_cells = reservation;
+                tab.reserved_rows = tab.reserved_rows.max(rows);
+                tab.reserved_columns = tab.reserved_columns.max(columns);
                 tab.dirty = true;
                 changed = true;
             }
@@ -61,7 +78,8 @@ mod tests {
         assert!(tabs.resize_all(10, 40).unwrap());
         assert_eq!(
             tabs.reserved_cells(),
-            5 * crate::terminal::cell_reservation(10, 40, 10_000).unwrap()
+            reservation,
+            "shrinking must not release retained core row capacity"
         );
     }
 }

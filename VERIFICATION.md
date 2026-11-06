@@ -77,3 +77,13 @@
 - Dependencies satisfied. Each drained terminal refreshes its sanitized, bounded label; title changes redraw the tab strip. Only the current active label updates xdg-toplevel title; switching tabs updates it too. Title text is never executed.
 - `runtime_titles_are_sanitized_and_tab_scoped`, workspace regression (205 library tests), fmt, Clippy: PASS.
 - Native multi-tab test with `PTYRA_TEST_TITLES=1`: PASS; active, delayed hidden title, switch and title-stack ResetTitle event update the correct window/tab. The terminal core does not emit ResetTitle on RIS; the tested reset is title-stack restoration.
+
+## Final regression review — TASK-130–140
+
+- Reproduced and fixed three edge cases: shifted digit/Tab shortcut aliases, pointer serial focus after drag cancellation, and retained terminal row capacity after shrinking. Added regressions passed after first failing as expected.
+- Shortcut matching prefers explicit translated symbols, then unshifted symbols; reserved IME-toggle matches remain compositor-owned. Every configured action is covered.
+- Resize accounting now reserves conservative high-water rows/columns until Tab close. Shrink does not free budget while the core retains row capacities.
+- Shared `unicode-width` direct dependency and review metadata are included for tab labels; IME-specific protocol feature and implementation remain uncommitted.
+- Final worktree: 207 library tests + 13 integration tests + 2 doc tests PASS; one pre-existing opt-in integration test ignored. Standalone staged tree without T129: 205 library tests + the same integration/doc tests PASS. Both fmt and Clippy PASS.
+- Full owned-headless-Sway matrix PASS on both trees: held NewTab, exact Shell PID switching/clicks, genuinely hidden 256 KiB flood, native strip pixels, active/hidden/reset titles, both PTYs resize, per-tab exit, last-tab Close, repeat/focus and reconnect.
+- CPU affinity remained CPUs 0–1; Cargo jobs=2. No push, system configuration changes, or T141+ implementation. Actual desktop/IME candidate acceptance remains NOT RUN.

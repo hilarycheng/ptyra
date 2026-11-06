@@ -89,20 +89,37 @@ impl KeyboardInput {
             return Ok(None);
         }
         if key.state == KeyState::Pressed {
-            let action = [
+            let actions = [
                 BindingAction::Copy,
                 BindingAction::Paste,
                 BindingAction::NewTab,
                 BindingAction::CloseTab,
                 BindingAction::NextTab,
                 BindingAction::PreviousTab,
-            ]
-            .into_iter()
-            .find(|action| {
-                key.keysyms
+            ];
+            let matches = |action, symbols: &[u32]| {
+                symbols
                     .iter()
-                    .any(|symbol| self.bindings.get(*action).matches(key.modifiers, *symbol))
-            });
+                    .any(|symbol| self.bindings.get(action).matches(key.modifiers, *symbol))
+            };
+            // The compositor owns IME toggles. For other aliases, an explicit translated
+            // symbol wins before falling back to the physical key's base symbol.
+            let ime_toggle = matches(BindingAction::ImeToggle, &key.keysyms)
+                || matches(BindingAction::ImeToggle, &key.unshifted_keysyms);
+            let action = if ime_toggle {
+                None
+            } else {
+                actions
+                    .iter()
+                    .copied()
+                    .find(|action| matches(*action, &key.keysyms))
+                    .or_else(|| {
+                        actions
+                            .iter()
+                            .copied()
+                            .find(|action| matches(*action, &key.unshifted_keysyms))
+                    })
+            };
             if let Some(action) = action {
                 self.repeat.cancel();
                 self.consumed.insert(key.physical_code);
@@ -342,6 +359,82 @@ mod tests {
         clock::FakeClock,
         keymap::{Keymap, Modifiers},
     };
+    #[test]
+    fn runtime_shifted_shortcut_matches_base_symbol() {
+        use crate::config::{Config, bindings::BindingAction};
+        let clock = FakeClock::default();
+        let mut input = KeyboardInput {
+            bindings: Config::from_toml(Some("[bindings]\nnew_tab='Ctrl+Shift+4'"))
+                .unwrap()
+                .bindings,
+            map: Some(
+                Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap(),
+            ),
+            ..Default::default()
+        };
+        input.focus.enter(WindowId(1), TabId(1));
+        input.map.as_mut().unwrap().update_modifiers(Modifiers {
+            depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,
+            ..Default::default()
+        });
+        assert!(input.key(5, true, false, &clock).unwrap().is_none());
+        assert_eq!(input.action.take(), Some(BindingAction::NewTab));
+        assert!(input.key(5, false, false, &clock).unwrap().is_none());
+    }
+    #[test]
+    fn runtime_all_configured_actions_and_ime_ownership() {
+        use crate::config::{Config, bindings::BindingAction};
+        let clock = FakeClock::default();
+        for (name, expected) in [
+            ("copy", BindingAction::Copy),
+            ("paste", BindingAction::Paste),
+            ("new_tab", BindingAction::NewTab),
+            ("close_tab", BindingAction::CloseTab),
+            ("next_tab", BindingAction::NextTab),
+            ("previous_tab", BindingAction::PreviousTab),
+        ] {
+            let mut input = KeyboardInput {
+                bindings: Config::from_toml(Some(&format!("[bindings]\n{name}='Ctrl+Shift+Tab'")))
+                    .unwrap()
+                    .bindings,
+                map: Some(
+                    Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb"))
+                        .unwrap(),
+                ),
+                ..Default::default()
+            };
+            input.focus.enter(WindowId(1), TabId(1));
+            input.map.as_mut().unwrap().update_modifiers(Modifiers {
+                depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,
+                ..Default::default()
+            });
+            assert!(input.key(15, true, false, &clock).unwrap().is_none());
+            assert_eq!(input.action.take(), Some(expected));
+            input.retarget(TabId(2));
+            assert!(input.key(15, true, false, &clock).unwrap().is_none());
+            assert!(input.action.take().is_none());
+            assert!(input.key(15, false, false, &clock).unwrap().is_none());
+        }
+        let mut input = KeyboardInput {
+            bindings: Config::from_toml(Some("[bindings]\nime_toggle='Ctrl+a'"))
+                .unwrap()
+                .bindings,
+            map: Some(
+                Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap(),
+            ),
+            ..Default::default()
+        };
+        input.focus.enter(WindowId(1), TabId(1));
+        input.map.as_mut().unwrap().update_modifiers(Modifiers {
+            depressed: kbvm::ModifierMask::CONTROL.0,
+            ..Default::default()
+        });
+        assert_eq!(
+            input.key(30, true, false, &clock).unwrap().unwrap(),
+            b"\x01"
+        );
+        assert!(input.action.is_none());
+    }
     #[test]
     fn runtime_tab_switch_retargets_keyboard() {
         let clock = FakeClock::default();

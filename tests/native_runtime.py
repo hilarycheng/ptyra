@@ -174,7 +174,8 @@ def main():
             else:
                 wrapper.write_text("#!/bin/sh\nexec /bin/bash --noprofile --norc\n")
             if os.environ.get("PTYRA_TEST_MULTI_PTY"):
-                wrapper.write_text(f"#!/bin/sh\nif mkdir '{root}/first' 2>/dev/null; then :; else head -c 262144 /dev/zero | tr '\\000' x; echo drained > '{root}/drained'; fi\nexec /bin/bash --noprofile --norc\n")
+                os.mkfifo(root / "flood-start")
+                wrapper.write_text(f"#!/bin/sh\nif mkdir '{root}/first' 2>/dev/null; then :; else if mkdir '{root}/flood-once' 2>/dev/null; then read ready < '{root}/flood-start'; fi; head -c 262144 /dev/zero | tr '\\000' x; echo drained > '{root}/drained'; fi\nexec /bin/bash --noprofile --norc\n")
             wrapper.chmod(0o700)
             env["SHELL"] = str(wrapper)
             if os.environ.get("PTYRA_TEST_TRACE"):
@@ -224,7 +225,17 @@ def main():
                 assert len(children.read_text().split()) == 2
                 assert first[0] in children.read_text().split()
                 if os.environ.get("PTYRA_TEST_MULTI_PTY"):
+                    keyboard.modifiers(4)
+                    keyboard.tap(104)
+                    keyboard.modifiers(0)
+                    keyboard.sync()
+                    with open(root / "flood-start", "w") as start:
+                        start.write("go\n")
                     wait_until(lambda: (root / "drained").exists())
+                    keyboard.modifiers(4)
+                    keyboard.tap(109)
+                    keyboard.modifiers(0)
+                    keyboard.sync()
                     print("PASS: hidden Shell drains 256 KiB without starving active input")
                 print("PASS: one held NewTab shortcut creates exactly one additional independent Shell")
             if os.environ.get("PTYRA_TEST_TAB_SWITCH"):
@@ -422,19 +433,32 @@ def main():
             wait_until(lambda: b"\xcc\0\0" * 12 in subprocess.check_output(["grim", "-t", "ppm", "-"], env=env))
             if screenshot:
                 subprocess.run(["grim", str(screenshot)], env=env, check=True)
+            remaining = Path(f"/proc/{app.pid}/task/{app.pid}/children")
+            while len(remaining.read_text().split()) > 1:
+                count = len(remaining.read_text().split())
+                keyboard.modifiers(5)
+                keyboard.tap(17)
+                keyboard.modifiers(0)
+                keyboard.sync()
+                wait_until(lambda: len(remaining.read_text().split()) < count)
             keyboard.text("exit")
             keyboard.tap(28)
             keyboard.sync()
             assert app.wait(timeout=5) == 0, (root / "app.log").read_text()
             # Reconnect against the same compositor/keymap, catching shared FD offset regressions.
-            for _ in range(2):
+            for reconnect_index in range(2):
                 with open(root / "app.log", "w") as log:
                     app = subprocess.Popen([binary, "--config", str(root / "test.toml")], env=env, stdout=log, stderr=log)
                 wait_until(lambda: any(n.get("pid") == app.pid for n in nodes(json.loads(ipc("-t", "get_tree")))))
                 time.sleep(0.2)
                 assert app.poll() is None, (root / "app.log").read_text()
-                keyboard.text("exit")
-                keyboard.tap(28)
+                if reconnect_index == 0:
+                    keyboard.modifiers(5)
+                    keyboard.tap(17)  # Last-tab Close shortcut also exits cleanly.
+                    keyboard.modifiers(0)
+                else:
+                    keyboard.text("exit")
+                    keyboard.tap(28)
                 keyboard.sync()
                 assert app.wait(timeout=5) == 0, (root / "app.log").read_text()
             print("PASS: reconnect twice; real Wayland keyboard, Enter, Backspace, arrows, Ctrl+C, repeat/focus, rendered PTY output and exit")

@@ -81,6 +81,9 @@ impl PointerInput {
     pub fn cancel_drag(&mut self) {
         self.drag = None;
         self.serials.clear();
+        if let Some((seat, target)) = self.target {
+            self.serials.focus(seat, target);
+        }
     }
     pub fn retarget(&mut self, tab: TabId) {
         self.cancel_drag();
@@ -245,6 +248,12 @@ mod tests {
             0
         );
         assert_eq!(pointer.drag, Some(TabId(2)));
+        pointer.cancel_drag();
+        pointer.button(272, true, 51).unwrap();
+        assert_eq!(
+            pointer.serials.take_for_selection(seat, target).unwrap().0,
+            51
+        );
         pointer.retarget(TabId(3));
         assert!(pointer.drag.is_none());
         assert!(pointer.serials.take_for_selection(seat, target).is_none());

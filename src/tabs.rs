@@ -58,6 +58,8 @@ pub struct Tab<P> {
     preedit: Option<crate::ime::preedit::PreeditState>,
     exit_status: Option<std::process::ExitStatus>,
     reserved_cells: usize,
+    reserved_rows: u16,
+    reserved_columns: u16,
 }
 
 impl<P> Tab<P> {
@@ -182,6 +184,8 @@ impl<P: TabPty> TabRegistry<P> {
             preedit: None,
             exit_status: None,
             reserved_cells,
+            reserved_rows: rows,
+            reserved_columns: columns,
         });
         self.next_id = id.0.checked_add(1);
         if self.active.is_none() {

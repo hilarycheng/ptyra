@@ -487,6 +487,7 @@ dependencies = [
  "nix",
  "png",
  "toml",
+ "unicode-width",
  "wayland-client",
  "wayland-protocols",
 ]

@@ -1,5 +1,10 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Runtime tab labels — TASK-137 / final regression (2026-11-06)
+
+- `unicode-width =0.2.3` is now a direct dependency for bounded CJK/combining tab-label layout, shared with the uncommitted IME implementation. It is the already-locked terminal-core version; no new package/version is introduced. Default features remain off, license MIT OR Apache-2.0, source https://github.com/unicode-rs/unicode-width.
+- Maintenance/advisory review reuses the 2026-11-05 review below; no new complete cargo-audit run is claimed. The standalone committed tree includes the direct Cargo edge and dependency invariant, without enabling the IME-specific unstable Wayland feature.
+
 ## Runtime keyboard — TASK-128 (2026-11-05)
 
 - 冇新增 dependency、app unsafe 或 FFI。Wayland seat/keyboard adapter 讀取有界 keymap FD，重用 kbvm、focus epoch、KeyEncoder 同 RepeatScheduler；只接受 compositor-forwarded keyboard events，未開 text-input-v3。
