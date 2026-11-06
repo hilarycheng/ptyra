@@ -9,6 +9,7 @@ mod clipboard_offers;
 mod clipboard_receive;
 mod clipboard_send;
 mod focus_reports;
+mod fonts;
 mod hyperlink;
 mod keyboard;
 mod mouse;

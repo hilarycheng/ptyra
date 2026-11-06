@@ -80,9 +80,9 @@ os.write(1,b'\\x1b[0m\\x1b[?25h\\r\\n')
     time.sleep(0.2)
     assert capture() == historical, 'offscreen live cursor leaked into history'
     key(107, 1)
-    time.sleep(0.15)
     # Cursor was explicitly enabled, so compare all rows except its final live row.
-    assert capture()[:-30] == bottom[:-30], 'scroll round trip left stale pixels'
+    # Virtual-keyboard sync acknowledges the compositor, not the client's frame.
+    wait_until(lambda: capture()[:-30] == bottom[:-30])
     key(102, 8 if os.environ.get('PTYRA_TEST_SCROLL') else 1)
     ipc('[app_id="ptyra"] resize set width 480 px height 400 px')
     ipc('[app_id="ptyra"] move position center')

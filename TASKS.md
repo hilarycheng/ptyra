@@ -746,7 +746,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-015`, `TASK-031`, `TASK-125`, `TASK-126`, `TASK-140` | **Unit Test:** `runtime_scale_keeps_logical_and_buffer_coordinates_consistent`
   - **Done:** 綁定 output/surface scale lifecycle，移動視窗或 scale=1↔2 後更新 buffer scale、pixel size、字型 metrics 同 hit-test；logical/physical 唔混用；較新 scale protocol 缺席時有一致 fallback，分配先檢查上限。
 
-- [ ] **TASK-168 — 真字型 fallback 依 glyph coverage 選擇**
+- [x] **TASK-168 — 真字型 fallback 依 glyph coverage 選擇**
   - **Dependencies:** `TASK-028`, `TASK-033`, `TASK-034`, `TASK-126` | **Unit Test:** `runtime_font_fallback_covers_cjk_and_combining`
   - **Done:** 唔只用單一「繁」字揀 fallback；以 bounded 候選/實際 coverage 處理繁體中文、combining、wide glyph；缺字有明確 fallback，baseline/cell width 對齊；用可信 font fixtures 做 pixels/metrics 回歸，唔擴張成完整 shaping 承諾。
 

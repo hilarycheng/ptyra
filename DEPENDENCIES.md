@@ -1,5 +1,13 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Runtime font fallback — TASK-168 (2026-11-06)
+
+- No new runtime dependency, unsafe or FFI. Reuses Fontconfig `fc-match -s` and existing `ab_glyph`/parser versions. The TASK-126 parser maintenance/complexity advisory remains unresolved; these limits are not a parser CPU deadline. Use trusted local fonts only.
+- Replaces the old single-character CJK query: one startup lookup, at most 128 KiB captured stdout, 64 candidate records, 16 usable faces, 32 MiB per font file and 48 MiB total retained font-file bytes. Invalid/unreadable/oversized candidates are skipped; no usable font is an explicit startup error. Path/index pairs are deduplicated, including distinct TTC indices. File-byte caps exclude allocator/parser metadata; Fontconfig subprocess runtime has no deadline. No per-PTY-character subprocess, network access or global Fontconfig changes.
+- Each cache miss checks actual cmap plus outline coverage in candidate order. Unsupported bitmap/color-only faces cannot hide a later usable outline. If no drawable visible glyph exists, a bounded box is drawn even when .notdef is empty. Blank whitespace and mapped zero-width format glyphs remain blank. Primary metrics determine grid/baseline; fallback scalars are clipped to one/two cells, combining ink is horizontally centered over its owner. This is not complex shaping, ligature, emoji sequence or OpenType mark-anchor support.
+- Fonts and glyph cache are shared by the window. The cache belongs to one immutable font set; scalar and cell span identify the selected mask, and scale changes clear masks. No font changes are accepted from PTY output.
+- Original synthetic `fallback-*.ttf` fixtures and their generator/provenance exercise actual cmap/outline selection, distinct face metrics, wide/combining pixels, unsupported-face fallthrough and missing glyphs. The private Fontconfig/headless Sway test checks compositor pixels at scale 1/2/1. It does not replace AMD/Mesa/Sway 1.10.1 desktop acceptance. fontTools is only an optional fixture-regeneration tool, not a Cargo/runtime/test dependency.
+
 ## Runtime tab labels — TASK-137 / final regression (2026-11-06)
 
 - `unicode-width =0.2.3` is now a direct dependency for bounded CJK/combining tab-label layout, shared with the uncommitted IME implementation. It is the already-locked terminal-core version; no new package/version is introduced. Default features remain off, license MIT OR Apache-2.0, source https://github.com/unicode-rs/unicode-width.

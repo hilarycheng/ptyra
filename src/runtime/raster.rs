@@ -10,9 +10,7 @@ use alacritty_terminal::{
     term::cell::Flags,
     vte::ansi::{Color, CursorShape},
 };
-use std::{fs::File, io::Read, process::Command};
-
-const MAX_FONT_BYTES: u64 = 32 * 1024 * 1024;
+use unicode_width::UnicodeWidthChar;
 
 pub(super) struct Raster {
     fonts: Vec<FontVec>,
@@ -28,19 +26,15 @@ pub(super) struct Raster {
 }
 impl Raster {
     pub fn load(config: &Config) -> Result<Self> {
-        let primary = load_font(&config.font_family)?;
-        let mut fonts = vec![primary];
-        if let Ok(fallback) = load_font(":charset=7e41")
-            && fallback.as_slice() != fonts[0].as_slice()
-        {
-            fonts.push(fallback);
-        }
-        Self::new(fonts, config)
+        Self::new(super::fonts::load(&config.font_family)?, config)
     }
     fn new(fonts: Vec<FontVec>, config: &Config) -> Result<Self> {
         config
             .validate()
             .map_err(|_| "invalid raster configuration")?;
+        if fonts.len() > super::fonts::MAX_FONTS {
+            return Err("too many fonts");
+        }
         let font = fonts.first().ok_or("no usable font")?;
         let scaled = font.as_scaled(config.font_size as f32);
         let cell_width = scaled.h_advance(scaled.glyph_id('M')).ceil().max(1.0) as u32;
@@ -78,6 +72,118 @@ impl Raster {
         self.scale = scale;
         self.cache.clear();
     }
+    fn draw_glyph(
+        &mut self,
+        pixels: &mut [u8],
+        size: (u32, u32),
+        cell: (u32, u32, u32),
+        ch: char,
+        fg: u32,
+    ) -> Result<()> {
+        let (width, height) = size;
+        let (x, y, span) = cell;
+        if ch == ' ' {
+            return Ok(());
+        }
+        // This raster owns an immutable font set and its cache. Scale changes clear it;
+        // the scalar selects the face, and span affects mark centering/tofu geometry.
+        let key = GlyphKey {
+            font_instance: u64::from(span),
+            glyph: ch as u32,
+        };
+        let mut uncached = None;
+        if self.cache.get(key).is_none() {
+            let mut mask = vec![0u8; (2 * self.cell_width * self.cell_height) as usize];
+            let mut mapped = false;
+            let outline = self.fonts.iter().find_map(|font| {
+                let id = font.glyph_id(ch);
+                if id.0 == 0 {
+                    return None;
+                }
+                mapped = true;
+                font.outline_glyph(id.with_scale_and_position(self.size, point(0.0, self.baseline)))
+            });
+            let missing =
+                outline.is_none() && !ch.is_whitespace() && !(mapped && ch.width() == Some(0));
+            if let Some(outline) = outline {
+                let bounds = outline.px_bounds();
+                if ![bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y]
+                    .into_iter()
+                    .all(f32::is_finite)
+                    || bounds.width() > 1024.0
+                    || bounds.height() > 1024.0
+                {
+                    return Err("glyph bounds exceed limit");
+                }
+                // shortcut: center scalar marks over the owning cell; no shaping/anchor tables.
+                let left = if ch.width() == Some(0) {
+                    ((span * self.cell_width) as f32 - bounds.width()) / 2.0
+                } else {
+                    bounds.min.x
+                };
+                outline.draw(|gx, gy, coverage| {
+                    let px = (gx as i64).saturating_add(left.floor() as i64);
+                    let py = (gy as i64).saturating_add(bounds.min.y as i64);
+                    if px >= 0
+                        && py >= 0
+                        && px < i64::from(span * self.cell_width)
+                        && py < i64::from(self.cell_height)
+                    {
+                        mask[py as usize * (2 * self.cell_width) as usize + px as usize] =
+                            (coverage.clamp(0.0, 1.0) * 255.0) as u8;
+                    }
+                });
+            }
+            if missing {
+                // Do not silently render glyph zero: even fonts with an empty .notdef get a box.
+                let width = span * self.cell_width;
+                let inset = self
+                    .scale
+                    .min((width.saturating_sub(1)) / 2)
+                    .min((self.cell_height.saturating_sub(1)) / 2);
+                for py in inset..self.cell_height - inset {
+                    for px in inset..width - inset {
+                        if px < inset + self.scale
+                            || px >= width.saturating_sub(inset + self.scale)
+                            || py < inset + self.scale
+                            || py >= self.cell_height.saturating_sub(inset + self.scale)
+                        {
+                            mask[(py * 2 * self.cell_width + px) as usize] = 255;
+                        }
+                    }
+                }
+            }
+            uncached = self.cache.insert(key, mask.into_boxed_slice());
+        }
+        let mask = uncached
+            .as_deref()
+            .or_else(|| self.cache.get(key))
+            .ok_or("glyph unavailable")?;
+        for gy in 0..self.cell_height.min(height.saturating_sub(y)) {
+            for gx in 0..(span * self.cell_width).min(width.saturating_sub(x)) {
+                let alpha = u32::from(mask[(gy * 2 * self.cell_width + gx) as usize]);
+                if alpha == 0 {
+                    continue;
+                }
+                let offset = ((y + gy) * width + x + gx) as usize * 4;
+                let bg = u32::from_ne_bytes(
+                    pixels[offset..offset + 4]
+                        .try_into()
+                        .map_err(|_| "pixel unavailable")?,
+                );
+                let mut result = 0xff000000;
+                for shift in [0, 8, 16] {
+                    result |= ((((fg >> shift) & 255) * alpha
+                        + ((bg >> shift) & 255) * (255 - alpha))
+                        / 255)
+                        << shift;
+                }
+                pixels[offset..offset + 4].copy_from_slice(&result.to_ne_bytes());
+            }
+        }
+        Ok(())
+    }
+
     pub fn draw(
         &mut self,
         terminal: &Terminal,
@@ -153,69 +259,7 @@ impl Raster {
             for ch in std::iter::once(cell.cell.c)
                 .chain(cell.cell.zerowidth().unwrap_or_default().iter().copied())
             {
-                if ch == ' ' {
-                    continue;
-                }
-                let font_index =
-                    crate::font::select_font(ch, &self.fonts, |font, ch| font.glyph_id(ch).0 != 0)
-                        .unwrap_or(0);
-                let key = GlyphKey {
-                    font_instance: font_index as u64,
-                    glyph: ch as u32,
-                };
-                let mut uncached = None;
-                if self.cache.get(key).is_none() {
-                    let font = &self.fonts[font_index];
-                    let glyph = font
-                        .glyph_id(ch)
-                        .with_scale_and_position(self.size, point(0.0, self.baseline));
-                    let mut mask = vec![0u8; (2 * self.cell_width * self.cell_height) as usize];
-                    if let Some(outline) = font.outline_glyph(glyph) {
-                        let bounds = outline.px_bounds();
-                        if bounds.width() > 1024.0 || bounds.height() > 1024.0 {
-                            return Err("glyph bounds exceed limit");
-                        }
-                        outline.draw(|gx, gy, coverage| {
-                            let px = gx as i32 + bounds.min.x as i32;
-                            let py = gy as i32 + bounds.min.y as i32;
-                            if px >= 0
-                                && py >= 0
-                                && px < (2 * self.cell_width) as i32
-                                && py < self.cell_height as i32
-                            {
-                                mask[py as usize * (2 * self.cell_width) as usize + px as usize] =
-                                    (coverage.clamp(0.0, 1.0) * 255.0) as u8;
-                            }
-                        });
-                    }
-                    uncached = self.cache.insert(key, mask.into_boxed_slice());
-                }
-                let mask = uncached
-                    .as_deref()
-                    .or_else(|| self.cache.get(key))
-                    .ok_or("glyph unavailable")?;
-                for gy in 0..self.cell_height.min(height.saturating_sub(y)) {
-                    for gx in 0..(span * self.cell_width).min(width.saturating_sub(x)) {
-                        let alpha = u32::from(mask[(gy * 2 * self.cell_width + gx) as usize]);
-                        if alpha == 0 {
-                            continue;
-                        }
-                        let offset = ((y + gy) * width + x + gx) as usize * 4;
-                        let bg = u32::from_ne_bytes(
-                            pixels[offset..offset + 4]
-                                .try_into()
-                                .map_err(|_| "pixel unavailable")?,
-                        );
-                        let mut result = 0xff000000;
-                        for shift in [0, 8, 16] {
-                            result |= ((((fg >> shift) & 255) * alpha
-                                + ((bg >> shift) & 255) * (255 - alpha))
-                                / 255)
-                                << shift;
-                        }
-                        pixels[offset..offset + 4].copy_from_slice(&result.to_ne_bytes());
-                    }
-                }
+                self.draw_glyph(pixels, size, (x, y, span), ch, fg)?;
             }
             if flags.intersects(Flags::UNDERLINE | Flags::DOUBLE_UNDERLINE) {
                 fill(
@@ -287,33 +331,6 @@ fn paint_cursor(
     }
 }
 
-fn load_font(pattern: &str) -> Result<FontVec> {
-    let output = Command::new("fc-match")
-        .args(["-f", "%{file}\n%{index}\n", "--", pattern])
-        .output()
-        .map_err(|_| "Fontconfig fc-match unavailable")?;
-    if !output.status.success() || output.stdout.len() > 8192 {
-        return Err("Fontconfig lookup failed");
-    }
-    let text = std::str::from_utf8(&output.stdout).map_err(|_| "invalid Fontconfig response")?;
-    let mut lines = text.lines();
-    let path = lines.next().ok_or("font path missing")?;
-    let index = lines
-        .next()
-        .and_then(|s| s.parse::<u32>().ok())
-        .ok_or("font index missing")?;
-    let mut bytes = Vec::new();
-    File::open(path)
-        .map_err(|_| "font file unavailable")?
-        .take(MAX_FONT_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "font read failed")?;
-    if bytes.len() as u64 > MAX_FONT_BYTES {
-        return Err("font file exceeds limit");
-    }
-    FontVec::try_from_vec_and_index(bytes, index).map_err(|_| "unsupported font file")
-}
-
 fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: u32) {
     let (x, y, w, h) = rect;
     for row in y..y.saturating_add(h).min(size.1) {
@@ -328,6 +345,112 @@ fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: 
 mod tests {
     use super::*;
     use crate::renderer::palette::CURSOR;
+    #[test]
+    fn runtime_font_fallback_covers_cjk_and_combining() {
+        let fixture = |bytes: &[u8]| FontVec::try_from_vec(bytes.to_vec()).unwrap();
+        let fonts = vec![
+            fixture(include_bytes!("../../tests/fixtures/fallback-primary.ttf")),
+            fixture(include_bytes!("../../tests/fixtures/fallback-cjk.ttf")),
+            fixture(include_bytes!("../../tests/fixtures/fallback-mark.ttf")),
+        ];
+        for (ch, expected) in [
+            ('A', Some(0)),
+            ('繁', Some(1)),
+            ('體', Some(1)),
+            ('中', Some(1)),
+            ('𠮷', Some(1)),
+            ('\u{301}', Some(2)),
+            ('🦀', None),
+        ] {
+            assert_eq!(
+                crate::font::select_font(ch, &fonts, |font, ch| font.glyph_id(ch).0 != 0),
+                expected
+            );
+        }
+        let config = Config {
+            font_size: 20.,
+            ..Config::default()
+        };
+        let mut raster = Raster::new(fonts, &config).unwrap();
+        assert_eq!(raster.logical_cell(), (12, 20));
+        assert_eq!(raster.baseline, 16.);
+        let tab = crate::TabId(1);
+        let draw = |raster: &mut Raster, text: &str| {
+            let mut terminal = Terminal::new(tab, 2, 8).unwrap();
+            terminal.feed(tab, b"\x1b[?25l").unwrap();
+            terminal.feed(tab, text.as_bytes()).unwrap();
+            let size = (8 * raster.cell_width, 2 * raster.cell_height);
+            let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
+            raster.draw(&terminal, size, &mut pixels, true).unwrap();
+            pixels
+        };
+        let mut at_scale_one = None;
+        for scale in [1, 2, 1] {
+            raster.set_scale(scale);
+            let plain = draw(&mut raster, "A中e");
+            let marked = draw(&mut raster, "A中e\u{301}");
+            assert!(plain != marked, "negative-bearing mark must not disappear");
+            let w = 8 * raster.cell_width;
+            let ink = |pixels: &[u8], x: u32, y: u32| {
+                let offset = ((y * w + x) * 4) as usize;
+                u32::from_ne_bytes(pixels[offset..offset + 4].try_into().unwrap()) != 0xff181818
+            };
+            assert!(ink(&plain, 3 * scale, 10 * scale));
+            assert!(
+                ink(&plain, 32 * scale, 10 * scale),
+                "CJK reaches second cell"
+            );
+            assert!(
+                !ink(&plain, 36 * scale, 10 * scale),
+                "wide glyph does not spill"
+            );
+            for y in 16 * scale..20 * scale {
+                assert!((0..w).all(|x| !ink(&plain, x, y)), "shared baseline");
+            }
+            for y in 0..2 * raster.cell_height {
+                for x in 0..w {
+                    if !(36 * scale..48 * scale).contains(&x) || y >= 4 * scale {
+                        let o = ((y * w + x) * 4) as usize;
+                        assert_eq!(&plain[o..o + 4], &marked[o..o + 4]);
+                    }
+                }
+            }
+            let both = draw(&mut raster, "e\u{301}中\u{301}");
+            assert!(ink(&both, 4 * scale, scale));
+            assert!(
+                ink(&both, 23 * scale, scale),
+                "same mark centers over a wide base"
+            );
+            assert!(
+                !ink(&both, 15 * scale, scale),
+                "narrow mask is not reused for wide base"
+            );
+            let later = draw(&mut raster, "E");
+            assert!(
+                ink(&later, 4 * scale, 8 * scale),
+                "mapped blank face must not hide a later outline"
+            );
+            let unsupported = draw(&mut raster, "B");
+            assert!(
+                ink(&unsupported, scale, 8 * scale),
+                "mapped but unsupported visible glyph gets tofu"
+            );
+            assert!(!ink(&unsupported, 4 * scale, 8 * scale));
+            let missing = draw(&mut raster, "🦀A");
+            assert!(
+                (0..raster.cell_height)
+                    .any(|y| (0..2 * raster.cell_width).any(|x| ink(&missing, x, y))),
+                "missing glyph must have an explicit visible fallback"
+            );
+            assert_eq!(draw(&mut raster, "🦀A"), missing, "cached mask is stable");
+            if scale == 1 {
+                if let Some(first) = &at_scale_one {
+                    assert_eq!(&marked, first);
+                }
+                at_scale_one = Some(marked);
+            }
+        }
+    }
     #[test]
     fn runtime_scaled_glyphs_rebuild_cache_and_preserve_grid_geometry() {
         let font = FontVec::try_from_vec(include_bytes!("../../tests/fixtures/demo.ttf").to_vec())

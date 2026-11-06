@@ -20,6 +20,9 @@ def wait(path):
  while not path.exists():
   assert time.monotonic()<end, str(path)
   time.sleep(0.01)
+def publish(path,text):
+ pending=path.with_name(path.name+'.pending')
+ pending.write_text(text);pending.replace(path)
 def read_until(pattern):
  data=bytearray(); end=time.monotonic()+5
  while not re.search(pattern,data):
@@ -30,10 +33,11 @@ old=termios.tcgetattr(0);tty.setraw(0)
 try:
  os.write(1,b'\\x1b[14t\\x1b[18t')
  size=read_until(rb'\\x1b\\[8;\\d+;\\d+t$')
- (root/'mouse-size').write_text(size.hex())
+ publish(root/'mouse-size',size.hex())
  for phase in range(10):
   wait(root/f'mouse-{phase}.go')
   mode=bytes.fromhex((root/f'mouse-{phase}.go').read_text())
+  (root/f'mouse-{phase}.mode').write_text(mode.hex())
   os.write(1,b'\\x1b[?1000l\\x1b[?1002l\\x1b[?1003l\\x1b[?1005l\\x1b[?1006l'+mode+b'\\x1b[0m\\x1b[2J\\x1b[Halpha beta\\x1b[?25l\\x1b[6n')
   assert read_until(rb'R$')==b'\\x1b[1;11R'
   (root/f'mouse-{phase}.ready').touch()
@@ -42,7 +46,7 @@ try:
    assert time.monotonic()<end
    if select.select([0],[],[],0.02)[0]: data.extend(os.read(0,65536))
   while select.select([0],[],[],0.15)[0]: data.extend(os.read(0,65536))
-  (root/f'mouse-{phase}.result').write_text(data.hex())
+  publish(root/f'mouse-{phase}.result',data.hex())
 finally:
  os.write(1,b'\\x1b[?1000l\\x1b[?1002l\\x1b[?1003l\\x1b[?1005l\\x1b[?1006l\\x1b[?25h\\r\\n')
  termios.tcsetattr(0,termios.TCSAFLUSH,old)
@@ -88,8 +92,12 @@ finally:
     modes.extend([b'\x1b[?1002h\x1b[?1006h',b'\x1b[?1003h\x1b[?1006h'])
     for phase,mode in enumerate(modes):
         move(1,0,bar=True)
-        (root/f'mouse-{phase}.go').write_text(mode.hex())
+        # Publish payload atomically: existence alone must not expose an empty mode.
+        pending = root / f'mouse-{phase}.pending'
+        pending.write_text(mode.hex())
+        pending.replace(root / f'mouse-{phase}.go')
         wait_until((root/f'mouse-{phase}.ready').exists)
+        assert (root/f'mouse-{phase}.mode').read_text() == mode.hex(), phase
         key(107,1) # Keep later fixtures on the live grid after the disabled-mode history wheel.
         move(1,1)
         expected=b''
