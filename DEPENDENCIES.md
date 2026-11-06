@@ -1,5 +1,15 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Runtime SGR styles — TASK-169 (2026-11-06)
+
+- No new dependency, unsafe, FFI, font process or global setting. Font/outline/cache caps and the known TASK-126 font-parser advisory remain unchanged.
+- Bold uses a synthetic one-logical-pixel rightward dilation; italic shears the bounded regular mask by `(baseline - row) / 5` physical pixels. Both can combine, including fallback and combining glyphs. They retain the fixed cell advance, clip ink to the owning one/two cells, and do not select designed bold/italic faces. Tiny/clipped glyphs can lose stylistic detail. One bounded cell-width row scratch buffer is used only on a styled cache miss.
+- DIM halves resolved foreground RGB channels (integer floor), without bright-palette promotion. INVERSE swaps foreground/background after dimming. HIDDEN suppresses glyphs and all decorations, retaining the resolved background. These rules apply equally to named, indexed, truecolor and OSC-overridden colors.
+- Supports single/double/curly/dotted/dashed underline (SGR 4 / 4:1–5), strikeout (9), explicit underline color (58), and resets (22/23/24/27/28/29/59/0). Decorations use one logical pixel thickness; underline sits at the bottom of the cell, double/curly extend two pixels above it, strikeout sits halfway down. Patterns align with viewport x; wide cells cover both columns. Explicit underline color is resolved independently; otherwise it follows the displayed foreground. At very small cell heights, underline rows may merge. Hidden suppresses colored underline too.
+- Cache identity includes synthetic bold/italic and cell span. The raster owns one immutable fallback set and font size; scalar coverage determines its face, and size/scale changes clear all masks. Color/dim/inverse/decorations are applied during composition and do not duplicate glyph masks. No output-triggered font reload is introduced.
+- Pinned VTE interprets SGR 21 as cancel-bold, not double underline; use 4:2 for double underline. Unsupported: blinking text (SGR 5/6), overline/framed/encircled, alternate font selection, designed style faces, shaping/ligatures/emoji sequences. The conservative standalone terminfo is unchanged, so it adds no unsupported capability claims; fuller packaged capability checks remain TASK-193.
+- `runtime_sgr_styles_match_terminal_cells` uses original synthetic fonts for deterministic styled/unstyled pixels, resets, fallback, combining, cache-disabled rendering and scale 1/2/1. `PTYRA_TEST_STYLES=1` in `tests/native_runtime.py` verifies the corresponding real headless compositor pixels with private Fontconfig. This is not desktop/AMD/Fcitx5 acceptance.
+
 ## Runtime font fallback — TASK-168 (2026-11-06)
 
 - No new runtime dependency, unsafe or FFI. Reuses Fontconfig `fc-match -s` and existing `ab_glyph`/parser versions. The TASK-126 parser maintenance/complexity advisory remains unresolved; these limits are not a parser CPU deadline. Use trusted local fonts only.

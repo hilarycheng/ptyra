@@ -35,13 +35,16 @@ try:
    assert time.monotonic()<end
    if select.select([0],[],[],0.1)[0]: reply.extend(os.read(0,65536))
   assert re.fullmatch(rb'\\x1b\\[\\d+;\\d+R',reply),bytes(reply)
+  path.with_suffix('.mode').write_text(mode.hex())
   path.with_suffix('.ready').touch()
   received=bytearray();end=time.monotonic()+30
   while not path.with_suffix('.stop').exists():
    assert time.monotonic()<end
    if select.select([0],[],[],0.02)[0]: received.extend(os.read(0,65536))
   while select.select([0],[],[],0.15)[0]: received.extend(os.read(0,65536))
-  path.with_suffix('.result').write_text(received.hex())
+  pending=path.with_suffix('.result.pending')
+  pending.write_text(received.hex())
+  pending.replace(path.with_suffix('.result'))
 finally:
  os.write(1,b'\\x1b>\\x1b[?1l')
  termios.tcsetattr(0,termios.TCSAFLUSH,old)
@@ -54,8 +57,11 @@ finally:
 
     def begin(number,phase,mode):
         path=root/f'keypad-{number}-{phase}'
-        path.with_suffix('.go').write_text(mode.hex())
+        pending=path.with_suffix('.go.pending')
+        pending.write_text(mode.hex())
+        pending.replace(path.with_suffix('.go'))
         wait_until(path.with_suffix('.ready').exists)
+        assert path.with_suffix('.mode').read_text()==mode.hex(),(number,phase,'mode publication')
 
     def finish(number,phase,expected):
         path=root/f'keypad-{number}-{phase}'

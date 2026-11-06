@@ -7,7 +7,7 @@ use crate::{
 };
 use ab_glyph::{Font, FontVec, ScaleFont, point};
 use alacritty_terminal::{
-    term::cell::Flags,
+    term::{cell::Flags, color::Colors},
     vte::ansi::{Color, CursorShape},
 };
 use unicode_width::UnicodeWidthChar;
@@ -79,6 +79,7 @@ impl Raster {
         cell: (u32, u32, u32),
         ch: char,
         fg: u32,
+        flags: Flags,
     ) -> Result<()> {
         let (width, height) = size;
         let (x, y, span) = cell;
@@ -86,9 +87,9 @@ impl Raster {
             return Ok(());
         }
         // This raster owns an immutable font set and its cache. Scale changes clear it;
-        // the scalar selects the face, and span affects mark centering/tofu geometry.
+        // the scalar selects the face; span and synthetic style affect the mask.
         let key = GlyphKey {
-            font_instance: u64::from(span),
+            font_instance: u64::from(span) | (u64::from((flags & Flags::BOLD_ITALIC).bits()) << 32),
             glyph: ch as u32,
         };
         let mut uncached = None;
@@ -149,6 +150,35 @@ impl Raster {
                             || py >= self.cell_height.saturating_sub(inset + self.scale)
                         {
                             mask[(py * 2 * self.cell_width + px) as usize] = 255;
+                        }
+                    }
+                }
+            }
+            if flags.intersects(Flags::BOLD_ITALIC) {
+                // shortcut: bounded synthetic styles; use designed faces only with measured need.
+                let width = (span * self.cell_width) as usize;
+                let mut row = vec![0; width];
+                for gy in 0..self.cell_height {
+                    let offset = (gy * 2 * self.cell_width) as usize;
+                    row.copy_from_slice(&mask[offset..offset + width]);
+                    mask[offset..offset + width].fill(0);
+                    let slant = if flags.contains(Flags::ITALIC) {
+                        (self.baseline as i64 - i64::from(gy)) / 5
+                    } else {
+                        0
+                    };
+                    let weight = if flags.contains(Flags::BOLD) {
+                        self.scale
+                    } else {
+                        0
+                    };
+                    for (gx, alpha) in row.iter().copied().enumerate().filter(|(_, a)| *a != 0) {
+                        for extra in 0..=weight {
+                            let px = gx as i64 + slant + i64::from(extra);
+                            if (0..width as i64).contains(&px) {
+                                let target = &mut mask[offset + px as usize];
+                                *target = (*target).max(alpha);
+                            }
                         }
                     }
                 }
@@ -218,16 +248,11 @@ impl Raster {
                 continue;
             };
             let bg = if cell.cell.flags.contains(Flags::INVERSE) {
-                cell.cell.fg
+                foreground(cell.cell.fg, cell.cell.flags, colors)
             } else {
-                cell.cell.bg
+                color(cell.cell.bg, colors)
             };
-            fill(
-                pixels,
-                size,
-                (x, y, self.cell_width, self.cell_height),
-                color(bg, colors),
-            );
+            fill(pixels, size, (x, y, self.cell_width, self.cell_height), bg);
         }
         for cell in terminal
             .snapshot()
@@ -246,11 +271,10 @@ impl Raster {
                 continue;
             };
             let fg = if flags.contains(Flags::INVERSE) {
-                cell.cell.bg
+                color(cell.cell.bg, colors)
             } else {
-                cell.cell.fg
+                foreground(cell.cell.fg, flags, colors)
             };
-            let fg = color(fg, colors);
             let span = if flags.contains(Flags::WIDE_CHAR) {
                 2
             } else {
@@ -259,13 +283,29 @@ impl Raster {
             for ch in std::iter::once(cell.cell.c)
                 .chain(cell.cell.zerowidth().unwrap_or_default().iter().copied())
             {
-                self.draw_glyph(pixels, size, (x, y, span), ch, fg)?;
+                self.draw_glyph(pixels, size, (x, y, span), ch, fg, flags)?;
             }
-            if flags.intersects(Flags::UNDERLINE | Flags::DOUBLE_UNDERLINE) {
+            paint_underline(
+                pixels,
+                size,
+                (x, y, span * self.cell_width, self.cell_height),
+                flags,
+                self.scale,
+                cell.cell
+                    .underline_color()
+                    .map(|value| color(value, colors))
+                    .unwrap_or(fg),
+            );
+            if flags.contains(Flags::STRIKEOUT) {
                 fill(
                     pixels,
                     size,
-                    (x, y + self.cell_height - 1, span * self.cell_width, 1),
+                    (
+                        x,
+                        y + self.cell_height / 2,
+                        span * self.cell_width,
+                        self.scale.min(self.cell_height - self.cell_height / 2),
+                    ),
                     fg,
                 );
             }
@@ -294,6 +334,57 @@ impl Raster {
         Ok(())
     }
 }
+// DIM affects the source foreground before inverse swaps foreground/background.
+fn foreground(value: Color, flags: Flags, colors: &Colors) -> u32 {
+    let value = color(value, colors);
+    if flags.contains(Flags::DIM) {
+        (value & 0xfefefe) >> 1
+    } else {
+        value
+    }
+}
+
+fn paint_underline(
+    pixels: &mut [u8],
+    size: (u32, u32),
+    rect: (u32, u32, u32, u32),
+    flags: Flags,
+    scale: u32,
+    color: u32,
+) {
+    if !flags.intersects(Flags::ALL_UNDERLINES) {
+        return;
+    }
+    let (x, y, width, height) = rect;
+    let thickness = scale.min(height);
+    let bottom = height - thickness;
+    if flags.contains(Flags::DOUBLE_UNDERLINE) {
+        for offset in [bottom, height.saturating_sub(3 * thickness)] {
+            fill(pixels, size, (x, y + offset, width, thickness), color);
+        }
+    } else {
+        for px in x..x.saturating_add(width).min(size.0) {
+            let phase = px / scale;
+            if (flags.contains(Flags::DOTTED_UNDERLINE) && !phase.is_multiple_of(2))
+                || (flags.contains(Flags::DASHED_UNDERLINE) && phase % 6 >= 4)
+            {
+                continue;
+            }
+            let wave = if flags.contains(Flags::UNDERCURL) {
+                [0, 1, 2, 1][phase as usize % 4] * thickness
+            } else {
+                0
+            };
+            fill(
+                pixels,
+                size,
+                (px, y + bottom.saturating_sub(wave), 1, thickness),
+                color,
+            );
+        }
+    }
+}
+
 fn paint_cursor(
     pixels: &mut [u8],
     size: (u32, u32),
@@ -345,6 +436,207 @@ fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: 
 mod tests {
     use super::*;
     use crate::renderer::palette::CURSOR;
+    #[test]
+    fn runtime_sgr_styles_match_terminal_cells() {
+        let fonts = [
+            include_bytes!("../../tests/fixtures/fallback-primary.ttf").as_slice(),
+            include_bytes!("../../tests/fixtures/fallback-cjk.ttf").as_slice(),
+            include_bytes!("../../tests/fixtures/fallback-mark.ttf").as_slice(),
+        ]
+        .map(|bytes| FontVec::try_from_vec(bytes.to_vec()).unwrap());
+        let mut raster = Raster::new(
+            fonts.into(),
+            &Config {
+                font_size: 20.,
+                ..Config::default()
+            },
+        )
+        .unwrap();
+        let render = |raster: &mut Raster, sgr: &str, text: &str| {
+            let tab = crate::TabId(1);
+            let mut terminal = Terminal::new(tab, 1, 8).unwrap();
+            terminal
+                .feed(
+                    tab,
+                    format!("\x1b[?25l\x1b[38;2;200;160;120m\x1b[48;2;16;32;48m\x1b[{sgr}m{text}")
+                        .as_bytes(),
+                )
+                .unwrap();
+            let size = (8 * raster.cell_width, raster.cell_height);
+            let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
+            raster.draw(&terminal, size, &mut pixels, true).unwrap();
+            pixels
+        };
+        let pixel = |pixels: &[u8], scale: u32, x: u32, y: u32| {
+            let offset = ((y * scale * 96 * scale + x * scale) * 4) as usize;
+            u32::from_ne_bytes(pixels[offset..offset + 4].try_into().unwrap())
+        };
+        let fg = 0xffc8a078;
+        let bg = 0xff102030;
+        let dim = 0xff64503c;
+        let mut original = None;
+        for scale in [1, 2, 1] {
+            raster.set_scale(scale);
+            let regular = render(&mut raster, "22;23", "A");
+            assert_eq!(pixel(&regular, scale, 2, 4), fg);
+            assert_eq!(pixel(&regular, scale, 10, 8), bg);
+            let bold = render(&mut raster, "1", "A");
+            assert_eq!(
+                pixel(&bold, scale, 10, 8),
+                fg,
+                "synthetic weight expands ink"
+            );
+            let italic = render(&mut raster, "3", "A");
+            assert_eq!(
+                pixel(&italic, scale, 2, 4),
+                bg,
+                "italic shifts the top right"
+            );
+            assert_eq!(pixel(&italic, scale, 11, 4), fg);
+            let both = render(&mut raster, "1;3", "A");
+            assert_ne!(both, bold);
+            assert_ne!(both, italic);
+            for (sgr, expected) in [
+                ("22;23", &regular),
+                ("1", &bold),
+                ("3", &italic),
+                ("1;3", &both),
+            ] {
+                assert_eq!(
+                    &render(&mut raster, sgr, "A"),
+                    expected,
+                    "cache retains independent style masks"
+                );
+            }
+            let faint = render(&mut raster, "2", "A");
+            assert_eq!(pixel(&faint, scale, 3, 8), dim);
+            assert_eq!(pixel(&faint, scale, 0, 0), bg);
+            for sgr in ["31;2", "38;5;1;2"] {
+                assert_eq!(
+                    pixel(&render(&mut raster, sgr, "A"), scale, 3, 8),
+                    0xff660000
+                );
+                assert_eq!(
+                    pixel(
+                        &render(&mut raster, sgr, "\x1b]4;1;#204060\x07A"),
+                        scale,
+                        3,
+                        8
+                    ),
+                    0xff102030
+                );
+            }
+            let indexed_underline = render(&mut raster, "4;58;5;1", "\x1b]4;1;#204060\x07 ");
+            assert_eq!(pixel(&indexed_underline, scale, 0, 19), 0xff204060);
+            let bold_dim = render(&mut raster, "1;2", "A");
+            assert_eq!(pixel(&bold_dim, scale, 10, 8), dim);
+            let inverse = render(&mut raster, "7", "A");
+            assert_eq!(pixel(&inverse, scale, 0, 0), fg);
+            assert_eq!(pixel(&inverse, scale, 3, 8), bg);
+            let inverse_dim = render(&mut raster, "2;7", "A");
+            assert_eq!(pixel(&inverse_dim, scale, 0, 0), dim);
+            assert_eq!(pixel(&inverse_dim, scale, 3, 8), bg);
+            for sgr in ["8", "1;2;3;4:3;9;8"] {
+                let hidden = render(&mut raster, sgr, "A");
+                assert!(
+                    (0..20).all(|y| (0..12).all(|x| pixel(&hidden, scale, x, y) == bg)),
+                    "hidden suppresses all ink"
+                );
+            }
+            let strike = render(&mut raster, "9", " ");
+            assert_eq!(pixel(&strike, scale, 0, 10), fg);
+            assert_eq!(pixel(&strike, scale, 0, 9), bg);
+            let mut underlines = Vec::new();
+            for sgr in ["4", "4:2", "4:3", "4:4", "4:5"] {
+                let underline = render(&mut raster, sgr, " ");
+                assert!(underline != render(&mut raster, "24", " "));
+                assert!(
+                    !underlines.contains(&underline),
+                    "each variant has distinct pixels"
+                );
+                underlines.push(underline);
+            }
+            assert_eq!(pixel(&underlines[0], scale, 0, 19), fg);
+            assert_eq!(pixel(&underlines[0], scale, 0, 17), bg);
+            assert_eq!(pixel(&underlines[1], scale, 0, 17), fg);
+            assert_eq!(pixel(&underlines[1], scale, 0, 18), bg);
+            assert_eq!(pixel(&underlines[2], scale, 2, 17), fg);
+            assert_eq!(pixel(&underlines[2], scale, 2, 19), bg);
+            assert_eq!(pixel(&underlines[3], scale, 0, 19), fg);
+            assert_eq!(pixel(&underlines[3], scale, 1, 19), bg);
+            assert_eq!(pixel(&underlines[4], scale, 3, 19), fg);
+            assert_eq!(pixel(&underlines[4], scale, 4, 19), bg);
+            let colored = render(&mut raster, "4;58;2;18;52;86", " ");
+            assert_eq!(pixel(&colored, scale, 0, 19), 0xff123456);
+            let reset_color = render(&mut raster, "4;58;2;18;52;86;59", " ");
+            assert_eq!(reset_color, underlines[0]);
+            assert_eq!(
+                render(&mut raster, "1;21", "A"),
+                regular,
+                "pinned core uses SGR 21 to cancel bold"
+            );
+            assert_eq!(render(&mut raster, "4:1", " "), underlines[0]);
+            assert_eq!(
+                render(&mut raster, "4:3;4:0", " "),
+                render(&mut raster, "24", " ")
+            );
+            let inverse_underline = render(&mut raster, "2;7;4;58;2;18;52;86", " ");
+            assert_eq!(pixel(&inverse_underline, scale, 0, 19), 0xff123456);
+            assert_eq!(pixel(&inverse_underline, scale, 0, 18), dim);
+            let hidden_underline = render(&mut raster, "8;4;58;2;18;52;86", " ");
+            assert_eq!(pixel(&hidden_underline, scale, 0, 19), bg);
+            assert_eq!(
+                render(&mut raster, "4:2;24;9;29;1;2;22;3;23;7;27;8;28", "A"),
+                regular
+            );
+            // Fallback faces, combining marks, wide-cell clipping and resets use the same styles.
+            let wide = render(&mut raster, "1;3;4;9", "中\u{301}\x1b[0mA");
+            assert_eq!(pixel(&wide, scale, 23, 19), fg);
+            assert_eq!(pixel(&wide, scale, 24, 19), 0xff181818);
+            assert_eq!(pixel(&wide, scale, 26, 4), 0xffd3d7cf);
+            assert_ne!(wide, render(&mut raster, "4;9", "中\u{301}\x1b[0mA"));
+            assert_eq!(render(&mut raster, "22;23", "A"), regular);
+            if scale == 1 {
+                if let Some(first) = &original {
+                    assert_eq!(&both, first);
+                }
+                original = Some(both);
+            }
+        }
+        // Disabled cache renders the same styles, without retaining masks.
+        let reference = render(&mut raster, "1;2;3;4:3;9", "e\u{301}中🦀");
+        raster.cache = GlyphCache::new(0, 0).unwrap();
+        assert_eq!(
+            render(&mut raster, "1;2;3;4:3;9", "e\u{301}中🦀"),
+            reference
+        );
+        assert!(raster.cache.is_empty());
+        let font = FontVec::try_from_vec(
+            include_bytes!("../../tests/fixtures/fallback-primary.ttf").to_vec(),
+        )
+        .unwrap();
+        let mut tiny = Raster::new(
+            vec![font],
+            &Config {
+                font_size: 1.,
+                ..Config::default()
+            },
+        )
+        .unwrap();
+        tiny.set_scale(2);
+        let tab = crate::TabId(1);
+        let mut terminal = Terminal::new(tab, 2, 8).unwrap();
+        terminal.feed(tab, b"\x1b[?25l\x1b[1;3;4:3;9mA").unwrap();
+        let size = (8 * tiny.cell_width, 2 * tiny.cell_height);
+        let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
+        tiny.draw(&terminal, size, &mut pixels, true).unwrap();
+        assert!(
+            pixels[(tiny.cell_height * size.0 * 4) as usize..]
+                .chunks_exact(4)
+                .all(|p| u32::from_ne_bytes(p.try_into().unwrap()) == 0xff181818),
+            "tiny decorations never spill into the next row"
+        );
+    }
     #[test]
     fn runtime_font_fallback_covers_cjk_and_combining() {
         let fixture = |bytes: &[u8]| FontVec::try_from_vec(bytes.to_vec()).unwrap();

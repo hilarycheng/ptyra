@@ -188,7 +188,7 @@ def main():
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE") or os.environ.get("PTYRA_TEST_PRIMARY") or os.environ.get("PTYRA_TEST_NO_PRIMARY"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
             (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else ("clipboard_bytes=16\n" if os.environ.get("PTYRA_TEST_OSC52") or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "")) + ("osc52_write=true\n" if os.environ.get("PTYRA_TEST_OSC52") == "enabled" or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n" + ("scroll_top='Alt+Home'\n" if os.environ.get("PTYRA_TEST_SCROLL") else ""))
-            if os.environ.get("PTYRA_TEST_FONTS"):
+            if os.environ.get("PTYRA_TEST_FONTS") or os.environ.get("PTYRA_TEST_STYLES"):
                 from native_fonts import configure_fonts
                 configure_fonts(root, env)
             if os.environ.get("PTYRA_TEST_HYPERLINK"):
@@ -254,6 +254,9 @@ def main():
             if os.environ.get("PTYRA_TEST_FONTS"):
                 from native_fonts import check_fonts
                 check_fonts(root, env, keyboard, app, wait_until, ipc, nodes)
+            if os.environ.get("PTYRA_TEST_STYLES"):
+                from native_styles import check_styles
+                check_styles(root, env, keyboard, app, wait_until, ipc, nodes)
             if os.environ.get("PTYRA_TEST_SCALE"):
                 from native_scale import check_scale
                 check_scale(root, env, keyboard, app, wait_until, ipc, nodes, u32)
@@ -288,23 +291,51 @@ def main():
                 from native_notice import check_notices
                 check_notices(root, env, keyboard, app, wait_until, ipc, Keyboard, u32, string)
             if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE"):
+                capture_number = 0
                 def paste_fixture(payload, expected, mime="text/plain;charset=utf-8", capture=False, bracketed=True, tail=b"", decision=None, primary=False, unavailable=False):
-                    received = root / "paste-received"
-                    observed = root / "paste-observed"
-                    if observed.exists():
-                        observed.unlink()
+                    nonlocal capture_number
+                    capture_number += 1
+                    received = root / f"paste-{capture_number}-received"
+                    observed = root / f"paste-{capture_number}-observed"
+                    ready = root / f"paste-{capture_number}-ready"
                     if capture:
-                        if received.exists():
-                            received.unlink()
                         framed = b"\x1b[200~" + payload + b"\x1b[201~" if bracketed else payload
                         wanted = b"z" if unavailable or decision in ("cancel", "focus") else framed + tail
                         mode = b"\x1b[?2004h" if bracketed else b"\x1b[?2004l"
-                        script = root / "capture.py"
-                        script.write_text("import os, select, termios, tty, time\nfrom pathlib import Path\nold=termios.tcgetattr(0)\ntry:\n tty.setraw(0)\n os.write(1, " + repr(mode + b"\x1b]2;Paste fixture\x07") + ")\n time.sleep(0.3)\n data=bytearray()\n end=time.monotonic()+8\n while len(data)<" + str(len(wanted)) + ":\n  assert time.monotonic()<end\n  if select.select([0],[],[],0.1)[0]: data.extend(os.read(0," + str(len(wanted)) + "-len(data))); Path(" + repr(str(observed)) + ").write_bytes(data)\nfinally:\n termios.tcsetattr(0,termios.TCSANOW,old)\n os.write(1,b'\\x1b[?2004l\\x1b]2;Terminal\\x07')\nPath(" + repr(str(received)) + ").write_bytes(data)\n")
+                        title = f"Paste fixture {capture_number}"
+                        script = root / f"capture-{capture_number}.py"
+                        script.write_text("""import os, re, select, termios, tty, time
+from pathlib import Path
+old=termios.tcgetattr(0)
+try:
+ tty.setraw(0)
+ os.write(1, %(mode)r)
+ reply=bytearray();end=time.monotonic()+5
+ while not reply.endswith(b'R'):
+  assert time.monotonic()<end
+  if select.select([0],[],[],0.1)[0]: reply.extend(os.read(0,4096))
+ assert re.fullmatch(rb'\\x1b\\[\\d+;\\d+R',reply),bytes(reply)
+ Path(%(ready)r).touch()
+ time.sleep(0.3)
+ data=bytearray();end=time.monotonic()+8
+ while len(data)<%(wanted)d:
+  assert time.monotonic()<end
+  if select.select([0],[],[],0.1)[0]:
+   data.extend(os.read(0,%(wanted)d-len(data)))
+   Path(%(observed)r).write_bytes(data)
+finally:
+ termios.tcsetattr(0,termios.TCSANOW,old)
+ os.write(1,b'\\x1b[?2004l\\x1b]2;Terminal\\x07')
+result=Path(%(received)r)
+pending=result.with_name(result.name+'.pending')
+pending.write_bytes(data)
+pending.replace(result)
+""" % dict(mode=mode + b"\x1b]2;" + title.encode() + b"\x07\x1b[6n", ready=str(ready), wanted=len(wanted), observed=str(observed), received=str(received)))
                         keyboard.text(f"python3 {script}")
                         keyboard.tap(28)
                         keyboard.sync()
-                        wait_until(lambda: any(n.get("app_id") == "ptyra" and n.get("name") == "Paste fixture" for n in nodes(json.loads(ipc("-t", "get_tree")))))
+                        wait_until(ready.exists)
+                        wait_until(lambda: any(n.get("app_id") == "ptyra" and n.get("name") == title for n in nodes(json.loads(ipc("-t", "get_tree")))))
                     drag_pointer = None
                     if decision == "cancel":
                         manager = keyboard.bind("zwlr_virtual_pointer_manager_v1")

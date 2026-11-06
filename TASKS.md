@@ -750,7 +750,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-028`, `TASK-033`, `TASK-034`, `TASK-126` | **Unit Test:** `runtime_font_fallback_covers_cjk_and_combining`
   - **Done:** 唔只用單一「繁」字揀 fallback；以 bounded 候選/實際 coverage 處理繁體中文、combining、wide glyph；缺字有明確 fallback，baseline/cell width 對齊；用可信 font fixtures 做 pixels/metrics 回歸，唔擴張成完整 shaping 承諾。
 
-- [ ] **TASK-169 — Raster 呈現已支援 SGR 文字樣式**
+- [x] **TASK-169 — Raster 呈現已支援 SGR 文字樣式**
   - **Dependencies:** `TASK-035`, `TASK-126`, `TASK-168` | **Unit Test:** `runtime_sgr_styles_match_terminal_cells`
   - **Done:** 明確支援並測試 bold/dim/italic、underline variants、strikeout 同 inverse/hidden 嘅畫面效果；cache key 分辨需要嘅 face/style/size，唔錯用 regular mask；不支援樣式列明，terminfo 唔虛報。
 
