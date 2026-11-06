@@ -310,7 +310,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         {
             trace.add(2, 1);
         }
-        app.enqueue_input(bytes)?;
+        app.enqueue_input(bytes);
         if let Some(pty) = app
             .tabs
             .active()
@@ -527,24 +527,35 @@ impl Runtime {
             .and_then(|tab| tab.terminal().mode())
             .is_some_and(|mode| mode.contains(alacritty_terminal::term::TermMode::APP_KEYPAD))
     }
-    fn enqueue_input(&mut self, bytes: Option<Vec<u8>>) -> Result<()> {
-        if let Some(bytes) = bytes.filter(|bytes| !bytes.is_empty())
-            && let Some(pty) = self
-                .tabs
-                .active()
-                .and_then(|id| self.tabs.get_mut(id))
-                .and_then(|tab| tab.pty_mut())
-        {
-            pty.enqueue_write(&bytes)
-                .map_err(|_| "PTY input queue full or closed")?;
-            if let Some(trace) = &mut self.input_trace {
-                trace.add(3, bytes.len());
+    fn enqueue_input(&mut self, bytes: Option<Vec<u8>>) {
+        let Some(bytes) = bytes.filter(|bytes| !bytes.is_empty()) else {
+            return;
+        };
+        let accepted = self
+            .input
+            .focus
+            .target()
+            .filter(|target| self.tabs.active() == Some(target.tab))
+            .and_then(|target| self.tabs.get_mut(target.tab))
+            .and_then(|tab| tab.pty_mut())
+            .is_some_and(|pty| pty.enqueue_write(&bytes).is_ok());
+        if !accepted {
+            // Reject this whole event once; neither repeat nor a later Tab may replay it.
+            self.input.repeat.cancel();
+            if self.clipboard_notice != Some(notice::Notice::InputRejected) {
+                self.show_clipboard_notice(notice::Notice::InputRejected);
             }
-            self.wheel.reset();
-            // Accepted keyboard input follows the live cursor; output alone preserves history.
-            self.scroll_active(alacritty_terminal::grid::Scroll::Bottom);
+            return;
         }
-        Ok(())
+        if self.clipboard_notice == Some(notice::Notice::InputRejected) {
+            self.clear_clipboard_notice();
+        }
+        if let Some(trace) = &mut self.input_trace {
+            trace.add(3, bytes.len());
+        }
+        self.wheel.reset();
+        // Accepted keyboard input follows the live cursor; output alone preserves history.
+        self.scroll_active(alacritty_terminal::grid::Scroll::Bottom);
     }
     fn tab_layout(&self) -> bar::Layout {
         bar::Layout::new(

@@ -790,7 +790,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-097`, `TASK-105`, `TASK-131`, `TASK-149`, `TASK-168` | **Unit Test:** `runtime_resource_caps_apply_to_actual_owners`
   - **Done:** 核對並接通 config caps 同跨 Tab reservation，glyph/font cache 按 Window 共用；clipboard payload/transfer count、PTY queues、grid/history 同 frame buffers 有明確總上限；新增/關閉/resize 會正確保留或回收 budget，不只測孤立 counter。
 
-- [ ] **TASK-178 — PTY input backpressure 唔令整個 app 退出**
+- [x] **TASK-178 — PTY input backpressure 唔令整個 app 退出**
   - **Dependencies:** `TASK-023`, `TASK-132`, `TASK-150`, `TASK-160` | **Unit Test:** `runtime_input_backpressure_preserves_order_without_global_exit`
   - **Done:** keyboard、IME commit、paste 同 protocol reply 共用來源 Tab 嘅有界 ordered write policy；queue full/partial write 有明確 retry 或可見拒絕結果，不靜默遺失或重複 bytes；一個慢 child 唔令其他 Tabs/Wayland 停止。
 

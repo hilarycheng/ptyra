@@ -788,3 +788,175 @@ fn runtime_resource_caps_apply_to_actual_owners() {
         assert!(!queue.has_paste());
     }
 }
+
+#[test]
+fn runtime_input_backpressure_preserves_order_without_global_exit() {
+    use crate::{
+        WindowId,
+        clipboard::{PasteSink, SeatId},
+        ime::{ImeEvent, ImeState},
+        input::KeyboardFocus,
+        tabs::{TabPty, TabRegistry, output::TabPtyWrite},
+        wayland::{Capabilities, Global},
+    };
+    struct Session {
+        id: TabId,
+        queue: WriteQueue,
+    }
+    impl TabPty for Session {
+        fn tab(&self) -> TabId {
+            self.id
+        }
+    }
+    impl TabPtyWrite for Session {
+        fn enqueue_write(&mut self, bytes: &[u8]) -> Result<(), PtyWriteError> {
+            self.queue.enqueue(self.id, true, bytes).map(|_| ())
+        }
+    }
+    impl PasteSink for Session {
+        type Error = PtyWriteError;
+        fn tab(&self) -> TabId {
+            self.id
+        }
+        fn enqueue(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.enqueue_write(bytes)
+        }
+    }
+    let id = TabId(1);
+    let other = TabId(2);
+    let mut tabs = TabRegistry::with_scrollback(0).unwrap();
+    for tab in [id, other] {
+        tabs.insert(tab, 4, 16).unwrap();
+        tabs.attach_pty(Session {
+            id: tab,
+            queue: WriteQueue::default(),
+        })
+        .ok()
+        .unwrap();
+    }
+    let source = tabs.get_mut(id).unwrap().pty_mut().unwrap();
+    source.enqueue_write(b"key-before").unwrap();
+    source.queue.reserve_paste(id, true).unwrap();
+    // IME, later keys and replies all use this same FIFO behind the reserved paste.
+    let seat = SeatId(1);
+    let window = WindowId(1);
+    let mut focus = KeyboardFocus::default();
+    focus.enter(window, id);
+    let mut ime = ImeState::new(
+        seat,
+        &Capabilities::from_globals(&[Global {
+            name: 3,
+            interface: "zwp_text_input_manager_v3",
+            version: 1,
+        }]),
+    );
+    ime.enter(seat, window);
+    ime.sync_enabled(seat, &focus, true);
+    let epoch = ime.capture_focus(seat, window, &focus);
+    ime.stage(
+        &epoch,
+        &focus,
+        ImeEvent::Commit {
+            text: Some("繁體")
+        },
+    )
+    .unwrap();
+    let mut update = ime.done(&epoch, &focus, ime.commit_serial()).unwrap();
+    assert!(update.enqueue_commit(&ime, &focus, source).unwrap());
+    assert!(!update.enqueue_commit(&ime, &focus, source).unwrap());
+    source.enqueue_write(b"key-after").unwrap();
+    tabs.get_mut(id)
+        .unwrap()
+        .terminal_mut()
+        .feed(id, b"\x1b[5n")
+        .unwrap();
+    tabs.enqueue_terminal_replies(id).unwrap();
+    let source = tabs.get_mut(id).unwrap().pty_mut().unwrap();
+    let fill = vec![b'x'; MAX_PTY_PENDING_BYTES - source.queue.pending()];
+    source.enqueue_write(&fill).unwrap();
+    // Rejections are atomic: no prefix or implicit replay is inserted.
+    assert_eq!(
+        source.enqueue_write(b"reject-key").unwrap_err().reason,
+        PtyWriteFailure::QueueFull
+    );
+    ime.stage(
+        &epoch,
+        &focus,
+        ImeEvent::Commit {
+            text: Some("拒絕")
+        },
+    )
+    .unwrap();
+    let mut rejected = ime.done(&epoch, &focus, ime.commit_serial()).unwrap();
+    assert!(rejected.enqueue_commit(&ime, &focus, source).is_err());
+    drop(rejected); // Runtime visibly rejects the whole transaction instead of retrying it.
+    tabs.get_mut(id)
+        .unwrap()
+        .terminal_mut()
+        .feed(id, b"\x1b[5n")
+        .unwrap();
+    assert!(tabs.enqueue_terminal_replies(id).is_err());
+    assert!(
+        tabs.enqueue_terminal_replies(id).is_ok(),
+        "rejected replies are not replayed"
+    );
+    let source = tabs.get_mut(id).unwrap().pty_mut().unwrap();
+    let mut writer = FakeWriter::new([interrupted(), Step::Accept(2), blocked(), Step::Accept(99)]);
+    source.queue.flush(id, Some(&mut writer)).unwrap();
+    assert_eq!(
+        source.queue.flush(id, Some(&mut writer)).unwrap().status,
+        PtyWriteStatus::WouldBlock
+    );
+    source.queue.flush(id, Some(&mut writer)).unwrap();
+    assert!(
+        !source.queue.wants_write(),
+        "waiting paste is a non-writable barrier"
+    );
+    let mut paste = "\x1b[200~貼上\x1b[201~".as_bytes().to_vec();
+    source
+        .queue
+        .enqueue_paste(id, true, &mut paste, true)
+        .unwrap();
+    assert!(paste.is_empty());
+    let mut duplicate = b"no duplicate".to_vec();
+    assert!(
+        source
+            .queue
+            .enqueue_paste(id, true, &mut duplicate, false)
+            .is_err()
+    );
+    assert_eq!(duplicate, b"no duplicate");
+    // Another Tab keeps accepting and draining while the original writer is blocked.
+    tabs.activate(other);
+    let second = tabs.get_mut(other).unwrap().pty_mut().unwrap();
+    second.enqueue_write(b"other-tab").unwrap();
+    let mut second_writer = FakeWriter::new([Step::Accept(99)]);
+    second.queue.flush(other, Some(&mut second_writer)).unwrap();
+    assert_eq!(second_writer.output, b"other-tab");
+    let source = tabs.get_mut(id).unwrap().pty_mut().unwrap();
+    writer
+        .steps
+        .extend((0..source.queue.pending()).flat_map(|_| [blocked(), Step::Accept(7)]));
+    while source.queue.wants_write() {
+        source.queue.flush(id, Some(&mut writer)).unwrap();
+    }
+    assert_eq!(
+        writer.output,
+        [
+            b"key-before\x1b[200~".as_slice(),
+            "貼上".as_bytes(),
+            b"\x1b[201~",
+            "繁體".as_bytes(),
+            b"key-after\x1b[0n",
+            &fill
+        ]
+        .concat()
+    );
+    assert_eq!(source.queue.pending(), 0);
+    source.enqueue_write(b"retry-new-key").unwrap();
+    while source.queue.wants_write() {
+        source.queue.flush(id, Some(&mut writer)).unwrap();
+    }
+    assert!(writer.output.ends_with(b"retry-new-key"));
+    assert_eq!(second_writer.output, b"other-tab");
+}

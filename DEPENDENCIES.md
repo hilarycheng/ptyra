@@ -586,3 +586,31 @@ are deliberately deferred to TASK-185/TASK-190.
 The raw-font bound is not a malicious-font sandbox: local startup-selected fonts
 can expand outline curves inside ab_glyph before the pixel-bound check. No font
 upload/decoder integration or untrusted-font hardening is added by this task.
+
+## Runtime input backpressure — TASK-178
+
+- Keyboard, repeat, IME commits, mouse/focus reports and terminal replies use the
+  originating Tab's existing 64 KiB regular FIFO. One window-wide owned paste
+  retains its separate bounded segment and reservation barrier; later input never
+  interleaves with its bytes. No new queue, thread or resource allowance is added.
+- A full queue rejects an entire new input event, never a prefix. Keyboard/repeat
+  rejection cancels automatic repeat and shows fixed `Input rejected` metadata;
+  the user can retry after the child reads again. The native IME adapter consumes
+  a rejected commit once, applies the transaction's overlay and shows the same
+  notice, rather than replaying it after focus changes. That adapter remains in
+  the separately unaccepted TASK-129 working tree, not this task's commit.
+- Paste ownership/confirmation and queue-full retry remain on the original Tab.
+  Protocol, mouse and focus reports retain their explicit visible-rejection policy.
+  Accepted bytes survive short writes, EINTR and WouldBlock and resume through
+  writable readiness, bounded to 16 KiB / four syscall attempts per flush.
+- A blocked child leaves the other Tabs and Wayland dispatcher live. Input notices
+  contain no key, clipboard or PTY payload, and repeated rejection does not log
+  once per key while the same notice remains visible. General parser/PTY failure
+  isolation belongs to TASK-179, not this backpressure change.
+- `cargo test --workspace runtime_input_backpressure_preserves_order_without_global_exit`
+  covers mixed producers, atomic rejection, fake short writes/WouldBlock, paste
+  ordering and a second queue. `python3 -B tests/native_backpressure.py
+  target/debug/ptyra` additionally saturates a real non-reading child, verifies
+  a rendered notice and repeat cancellation, services another Tab and resize,
+  then compares every accepted byte after recovery. Its optional `--ime` mode
+  uses an owned input-method-v2 peer with the native text-input-v3 adapter.

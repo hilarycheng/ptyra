@@ -350,7 +350,7 @@ impl Runtime {
                     WEnum::Value(wl_keyboard::KeyState::Released) => false,
                     _ => return Ok(()),
                 };
-                if pressed {
+                if pressed && self.clipboard_notice != Some(super::notice::Notice::InputRejected) {
                     self.clear_clipboard_notice();
                 }
                 if let Some(trace) = &mut self.input_trace {
@@ -382,7 +382,7 @@ impl Runtime {
                     self.application_keypad(),
                     &self.clock,
                 )?;
-                self.enqueue_input(bytes)?;
+                self.enqueue_input(bytes);
                 if let Some(action) = self.input.action.take() {
                     self.dispatch_action(action, qh);
                 }

@@ -13,6 +13,7 @@ pub(super) enum Notice {
     TargetChanged,
     Busy,
     ReplyRejected,
+    InputRejected,
     MouseRejected,
     FocusRejected,
     HyperlinkFailed,
@@ -58,6 +59,7 @@ impl Notice {
             Self::HyperlinkFailed => "Link could not be opened: unavailable or busy.",
             Self::FocusRejected => "Focus report rejected: input unavailable.",
             Self::MouseRejected => "Mouse report rejected: input unavailable.",
+            Self::InputRejected => "Input rejected: terminal busy or unavailable. Try again.",
             Self::ReplyRejected => "Terminal reply rejected: queue limit.",
         }
     }
@@ -172,6 +174,7 @@ mod tests {
             Notice::NoSerial,
             Notice::TargetChanged,
             Notice::Busy,
+            Notice::InputRejected,
         ] {
             assert!(notice.message().is_ascii());
             let (rows, columns, height) = geometry((160, 80), (8, 16), notice).unwrap();
