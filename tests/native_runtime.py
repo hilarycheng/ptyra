@@ -245,6 +245,9 @@ def main():
                 keyboard.send(primary_pointer, 2, u32(0, 274, 0))
                 keyboard.send(primary_pointer, 4)
                 keyboard.sync()
+            if os.environ.get("PTYRA_TEST_FOCUS"):
+                from native_focus import check_focus
+                check_focus(root, keyboard, app, wait_until, ipc)
             if os.environ.get("PTYRA_TEST_MOUSE"):
                 from native_mouse import check_mouse
                 check_mouse(root, env, keyboard, app, wait_until, ipc, nodes, u32)

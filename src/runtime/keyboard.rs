@@ -17,6 +17,7 @@ use wayland_client::{
 #[derive(Default)]
 pub(super) struct KeyboardInput {
     pub focus: KeyboardFocus,
+    pub reports: super::focus_reports::FocusReports,
     pub map: Option<Keymap>,
     pub repeat: RepeatScheduler,
     pub bindings: crate::config::bindings::Bindings,
@@ -188,6 +189,7 @@ impl Runtime {
             self.input.clear_focus();
             self.running = false;
         }
+        self.sync_focus_reports();
         self.paint.dirty = true;
     }
     pub(super) fn activate_tab(&mut self, id: TabId) {
@@ -196,6 +198,7 @@ impl Runtime {
             self.cancel_pointer_drag();
             self.input.retarget(id);
             self.pointer_input.retarget(id);
+            self.sync_focus_reports();
             self.paint.dirty = true;
         }
     }
@@ -275,6 +278,7 @@ impl Runtime {
         self.cancel_pointer_drag();
         self.input.clear_focus();
         self.input.map = None;
+        self.sync_focus_reports();
         self.paint.dirty = true;
     }
     fn keyboard_event(&mut self, event: wl_keyboard::Event, qh: &QueueHandle<Self>) -> Result<()> {
@@ -300,13 +304,17 @@ impl Runtime {
                 if let Some(id) = self.tabs.active() {
                     self.input.focus.enter(WindowId(1), id);
                 }
+                self.sync_focus_reports();
             }
-            wl_keyboard::Event::Leave { .. } => {
+            wl_keyboard::Event::Leave { surface, .. }
+                if self.surface.as_ref() == Some(&surface) =>
+            {
                 self.cancel_paste();
                 self.clipboard.clear_external_offers();
                 self.primary.clear_external_offers();
                 self.cancel_pointer_drag();
                 self.input.clear_focus();
+                self.sync_focus_reports();
                 self.paint.dirty = true;
             }
             wl_keyboard::Event::Modifiers {

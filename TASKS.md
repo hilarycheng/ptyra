@@ -724,7 +724,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-027`, `TASK-140`, `TASK-141`, `TASK-157`, `TASK-160` | **Unit Test:** `runtime_mouse_reports_only_enabled_modes`
   - **Done:** 按 terminal 已啟用嘅 button/motion/SGR 等已支援 modes 編碼 click/release/wheel/cell coordinates；明確 selection override 同 Tab Bar/Primary ownership，避免同一事件既 paste 又 report；未支援模式唔宣稱可用。
 
-- [ ] **TASK-163 — 接通 terminal focus-in / focus-out reports**
+- [x] **TASK-163 — 接通 terminal focus-in / focus-out reports**
   - **Dependencies:** `TASK-027`, `TASK-133`, `TASK-160` | **Unit Test:** `runtime_focus_reports_follow_tab_focus`
   - **Done:** 只喺 application 啟用 focus-report mode 時對應來源 Tab 發送正確 focus transition；切 Tab、window leave、seat 移除無重複或 stale report；disabled mode 完全唔發送。
 

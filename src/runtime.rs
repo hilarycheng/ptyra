@@ -8,6 +8,7 @@ use crate::clipboard::SelectionKind;
 mod clipboard_offers;
 mod clipboard_receive;
 mod clipboard_send;
+mod focus_reports;
 mod keyboard;
 mod mouse;
 mod paste;
