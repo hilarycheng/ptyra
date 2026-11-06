@@ -28,6 +28,8 @@ const CORE_HISTORY_CACHE_LINES: usize = 1_000;
 /// Bounds OSC 52 encoded data before Base64 decoding; its header shares this budget.
 pub const MAX_OSC_BYTES: usize = 4096;
 pub const MAX_COMBINING_MARKS: usize = 64;
+/// Core responses awaiting one runtime dispatch, separate from the bounded PTY FIFO.
+pub const MAX_CORE_REPLY_BYTES: usize = 64 * 1024;
 
 pub(crate) fn cell_reservation(rows: u16, columns: u16, history: usize) -> Option<usize> {
     let screen = usize::from(rows) * usize::from(columns);
@@ -106,6 +108,7 @@ impl Terminal {
             tab,
             pending: Rc::new(RefCell::new([None, None])),
             title: Rc::new(RefCell::new(None)),
+            replies: Rc::new(RefCell::new(CoreReplies::default())),
         };
         Ok(Self {
             tab,
@@ -140,6 +143,15 @@ impl Terminal {
                 tab: self.tab,
                 bytes,
             })
+    }
+
+    /// Drain once; the adapter owns accepted bytes and must never replay a rejected batch.
+    pub(crate) fn take_core_replies(&mut self) -> (Vec<u8>, bool) {
+        let Some(core) = &mut self.core else {
+            return (Vec::new(), false);
+        };
+        let replies = std::mem::take(&mut *core.events.replies.borrow_mut());
+        (replies.bytes, replies.overflow)
     }
 
     /// Untrusted OSC title, bounded by MAX_OSC_BYTES. Tab::refresh_title sanitizes it before display.
@@ -311,16 +323,55 @@ fn terminal_config(scrollback_lines: usize) -> Config {
     }
 }
 
+/// Payload-bearing bounded FIFO, deliberately without Debug. Overflow rejects a complete
+/// response and all later responses in that batch; accepted prefixes remain ordered.
+#[derive(Default)]
+struct CoreReplies {
+    bytes: Vec<u8>,
+    overflow: bool,
+}
+impl CoreReplies {
+    fn push(&mut self, bytes: &[u8]) {
+        if self.overflow {
+            return;
+        }
+        if bytes.len() > MAX_CORE_REPLY_BYTES - self.bytes.len() {
+            self.overflow = true;
+            return;
+        }
+        let needed = self.bytes.len() + bytes.len();
+        if needed > self.bytes.capacity() {
+            let capacity = (self.bytes.capacity().max(256) * 2)
+                .min(MAX_CORE_REPLY_BYTES)
+                .max(needed);
+            if self
+                .bytes
+                .try_reserve_exact(capacity - self.bytes.len())
+                .is_err()
+            {
+                self.overflow = true;
+                return;
+            }
+        }
+        self.bytes.extend_from_slice(bytes);
+    }
+}
+
 #[derive(Clone)]
 struct ClipboardEvents {
     tab: TabId,
     pending: Rc<RefCell<[Option<Osc52Write>; 2]>>,
     title: Rc<RefCell<Option<String>>>,
+    replies: Rc<RefCell<CoreReplies>>,
 }
 
 impl EventListener for ClipboardEvents {
     fn send_event(&self, event: Event) {
         match event {
+            Event::PtyWrite(text) => {
+                self.replies.borrow_mut().push(text.as_bytes());
+                return;
+            }
             Event::Title(title) => {
                 *self.title.borrow_mut() = Some(title);
                 return;

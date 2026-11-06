@@ -1,4 +1,4 @@
-//! Fixed clipboard outcomes only. No caller-supplied diagnostic or payload is retained.
+//! Fixed recoverable outcomes only. No caller-supplied diagnostic or payload is retained.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Notice {
     Empty,
@@ -12,6 +12,7 @@ pub(super) enum Notice {
     NoSerial,
     TargetChanged,
     Busy,
+    ReplyRejected,
 }
 impl Notice {
     pub fn from_error(error: &str) -> Self {
@@ -51,6 +52,7 @@ impl Notice {
             Self::NoSerial => "Copy needs an input event.",
             Self::TargetChanged => "Paste target changed.",
             Self::Busy => "Clipboard transfer busy.",
+            Self::ReplyRejected => "Terminal reply rejected: queue limit.",
         }
     }
 }

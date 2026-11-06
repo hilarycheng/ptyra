@@ -628,3 +628,115 @@ fn runtime_partial_paste_cancel_never_crosses_tabs() {
     queue.flush(original, Some(&mut writer)).unwrap();
     assert_eq!(writer.output, b"tail");
 }
+
+#[test]
+fn runtime_terminal_replies_return_to_source_pty() {
+    use crate::tabs::{TabPty, TabRegistry, output::TabPtyWrite};
+    struct Session {
+        id: TabId,
+        queue: WriteQueue,
+    }
+    impl TabPty for Session {
+        fn tab(&self) -> TabId {
+            self.id
+        }
+    }
+    impl TabPtyWrite for Session {
+        fn enqueue_write(&mut self, bytes: &[u8]) -> Result<(), PtyWriteError> {
+            self.queue.enqueue(self.id, true, bytes).map(|_| ())
+        }
+    }
+    let mut tabs = TabRegistry::with_scrollback(0).unwrap();
+    for id in [TabId(1), TabId(2)] {
+        tabs.insert(id, 4, 16).unwrap();
+        tabs.attach_pty(Session {
+            id,
+            queue: WriteQueue::default(),
+        })
+        .ok()
+        .unwrap();
+    }
+    let id = TabId(2);
+    let source = tabs.get_mut(id).unwrap();
+    let queue = &mut source.pty_mut().unwrap().queue;
+    queue.enqueue(id, true, b"before").unwrap();
+    queue.reserve_paste(id, true).unwrap();
+    // Every possible split must preserve DA/DSR/CPR order; no query changes cells.
+    let query = b"\x1b[c\x1b[5n\x1b[3;7H\x1b[6n";
+    for split in 0..=query.len() {
+        let terminal = tabs.get_mut(id).unwrap().terminal_mut();
+        terminal.feed(id, &query[..split]).unwrap();
+        terminal.feed(id, &query[split..]).unwrap();
+        tabs.enqueue_terminal_replies(id).unwrap();
+        // A second drain must never duplicate bytes.
+        tabs.enqueue_terminal_replies(id).unwrap();
+    }
+    assert_eq!(tabs.active(), Some(TabId(1)));
+    assert_eq!(
+        tabs.get(TabId(1)).unwrap().pty().unwrap().queue.pending(),
+        0
+    );
+    let source = tabs.get_mut(id).unwrap();
+    assert!(
+        source
+            .terminal()
+            .snapshot()
+            .unwrap()
+            .content
+            .display_iter
+            .all(|c| c.c == ' ')
+    );
+    let queue = &mut source.pty_mut().unwrap().queue;
+    let reply = b"\x1b[?6c\x1b[0n\x1b[3;7R".repeat(query.len() + 1);
+    assert_eq!(queue.pending(), 6 + reply.len());
+    // Reserved paste blocks subsequent replies, then delivers one intact paste first.
+    let mut writer = FakeWriter::new([interrupted(), Step::Accept(2), blocked(), Step::Accept(99)]);
+    assert_eq!(
+        queue.flush(id, Some(&mut writer)).unwrap().status,
+        PtyWriteStatus::Written(2)
+    );
+    assert_eq!(
+        queue.flush(id, Some(&mut writer)).unwrap().status,
+        PtyWriteStatus::WouldBlock
+    );
+    queue.flush(id, Some(&mut writer)).unwrap();
+    assert!(!queue.wants_write());
+    let mut paste = b"\x1b[200~paste\x1b[201~".to_vec();
+    queue.enqueue_paste(id, true, &mut paste, true).unwrap();
+    queue.enqueue(id, true, b"after").unwrap();
+    writer
+        .steps
+        .extend(std::iter::repeat_with(|| Step::Accept(1)).take(queue.pending()));
+    while queue.wants_write() {
+        queue.flush(id, Some(&mut writer)).unwrap();
+    }
+    let expected = [
+        b"before\x1b[200~paste\x1b[201~".as_slice(),
+        &reply,
+        b"after",
+    ]
+    .concat();
+    assert_eq!(writer.output, expected);
+    // Full shared FIFO rejects an entire batch; previous bytes stay intact and aren't replayed.
+    queue
+        .enqueue(id, true, &vec![b'k'; MAX_PTY_PENDING_BYTES])
+        .unwrap();
+    tabs.get_mut(id)
+        .unwrap()
+        .terminal_mut()
+        .feed(id, b"\x1b[5n")
+        .unwrap();
+    assert!(tabs.enqueue_terminal_replies(id).is_err());
+    assert!(tabs.enqueue_terminal_replies(id).is_ok());
+    assert_eq!(
+        tabs.get(id).unwrap().pty().unwrap().queue.pending(),
+        MAX_PTY_PENDING_BYTES
+    );
+    // Closing a source discards its queue rather than targeting the active successor.
+    tabs.close(id);
+    assert!(tabs.enqueue_terminal_replies(id).is_err());
+    assert_eq!(
+        tabs.get(TabId(1)).unwrap().pty().unwrap().queue.pending(),
+        0
+    );
+}

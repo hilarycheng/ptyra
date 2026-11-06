@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（158 已勾選；TASK-129、TASK-160–199 共 41 項未勾選）。
+**Total:** 199 atomic TASKS（159 已勾選；TASK-129、TASK-161–199 共 40 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -712,7 +712,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## S. Terminal Protocol / Daily TUI Runtime
 
-- [ ] **TASK-160 — 將 terminal core replies 送回來源 PTY**
+- [x] **TASK-160 — 將 terminal core replies 送回來源 PTY**
   - **Dependencies:** `TASK-023`, `TASK-026`, `TASK-132` | **Unit Test:** `runtime_terminal_replies_return_to_source_pty`
   - **Done:** 接住目前忽略嘅 `Event::PtyWrite`，建立有界、按 Tab 排序嘅 reply queue；DA/DSR/CPR 等 core 回覆透過該 PTY write path 發送一次；處理 partial writes/overflow，唔經 active focus routing 或顯示成文字。
 

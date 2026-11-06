@@ -903,3 +903,29 @@ fn terminal_viewport_scroll_clamps_to_history() {
         ErrorKind::NotConnected
     );
 }
+
+#[test]
+fn core_reply_overflow_is_bounded_atomic_and_recovers() {
+    let mut term = terminal(7);
+    let queries = b"\x1b[5n".repeat(MAX_FEED_BYTES / 4);
+    for _ in 0..=MAX_CORE_REPLY_BYTES / MAX_FEED_BYTES {
+        feed(&mut term, &queries);
+    }
+    let (bytes, overflow) = term.take_core_replies();
+    assert!(overflow);
+    assert_eq!(bytes, b"\x1b[0n".repeat(MAX_CORE_REPLY_BYTES / 4));
+    assert_eq!(term.take_core_replies(), (Vec::new(), false));
+    feed(&mut term, b"\x1b[5n");
+    assert_eq!(term.take_core_replies(), (b"\x1b[0n".to_vec(), false));
+    assert!(term.grid().is_some());
+    let mut replies = CoreReplies::default();
+    replies.push(&vec![b'x'; MAX_CORE_REPLY_BYTES - 1]);
+    replies.push(b"reject-whole");
+    replies.push(b"z");
+    assert!(replies.overflow);
+    assert_eq!(replies.bytes, vec![b'x'; MAX_CORE_REPLY_BYTES - 1]);
+    assert_eq!(
+        term.grid().unwrap().cursor.point,
+        Point::new(Line(0), Column(0))
+    );
+}

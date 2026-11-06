@@ -19,6 +19,33 @@ impl TabPtyRead for PtySession {
     }
 }
 
+/// Every producer uses the session's existing bounded FIFO, including paste barriers.
+pub trait TabPtyWrite: TabPty {
+    fn enqueue_write(&mut self, bytes: &[u8]) -> Result<(), crate::pty::PtyWriteError>;
+}
+impl TabPtyWrite for PtySession {
+    fn enqueue_write(&mut self, bytes: &[u8]) -> Result<(), crate::pty::PtyWriteError> {
+        self.enqueue_write(bytes).map(|_| ())
+    }
+}
+impl<P: TabPtyWrite> TabRegistry<P> {
+    /// Source-bound, not focus-bound. Rejected replies are reported, never retried or rerouted.
+    pub fn enqueue_terminal_replies(&mut self, id: TabId) -> Result<(), AppError> {
+        let rejected = || AppError::new(Component::Pty, ErrorKind::WouldBlock);
+        let tab = self.get_mut(id).ok_or_else(rejected)?;
+        let (bytes, overflow) = tab.terminal.take_core_replies();
+        if !bytes.is_empty() {
+            let pty = tab
+                .pty
+                .as_mut()
+                .filter(|pty| pty.tab() == id)
+                .ok_or_else(rejected)?;
+            pty.enqueue_write(&bytes).map_err(|_| rejected())?;
+        }
+        if overflow { Err(rejected()) } else { Ok(()) }
+    }
+}
+
 impl<P: TabPtyRead> TabRegistry<P> {
     /// Service at most four ready sessions once each, then return to input dispatch.
     /// Keep readable sessions registered; Interrupted must be retried on a later tick.

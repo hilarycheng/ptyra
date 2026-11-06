@@ -541,6 +541,11 @@ impl Runtime {
         for (id, result) in results {
             match result.map_err(|_| "PTY read failed")?.status {
                 PtyReadStatus::Data(_) => {
+                    if self.tabs.enqueue_terminal_replies(id).is_err()
+                        && self.clipboard_notice != Some(notice::Notice::ReplyRejected)
+                    {
+                        self.show_clipboard_notice(notice::Notice::ReplyRejected);
+                    }
                     self.publish_osc52(id, qh);
                     self.paint.dirty |= self.tabs.active() == Some(id);
                 }
