@@ -181,7 +181,7 @@ def main():
             env["SHELL"] = str(wrapper)
             if os.environ.get("PTYRA_TEST_TRACE"):
                 env["PTYRA_TRACE_INPUT"] = "1"
-            if os.environ.get("PTYRA_TEST_POINTER"):
+            if os.environ.get("PTYRA_TEST_POINTER") or os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE"):
                 env["PTYRA_TRACE_POINTER"] = "1"
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
@@ -226,34 +226,84 @@ def main():
                 keyboard.sync()
                 print("PASS: one tap = 1 press + 1 release + 0 repeats + 1 queued byte + 1 written byte")
             if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE"):
-                def paste_fixture(payload, expected, mime="text/plain;charset=utf-8", capture=False, bracketed=True, tail=b""):
+                def paste_fixture(payload, expected, mime="text/plain;charset=utf-8", capture=False, bracketed=True, tail=b"", decision=None):
                     received = root / "paste-received"
+                    observed = root / "paste-observed"
+                    if observed.exists():
+                        observed.unlink()
                     if capture:
                         if received.exists():
                             received.unlink()
                         framed = b"\x1b[200~" + payload + b"\x1b[201~" if bracketed else payload
-                        wanted = framed + tail
+                        wanted = b"z" if decision in ("cancel", "focus") else framed + tail
                         mode = b"\x1b[?2004h" if bracketed else b"\x1b[?2004l"
                         script = root / "capture.py"
-                        script.write_text("import os, select, termios, tty, time\nfrom pathlib import Path\nold=termios.tcgetattr(0)\ntry:\n tty.setraw(0)\n os.write(1, " + repr(mode + b"\x1b]2;Paste fixture\x07") + ")\n time.sleep(0.3)\n data=bytearray()\n end=time.monotonic()+8\n while len(data)<" + str(len(wanted)) + ":\n  assert time.monotonic()<end\n  if select.select([0],[],[],0.1)[0]: data.extend(os.read(0," + str(len(wanted)) + "-len(data)))\nfinally:\n termios.tcsetattr(0,termios.TCSANOW,old)\n os.write(1,b'\\x1b[?2004l\\x1b]2;Terminal\\x07')\nPath(" + repr(str(received)) + ").write_bytes(data)\n")
+                        script.write_text("import os, select, termios, tty, time\nfrom pathlib import Path\nold=termios.tcgetattr(0)\ntry:\n tty.setraw(0)\n os.write(1, " + repr(mode + b"\x1b]2;Paste fixture\x07") + ")\n time.sleep(0.3)\n data=bytearray()\n end=time.monotonic()+8\n while len(data)<" + str(len(wanted)) + ":\n  assert time.monotonic()<end\n  if select.select([0],[],[],0.1)[0]: data.extend(os.read(0," + str(len(wanted)) + "-len(data))); Path(" + repr(str(observed)) + ").write_bytes(data)\nfinally:\n termios.tcsetattr(0,termios.TCSANOW,old)\n os.write(1,b'\\x1b[?2004l\\x1b]2;Terminal\\x07')\nPath(" + repr(str(received)) + ").write_bytes(data)\n")
                         keyboard.text(f"python3 {script}")
                         keyboard.tap(28)
                         keyboard.sync()
                         wait_until(lambda: any(n.get("app_id") == "ptyra" and n.get("name") == "Paste fixture" for n in nodes(json.loads(ipc("-t", "get_tree")))))
+                    drag_pointer = None
+                    if decision == "cancel":
+                        manager = keyboard.bind("zwlr_virtual_pointer_manager_v1")
+                        drag_pointer = keyboard.allocate()
+                        keyboard.send(manager, 0, u32(0, drag_pointer))
+                        keyboard.send(drag_pointer, 1, u32(0, 150, 80, 800, 600))
+                        keyboard.send(drag_pointer, 4)
+                        keyboard.sync()
+                        time.sleep(0.1)
+                        keyboard.send(drag_pointer, 2, u32(0, 272, 1))
+                        keyboard.send(drag_pointer, 1, u32(0, 180, 80, 800, 600))
+                        keyboard.send(drag_pointer, 4)
+                        keyboard.sync()
+                        time.sleep(0.1)
                     before = (root / "app.log").read_text().count(expected)
                     queued = (root / "app.log").read_text().count("Ptyra paste: queued")
+                    prompts = (root / "app.log").read_text().count("Ptyra paste: confirmation shown")
                     subprocess.run(["wl-copy", "--type", mime], input=payload, env=env, check=True, timeout=5)
                     time.sleep(0.1)
                     keyboard.modifiers(5)
                     keyboard.tap(47)
                     keyboard.modifiers(0)
-                    if capture and tail:
+                    if capture and tail and not decision:
                         keyboard.text(tail.decode())
                     else:
                         keyboard.sync()
                     wait_until(lambda: (root / "app.log").read_text().count(expected) > before)
+                    if decision:
+                        wait_until(lambda: (root / "app.log").read_text().count("Ptyra paste: confirmation shown") > prompts)
+                        time.sleep(0.4)
+                        assert not observed.exists(), "paste bytes reached PTY before confirmation"
+                        assert (root / "app.log").read_text().count("Ptyra paste: queued") == queued
+                        ppm = subprocess.check_output(["grim", "-t", "ppm", "-"], env=env)
+                        assert b"\xcc\0\0" * 12 in ppm[-800*60*3:], "native prompt background missing"
+                        if decision == "accept" and os.environ.get("PTYRA_TEST_PASTE_PROMPT_SCREENSHOT"):
+                            subprocess.run(["grim", os.environ["PTYRA_TEST_PASTE_PROMPT_SCREENSHOT"]], env=env, check=True)
+                        if drag_pointer:
+                            keyboard.send(drag_pointer, 2, u32(0, 272, 0))
+                            keyboard.send(drag_pointer, 4)
+                            keyboard.sync()
+                        keyboard.text("q")  # Modal text is consumed, not passed to the raw reader.
+                        if decision == "focus":
+                            ipc("workspace number 2")
+                            time.sleep(0.1)
+                            ipc("workspace number 1")
+                            time.sleep(0.1)
+                        else:
+                            keyboard.tap(28 if decision == "accept" else 1)
+                            keyboard.sync()
+                        if drag_pointer:
+                            selected = (root / "app.log").read_text().count("Ptyra selection: updated")
+                            keyboard.send(drag_pointer, 1, u32(0, 250, 80, 800, 600))
+                            keyboard.send(drag_pointer, 4)
+                            keyboard.sync()
+                            time.sleep(0.15)
+                            assert (root / "app.log").read_text().count("Ptyra selection: updated") == selected, "dismissed prompt left a phantom selection drag"
+                        if decision in ("cancel", "focus"):
+                            keyboard.text("z")
                     if capture:
-                        wait_until(lambda: (root / "app.log").read_text().count("Ptyra paste: queued") > queued)
+                        if decision not in ("cancel", "focus"):
+                            wait_until(lambda: (root / "app.log").read_text().count("Ptyra paste: queued") > queued)
                         wait_until(received.exists)
                         assert received.read_bytes() == wanted, "native paste bytes differ"
                         time.sleep(0.1)
@@ -264,6 +314,9 @@ def main():
                 paste_fixture(b"\xff", "Ptyra paste: clipboard receive is not UTF-8")
                 paste_fixture(b"nontext", "Ptyra paste: clipboard has no text offer", "application/octet-stream")
                 paste_fixture(b"recovered", "Ptyra paste: received 9 bytes", "text/plain", capture=True, bracketed=False)
+                for decision in ("accept", "cancel", "focus"):
+                    paste_fixture(b"unsafe\ntext", "Ptyra paste: received 11 bytes", capture=True, bracketed=False, decision=decision)
+                print("PASS: multiline native prompt, zero bytes before decision, accept/Escape/focus cancellation")
                 assert "繁體" not in (root / "app.log").read_text()
                 print("PASS: native receive cap/UTF-8 recovery and exact raw PTY paste, framing, backpressure and later-key order")
             if os.environ.get("PTYRA_TEST_COPY_OWNER"):

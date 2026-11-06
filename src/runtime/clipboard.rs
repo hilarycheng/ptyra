@@ -219,7 +219,8 @@ impl Runtime {
         self.paste = Some(paste);
         Ok(())
     }
-    fn cancel_waiting_paste(&mut self) {
+    pub(super) fn cancel_waiting_paste(&mut self) {
+        self.paint.dirty |= self.presented_paste.take().is_some();
         if let Some(paste) = self.paste.take()
             && let Some(pty) = self
                 .tabs
@@ -253,6 +254,17 @@ impl Runtime {
                             .terminal();
                         paste.complete(&self.input.focus, terminal, text)
                     });
+                if self
+                    .paste
+                    .as_ref()
+                    .and_then(|paste| paste.prompt_token(&self.input.focus))
+                    .is_some()
+                {
+                    self.input.repeat.cancel();
+                    self.cancel_pointer_drag();
+                    self.paint.dirty = true;
+                    eprintln!("Ptyra paste: confirmation required");
+                }
                 if let Err(error) = result {
                     eprintln!("Ptyra paste: {error}");
                     self.cancel_waiting_paste();

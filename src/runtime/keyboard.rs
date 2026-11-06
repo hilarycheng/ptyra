@@ -320,6 +320,9 @@ impl Runtime {
                         crate::clipboard::InputSerialEvent::KeyPress,
                     );
                 }
+                if self.paste_prompt_key(key, pressed)? {
+                    return Ok(());
+                }
                 let bytes = self
                     .input
                     .key(key, pressed, self.application_cursor(), &self.clock)?;

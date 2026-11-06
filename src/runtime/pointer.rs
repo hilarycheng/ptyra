@@ -156,6 +156,14 @@ impl Runtime {
             self.activate_tab(id);
             return;
         }
+        if self
+            .paste
+            .as_ref()
+            .and_then(|paste| paste.prompt_token(&self.input.focus))
+            .is_some()
+        {
+            return;
+        }
         let (origin, size) = self.content_geometry();
         let selection_changed = self.selection_input.route(
             &mut self.tabs,

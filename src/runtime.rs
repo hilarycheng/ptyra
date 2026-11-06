@@ -139,6 +139,7 @@ struct Runtime {
     selection_input: selection::SelectionInput,
     clipboard: clipboard::Clipboard,
     paste: Option<paste::Paste>,
+    presented_paste: Option<std::sync::Arc<()>>,
     trace_pointer: bool,
     input: keyboard::KeyboardInput,
     clock: crate::clock::MonotonicClock,
@@ -179,6 +180,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         selection_input: selection::SelectionInput::default(),
         clipboard: clipboard::Clipboard::new(config.clipboard_bytes),
         paste: None,
+        presented_paste: None,
         trace_pointer: std::env::var_os("PTYRA_TRACE_POINTER").as_deref()
             == Some(std::ffi::OsStr::new("1")),
         input: keyboard::KeyboardInput {
@@ -600,6 +602,17 @@ impl Runtime {
             self.paint.size,
             &mut self.pixels[..content_offset],
         )?;
+        let prompt = self
+            .paste
+            .as_ref()
+            .and_then(|paste| paste.prompt_token(&self.input.focus));
+        let presented = if prompt.is_some()
+            && paste::draw_prompt(&mut self.raster, self.paint.size, &mut self.pixels)?
+        {
+            prompt
+        } else {
+            None
+        };
         let slot = self.slots[index].as_mut().ok_or("frame slot unavailable")?;
         slot.file
             .write_all_at(&self.pixels, 0)
@@ -612,6 +625,15 @@ impl Runtime {
         slot.busy = true;
         self.paint.submitted();
         self.presented_bar = Some(layout);
+        if let Some(token) = &presented
+            && self
+                .presented_paste
+                .as_ref()
+                .is_none_or(|old| !std::sync::Arc::ptr_eq(old, token))
+        {
+            eprintln!("Ptyra paste: confirmation shown");
+        }
+        self.presented_paste = presented;
         Ok(())
     }
     fn fail(&mut self, error: &'static str) {

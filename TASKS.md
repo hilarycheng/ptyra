@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（149 已勾選；TASK-129、TASK-151–199 共 50 項未勾選）。
+**Total:** 199 atomic TASKS（150 已勾選；TASK-129、TASK-152–199 共 49 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -672,7 +672,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-057`, `TASK-058`, `TASK-059`, `TASK-061`, `TASK-130`, `TASK-131`, `TASK-149` | **Unit Test:** `runtime_paste_preserves_payload_and_target`
   - **Done:** Paste 開始時捕捉 TabId/focus token，完成後只向原有效 target enqueue；不 trim/normalize/補 newline；按該 terminal mode 加一次 bracketed framing，queue backpressure 唔遺失、重複或重排 payload。
 
-- [ ] **TASK-151 — 非 bracketed 多行 Paste 顯示安全確認 UI**
+- [x] **TASK-151 — 非 bracketed 多行 Paste 顯示安全確認 UI**
   - **Dependencies:** `TASK-062`, `TASK-150` | **Unit Test:** `runtime_multiline_paste_waits_for_user_decision`
   - **Done:** 無 bracketed mode 嘅多行 payload 先保留，任何 bytes 都唔送 Shell；native prompt 只顯示必要 metadata，明確接受先繼續；取消/Escape/focus 或 target 失效即丟棄，舊決定唔批准新 paste；唔承諾 bracketed paste 係 sandbox。
 
