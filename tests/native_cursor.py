@@ -52,7 +52,7 @@ finally:
         return b''.join(data[((y + row) * width + x) * 3:((y + row) * width + x + columns * 12) * 3] for row in range(rows * 20))
     bg = bytes.fromhex('181818')
     empty = bg * 240
-    block = bytes.fromhex('e7e7e7') * 240
+    block = bytes.fromhex('eeeeec') * 240
     ink = bytes.fromhex('eeeeec')
     underline = bg * (12 * 19) + ink * 12
     beam = (ink + bg * 11) * 20

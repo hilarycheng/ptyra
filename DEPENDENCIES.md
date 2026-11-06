@@ -483,5 +483,14 @@ bright_blue = "#729fcf"
 No alpha, shorthand, numeric coercion, unknown names, or silent clamping.
 Programmatically supplied RGB integers must also fit 24 bits. Config diagnostics
 retain field/reason metadata only; parsing does not rewrite the source file.
-This task defines the schema/validation; native raster and color-query application
-is TASK-173. No dependency, unsafe, native library, or global setting change.
+TASK-173 applies these defaults to native raster and color queries. No dependency,
+unsafe, native library, or global setting change.
+
+
+## Runtime palette — TASK-173
+
+- The immutable parsed palette is shared by the window raster and defaults for every new Tab's color replies. Per-Tab OSC overrides take precedence over these defaults. Indexed 0–15 uses configured ANSI values; 16–231 retains the xterm cube and 232–255 the grayscale ramp; direct RGB is unchanged. DIM/inverse/underline resolve through the same function.
+- OSC 4/10/11/12 changes and queries agree with pixels, including multiple pairs within one OSC 4 dispatch. OSC 104 (one entry or all indexed entries) and 110/111/112 reveal configured defaults again. RIS retains upstream color overrides; reset them explicitly with the OSC reset sequences. Overrides never modify the configuration or another Tab's palette.
+- All cursor shapes use the resolved cursor color. A focused block now fills with cursor color and draws its glyph/decorations in resolved default-background ink; wide glyph blocks cover both columns. This deliberately replaces the old RGB inversion (the default empty block changes from `#e7e7e7` to `#eeeeec`). Blink-off restores underlying pixels, and unfocused outlines retain cursor color. User-chosen equal colors can still be indistinguishable.
+- The tab strip, paste warning, and clipboard notices use configured ANSI values but never inherit untrusted child OSC overrides. Selection continues to invert composed RGB, preserving its existing contrast policy rather than introducing another configurable color. No theme reload or extra palette schema is added.
+- Deterministic fixtures cover all 16 ANSI slots, cube/grayscale/direct RGB, text, overrides/reset and per-Tab defaults, cursor shapes/wide glyphs, and UI overlays. `PTYRA_TEST_PALETTE=1` verifies custom pixels and replies through owned headless Sway and private Fontconfig. Native desktop/Fcitx5/AMD/Mesa acceptance remains deferred; no performance comparison is claimed.

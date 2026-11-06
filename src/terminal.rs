@@ -123,6 +123,7 @@ impl Terminal {
                 events,
                 scrollback_lines,
                 cell_pixels: None,
+                palette: crate::config::palette::Palette::default(),
                 keyboard: crate::kitty::protocol::KeyboardProtocol::default(),
             }),
         })
@@ -201,6 +202,13 @@ impl Terminal {
         };
         let replies = std::mem::take(&mut *core.events.replies.borrow_mut());
         (replies.bytes, replies.overflow)
+    }
+
+    /// Immutable application defaults stay separate from resettable per-Tab OSC overrides.
+    pub(crate) fn set_palette(&mut self, palette: crate::config::palette::Palette) {
+        if let Some(core) = &mut self.core {
+            core.palette = palette;
+        }
     }
 
     /// Runtime supplies actual raster cell pixels; absent/invalid metrics cannot fabricate a reply.
@@ -480,6 +488,7 @@ struct Core {
     scrollback_lines: usize,
     keyboard: crate::kitty::protocol::KeyboardProtocol,
     cell_pixels: Option<(u16, u16)>,
+    palette: crate::config::palette::Palette,
 }
 
 impl Core {
@@ -508,6 +517,7 @@ impl Core {
                         term: &mut self.term,
                         events: &self.events,
                         cell_pixels: self.cell_pixels,
+                        palette: &self.palette,
                     },
                     std::slice::from_ref(byte),
                 );

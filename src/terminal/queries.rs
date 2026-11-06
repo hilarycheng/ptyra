@@ -25,6 +25,7 @@ fn answer_queries(
     term: &Term<ClipboardEvents>,
     events: &ClipboardEvents,
     cell_pixels: Option<(u16, u16)>,
+    palette: &crate::config::palette::Palette,
 ) {
     let mut replies = events.replies.borrow_mut();
     for event in events.queries.borrow_mut().drain(..) {
@@ -33,7 +34,8 @@ fn answer_queries(
         }
         let reply = match event {
             Event::ColorRequest(index, formatter) => {
-                crate::renderer::palette::query(index, term.colors()).map(|rgb| formatter(rgb))
+                crate::renderer::palette::query(index, term.colors(), palette)
+                    .map(|rgb| formatter(rgb))
             }
             Event::TextAreaSizeRequest(formatter) => {
                 query_size(term, cell_pixels).map(|size| formatter(size))
@@ -47,7 +49,7 @@ fn answer_queries(
 }
 impl Core {
     pub(super) fn answer_queries(&self) {
-        answer_queries(&self.term, &self.events, self.cell_pixels);
+        answer_queries(&self.term, &self.events, self.cell_pixels, &self.palette);
     }
 }
 
@@ -58,6 +60,7 @@ pub(super) struct PaletteDispatch<'a> {
     pub term: &'a mut Term<ClipboardEvents>,
     pub events: &'a ClipboardEvents,
     pub cell_pixels: Option<(u16, u16)>,
+    pub palette: &'a crate::config::palette::Palette,
 }
 impl Handler for PaletteDispatch<'_> {
     fn set_color(&mut self, index: usize, rgb: Rgb) {
@@ -65,7 +68,7 @@ impl Handler for PaletteDispatch<'_> {
     }
     fn dynamic_color_sequence(&mut self, prefix: String, index: usize, terminator: &str) {
         self.term.dynamic_color_sequence(prefix, index, terminator);
-        answer_queries(self.term, self.events, self.cell_pixels);
+        answer_queries(self.term, self.events, self.cell_pixels, self.palette);
     }
     // VTE executes SUB after dispatching an OSC ended by that control character.
     fn substitute(&mut self) {

@@ -94,7 +94,7 @@ pub(super) fn draw(
             .ok_or("invalid notice buffer")?
             .chunks_exact_mut(4)
         {
-            pixel.copy_from_slice(&0xffc4a000u32.to_ne_bytes());
+            pixel.copy_from_slice(&(0xff000000 | raster.palette.ansi[3]).to_ne_bytes());
         }
         return Ok(());
     };

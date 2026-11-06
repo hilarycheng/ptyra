@@ -766,7 +766,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-094`, `TASK-098` | **Unit Test:** `config_palette_validates_and_defaults`
   - **Done:** 提供 scope 內 basic foreground/background/cursor/ANSI colors，缺省維持有效 palette；無效格式/範圍明確報錯，唔自動改設定檔；測部分 override 同 malformed input。
 
-- [ ] **TASK-173 — Runtime 套用設定 palette 同 core color overrides**
+- [x] **TASK-173 — Runtime 套用設定 palette 同 core color overrides**
   - **Dependencies:** `TASK-161`, `TASK-172`, `TASK-126` | **Unit Test:** `runtime_palette_changes_pixels_and_query_replies`
   - **Done:** raster、cursor/overlay 同 color query 共用已解析 palette；設定、SGR index、OSC color/reset precedence 有一致結果；唔只 parse 但仍使用硬編碼 colors。
 

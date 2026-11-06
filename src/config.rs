@@ -73,6 +73,7 @@ impl Config {
         &self,
     ) -> Result<crate::tabs::TabRegistry<P>, crate::error::AppError> {
         let mut tabs = crate::tabs::TabRegistry::with_scrollback(self.scrollback_lines)?;
+        tabs.palette = self.colors;
         tabs.set_osc52_write_enabled(self.osc52_write);
         Ok(tabs)
     }
@@ -184,11 +185,11 @@ mod tests {
         for source in [None, Some(""), Some("[colors]"), Some("[colors.ansi]")] {
             assert_eq!(Config::from_toml(source).unwrap().colors, default);
         }
-        // Until TASK-173 consumes the parsed palette, defaults must match the native palette.
+        // Default fallback values are the same for cells and terminal replies.
         let overrides = Colors::default();
         for (index, expected) in default.ansi.into_iter().enumerate() {
             assert_eq!(
-                crate::renderer::palette::color(Color::Indexed(index as u8), &overrides),
+                crate::renderer::palette::color(Color::Indexed(index as u8), &overrides, &default),
                 expected
             );
         }
@@ -198,7 +199,7 @@ mod tests {
             (NamedColor::Cursor, default.cursor),
         ] {
             assert_eq!(
-                crate::renderer::palette::color(Color::Named(name), &overrides),
+                crate::renderer::palette::color(Color::Named(name), &overrides, &default),
                 expected
             );
         }

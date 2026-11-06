@@ -188,9 +188,12 @@ def main():
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE") or os.environ.get("PTYRA_TEST_PRIMARY") or os.environ.get("PTYRA_TEST_NO_PRIMARY"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
             (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else ("clipboard_bytes=16\n" if os.environ.get("PTYRA_TEST_OSC52") or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "")) + ("osc52_write=true\n" if os.environ.get("PTYRA_TEST_OSC52") == "enabled" or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n" + ("scroll_top='Alt+Home'\n" if os.environ.get("PTYRA_TEST_SCROLL") else ""))
-            if os.environ.get("PTYRA_TEST_FONTS") or os.environ.get("PTYRA_TEST_STYLES") or os.environ.get("PTYRA_TEST_CURSOR"):
+            if os.environ.get("PTYRA_TEST_FONTS") or os.environ.get("PTYRA_TEST_STYLES") or os.environ.get("PTYRA_TEST_CURSOR") or os.environ.get("PTYRA_TEST_PALETTE"):
                 from native_fonts import configure_fonts
                 configure_fonts(root, env)
+            if os.environ.get("PTYRA_TEST_PALETTE"):
+                from native_palette import configure_palette
+                configure_palette(root)
             if os.environ.get("PTYRA_TEST_HYPERLINK"):
                 from native_hyperlink import prepare_opener
                 prepare_opener(root, env)
@@ -251,6 +254,9 @@ def main():
                 keyboard.send(primary_pointer, 2, u32(0, 274, 0))
                 keyboard.send(primary_pointer, 4)
                 keyboard.sync()
+            if os.environ.get("PTYRA_TEST_PALETTE"):
+                from native_palette import check_palette
+                check_palette(root, env, keyboard, app, wait_until, ipc, nodes)
             if os.environ.get("PTYRA_TEST_FONTS"):
                 from native_fonts import check_fonts
                 check_fonts(root, env, keyboard, app, wait_until, ipc, nodes)
@@ -888,7 +894,8 @@ finally:
             keyboard.tap(28)
             keyboard.sync()
             # Verify PTY output reached actual compositor pixels, even after hiding the window.
-            wait_until(lambda: b"\xcc\0\0" * 12 in subprocess.check_output(["grim", "-t", "ppm", "-"], env=env))
+            red = bytes.fromhex("654321" if os.environ.get("PTYRA_TEST_PALETTE") else "cc0000")
+            wait_until(lambda: red * 12 in subprocess.check_output(["grim", "-t", "ppm", "-"], env=env))
             if screenshot:
                 subprocess.run(["grim", str(screenshot)], env=env, check=True)
             remaining = Path(f"/proc/{app.pid}/task/{app.pid}/children")

@@ -1,6 +1,6 @@
 use super::Result;
 use crate::{
-    config::Config,
+    config::{Config, palette::Palette},
     font::cache::{GlyphCache, GlyphKey},
     renderer::palette::color,
     terminal::Terminal,
@@ -23,6 +23,7 @@ pub(super) struct Raster {
     baseline: f32,
     size: f32,
     cache: GlyphCache,
+    pub(super) palette: Palette,
 }
 impl Raster {
     pub fn load(config: &Config) -> Result<Self> {
@@ -45,6 +46,7 @@ impl Raster {
         }
         Ok(Self {
             fonts,
+            palette: config.colors,
             cell_width,
             cell_height,
             logical_cell: (cell_width, cell_height),
@@ -249,6 +251,8 @@ impl Raster {
         let damage_rows = rows;
         let snapshot = terminal.snapshot().ok_or("terminal unavailable")?;
         let colors = snapshot.content.colors;
+        let cursor = snapshot.content.cursor;
+        let block_cursor = cursor_visible && focused && cursor.shape == CursorShape::Block;
         let display_offset = snapshot.content.display_offset;
         let rows = snapshot.rows;
         let cell_height = self.cell_height;
@@ -260,6 +264,7 @@ impl Raster {
         let default_bg = color(
             Color::Named(alacritty_terminal::vte::ansi::NamedColor::Background),
             colors,
+            &self.palette,
         );
         let stride = width as usize * 4;
         for pixel in pixels[damage_rows.start as usize * stride..damage_rows.end as usize * stride]
@@ -267,6 +272,7 @@ impl Raster {
         {
             pixel.copy_from_slice(&(0xff000000 | default_bg).to_ne_bytes());
         }
+        let mut block_rect = None;
         // Paint backgrounds first so wide cells never erase the preceding glyph.
         for cell in snapshot.content.display_iter {
             let x = cell.point.column.0 as u32 * self.cell_width;
@@ -274,11 +280,31 @@ impl Raster {
                 continue;
             };
             let bg = if cell.cell.flags.contains(Flags::INVERSE) {
-                foreground(cell.cell.fg, cell.cell.flags, colors)
+                foreground(cell.cell.fg, cell.cell.flags, colors, &self.palette)
             } else {
-                color(cell.cell.bg, colors)
+                color(cell.cell.bg, colors, &self.palette)
             };
             fill(pixels, size, (x, y, self.cell_width, self.cell_height), bg);
+            if block_cursor && cell.point == cursor.point {
+                let span = if cell.cell.flags.contains(Flags::WIDE_CHAR) {
+                    2
+                } else {
+                    1
+                };
+                block_rect = Some((x, y, span * self.cell_width, self.cell_height));
+            }
+        }
+        if let Some(rect) = block_rect {
+            fill(
+                pixels,
+                size,
+                rect,
+                color(
+                    Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),
+                    colors,
+                    &self.palette,
+                ),
+            );
         }
         for cell in terminal
             .snapshot()
@@ -296,10 +322,13 @@ impl Raster {
             let Some(y) = viewport_y(cell.point.line.0) else {
                 continue;
             };
-            let fg = if flags.contains(Flags::INVERSE) {
-                color(cell.cell.bg, colors)
+            let cursor_cell = block_cursor && cell.point == cursor.point;
+            let fg = if cursor_cell {
+                default_bg
+            } else if flags.contains(Flags::INVERSE) {
+                color(cell.cell.bg, colors, &self.palette)
             } else {
-                foreground(cell.cell.fg, flags, colors)
+                foreground(cell.cell.fg, flags, colors, &self.palette)
             };
             let span = if flags.contains(Flags::WIDE_CHAR) {
                 2
@@ -317,10 +346,14 @@ impl Raster {
                 (x, y, span * self.cell_width, self.cell_height),
                 flags,
                 self.scale,
-                cell.cell
-                    .underline_color()
-                    .map(|value| color(value, colors))
-                    .unwrap_or(fg),
+                if cursor_cell {
+                    fg
+                } else {
+                    cell.cell
+                        .underline_color()
+                        .map(|value| color(value, colors, &self.palette))
+                        .unwrap_or(fg)
+                },
             );
             if flags.contains(Flags::STRIKEOUT) {
                 fill(
@@ -342,6 +375,7 @@ impl Raster {
             .content
             .cursor;
         if cursor_visible
+            && !block_cursor
             && cursor.shape != CursorShape::Hidden
             && let Some(y) = viewport_y(cursor.point.line.0)
         {
@@ -355,6 +389,7 @@ impl Raster {
                 color(
                     Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),
                     colors,
+                    &self.palette,
                 ),
             );
         }
@@ -362,8 +397,8 @@ impl Raster {
     }
 }
 // DIM affects the source foreground before inverse swaps foreground/background.
-fn foreground(value: Color, flags: Flags, colors: &Colors) -> u32 {
-    let value = color(value, colors);
+fn foreground(value: Color, flags: Flags, colors: &Colors, palette: &Palette) -> u32 {
+    let value = color(value, colors, palette);
     if flags.contains(Flags::DIM) {
         (value & 0xfefefe) >> 1
     } else {
@@ -434,14 +469,7 @@ fn paint_cursor(
             fill(pixels, size, rect, cursor_color);
         }
     } else if shape == CursorShape::Block {
-        for row in y..y.saturating_add(h).min(size.1) {
-            for col in x..x.saturating_add(w).min(size.0) {
-                let offset = (row * size.0 + col) as usize * 4;
-                let pixel =
-                    u32::from_ne_bytes(pixels[offset..offset + 4].try_into().unwrap()) ^ 0x00ffffff;
-                pixels[offset..offset + 4].copy_from_slice(&pixel.to_ne_bytes());
-            }
-        }
+        fill(pixels, size, rect, cursor_color);
     } else if shape == CursorShape::Beam {
         fill(pixels, size, (x, y, 1, h), cursor_color);
     } else if shape == CursorShape::Underline {
@@ -462,7 +490,7 @@ fn fill(pixels: &mut [u8], size: (u32, u32), rect: (u32, u32, u32, u32), color: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::renderer::palette::CURSOR;
+    const CURSOR: u32 = 0xeeeeec;
     #[test]
     fn runtime_partial_damage_preserves_other_pixels() {
         let font = FontVec::try_from_vec(
@@ -1346,3 +1374,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod palette_tests;

@@ -101,6 +101,7 @@ pub struct TabRegistry<P> {
     active: Option<TabId>,
     render_target: Option<TabId>,
     scrollback_lines: usize,
+    pub(crate) palette: crate::config::palette::Palette,
     osc52_write: bool,
     output_cursor: usize,
 }
@@ -113,6 +114,7 @@ impl<P> Default for TabRegistry<P> {
             active: None,
             render_target: None,
             scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
+            palette: crate::config::palette::Palette::default(),
             osc52_write: false,
             output_cursor: 0,
         }
@@ -193,6 +195,7 @@ impl<P: TabPty> TabRegistry<P> {
             .map_err(|_| AppError::new(Component::Terminal, ErrorKind::OutOfMemory))?;
         let mut terminal = Terminal::with_scrollback(id, rows, columns, self.scrollback_lines)
             .map_err(|error| error.error)?;
+        terminal.set_palette(self.palette);
         terminal
             .set_osc52_write_enabled(self.osc52_write)
             .map_err(|error| error.error)?;
