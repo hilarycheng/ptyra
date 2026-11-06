@@ -34,6 +34,7 @@ pub(super) struct PointerInput {
     pub serials: SeatSerialState,
     enter_serial: Option<u32>,
     drag: Option<TabId>,
+    mouse: super::mouse::MouseInput,
 }
 impl PointerInput {
     fn route(&self, kind: Kind) -> Option<Routed> {
@@ -78,6 +79,7 @@ impl PointerInput {
             serial,
         })
     }
+    // Viewport scrolling cancels selection, but keeps ownership until each button releases.
     pub fn cancel_drag(&mut self) {
         self.drag = None;
         self.serials.clear();
@@ -86,6 +88,7 @@ impl PointerInput {
         }
     }
     pub fn retarget(&mut self, tab: TabId) {
+        self.mouse.reset();
         self.cancel_drag();
         if let Some((seat, target)) = &mut self.target {
             target.tab = tab;
@@ -93,6 +96,7 @@ impl PointerInput {
         }
     }
     pub fn clear(&mut self) {
+        self.mouse.reset();
         self.focus.clear();
         self.target = None;
         self.enter_serial = None;
@@ -101,6 +105,7 @@ impl PointerInput {
 }
 impl Runtime {
     pub(super) fn cancel_pointer_drag(&mut self) {
+        self.pointer_input.mouse.reset();
         self.clear_clipboard_notice();
         self.wheel.reset();
         self.clipboard.binding.focus(None);
@@ -180,6 +185,36 @@ impl Runtime {
             return;
         }
         let (origin, size) = self.content_geometry();
+        let geometry = super::selection::Geometry {
+            origin,
+            size,
+            cell: (self.raster.cell_width, self.raster.cell_height),
+        };
+        let modifiers = self
+            .input
+            .map
+            .as_ref()
+            .map(|map| map.modifiers())
+            .unwrap_or_default();
+        match self.pointer_input.mouse.route(
+            &mut self.tabs,
+            &event,
+            geometry,
+            modifiers,
+            self.input.focus.target(),
+        ) {
+            Ok(false) => {}
+            result => {
+                self.wheel.reset();
+                self.paint.dirty |= self.selection_input.cancel(&mut self.tabs);
+                if result.is_err()
+                    && self.clipboard_notice != Some(super::notice::Notice::MouseRejected)
+                {
+                    self.show_clipboard_notice(super::notice::Notice::MouseRejected);
+                }
+                return;
+            }
+        }
         if let Kind::Axis { axis, value } = event.kind {
             if event.position.x() >= 0.
                 && event.position.x() < f64::from(size.0)
@@ -189,7 +224,12 @@ impl Runtime {
                     .tabs
                     .get(event.target.tab)
                     .and_then(|tab| tab.terminal().mode())
-                && let Some(scroll) = self.wheel.input(event.target.tab, *mode, axis, value)
+                && let Some(scroll) = self.wheel.input(
+                    event.target.tab,
+                    *mode & !alacritty_terminal::term::TermMode::MOUSE_MODE,
+                    axis,
+                    value,
+                )
             {
                 self.scroll_active(scroll);
             }
@@ -214,16 +254,9 @@ impl Runtime {
             }
             return;
         }
-        let selection_changed = self.selection_input.route(
-            &mut self.tabs,
-            &event,
-            super::selection::Geometry {
-                origin,
-                size,
-                cell: (self.raster.cell_width, self.raster.cell_height),
-            },
-            &self.clock,
-        );
+        let selection_changed =
+            self.selection_input
+                .route(&mut self.tabs, &event, geometry, &self.clock);
         if self.selection_input.take_publication()
             && self.primary.manager.is_some()
             && let Err(error) = self.publish_primary(qh)
@@ -341,6 +374,104 @@ impl Dispatch<wl_pointer::WlPointer, ()> for Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn viewport_scroll_preserves_mouse_press_ownership() {
+        use crate::{
+            keymap::Modifiers,
+            tabs::{TabPty, TabRegistry, output::TabPtyWrite},
+        };
+        #[derive(Default)]
+        struct Sink(Vec<u8>);
+        impl TabPty for Sink {
+            fn tab(&self) -> TabId {
+                TabId(1)
+            }
+        }
+        impl TabPtyWrite for Sink {
+            fn enqueue_write(&mut self, bytes: &[u8]) -> Result<(), crate::pty::PtyWriteError> {
+                self.0.extend_from_slice(bytes);
+                Ok(())
+            }
+        }
+        let mut tabs = TabRegistry::with_scrollback(20).unwrap();
+        tabs.insert(TabId(1), 4, 20).unwrap();
+        tabs.attach_pty(Sink::default()).ok().unwrap();
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(
+                TabId(1),
+                b"line\r\nline\r\nline\r\nline\r\nline\r\n\x1b[?1003h\x1b[?1006h",
+            )
+            .unwrap();
+        let mut pointer = PointerInput::default();
+        let target = FocusTarget {
+            window: WindowId(1),
+            tab: TabId(1),
+        };
+        let geometry = super::super::selection::Geometry {
+            origin: 20,
+            size: (200, 80),
+            cell: (10, 20),
+        };
+        let route = |pointer: &mut PointerInput, tabs: &mut TabRegistry<Sink>, kind, modifiers| {
+            pointer
+                .mouse
+                .route(
+                    tabs,
+                    &Routed {
+                        target,
+                        position: Point::new(15., 45.).unwrap(),
+                        kind,
+                    },
+                    geometry,
+                    modifiers,
+                    Some(target),
+                )
+                .unwrap()
+        };
+        let press = || Kind::Button {
+            button: 272,
+            pressed: true,
+            serial: 1,
+        };
+        let release = || Kind::Button {
+            button: 272,
+            pressed: false,
+            serial: 2,
+        };
+        let none = Modifiers::default();
+        for local in [false, true] {
+            assert_eq!(
+                route(
+                    &mut pointer,
+                    &mut tabs,
+                    press(),
+                    Modifiers {
+                        depressed: u32::from(local),
+                        ..none
+                    }
+                ),
+                !local
+            );
+            assert!(
+                tabs.get_mut(TabId(1))
+                    .unwrap()
+                    .terminal_mut()
+                    .scroll_viewport(alacritty_terminal::grid::Scroll::Delta(1))
+                    .unwrap()
+            );
+            pointer.cancel_drag(); // The viewport path, unlike focus/tab/pointer removal.
+            if local {
+                assert!(!route(&mut pointer, &mut tabs, Kind::Motion, none));
+            }
+            assert_eq!(route(&mut pointer, &mut tabs, release(), none), !local);
+        }
+        assert_eq!(
+            tabs.get(TabId(1)).unwrap().pty().unwrap().0,
+            b"\x1b[<0;2;2M\x1b[<0;2;2m"
+        );
+    }
     #[test]
     fn runtime_pointer_lifecycle_preserves_serials() {
         let mut pointer = PointerInput::default();

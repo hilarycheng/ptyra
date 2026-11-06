@@ -720,7 +720,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-136`, `TASK-160` | **Unit Test:** `runtime_queries_report_actual_colors_and_geometry`
   - **Done:** 處理 core `ColorRequest` 同 `TextAreaSizeRequest`，由實際 palette、content rows/columns/cell pixels 格式化回覆來源 Tab；未知 query 不虛報能力，queue 有上限，唔將 ClipboardLoad 夾帶成可讀 Clipboard 授權。
 
-- [ ] **TASK-162 — 接通 application mouse reporting**
+- [x] **TASK-162 — 接通 application mouse reporting**
   - **Dependencies:** `TASK-027`, `TASK-140`, `TASK-141`, `TASK-157`, `TASK-160` | **Unit Test:** `runtime_mouse_reports_only_enabled_modes`
   - **Done:** 按 terminal 已啟用嘅 button/motion/SGR 等已支援 modes 編碼 click/release/wheel/cell coordinates；明確 selection override 同 Tab Bar/Primary ownership，避免同一事件既 paste 又 report；未支援模式唔宣稱可用。
 

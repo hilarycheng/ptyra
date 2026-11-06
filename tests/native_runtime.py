@@ -183,7 +183,7 @@ def main():
             env["SHELL"] = str(wrapper)
             if os.environ.get("PTYRA_TEST_TRACE"):
                 env["PTYRA_TRACE_INPUT"] = "1"
-            if os.environ.get("PTYRA_TEST_POINTER") or os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") or os.environ.get("PTYRA_TEST_SCROLL") or os.environ.get("PTYRA_TEST_HISTORY_SELECTION"):
+            if os.environ.get("PTYRA_TEST_MOUSE") or os.environ.get("PTYRA_TEST_POINTER") or os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") or os.environ.get("PTYRA_TEST_SCROLL") or os.environ.get("PTYRA_TEST_HISTORY_SELECTION"):
                 env["PTYRA_TRACE_POINTER"] = "1"
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE") or os.environ.get("PTYRA_TEST_PRIMARY") or os.environ.get("PTYRA_TEST_NO_PRIMARY"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
@@ -245,6 +245,9 @@ def main():
                 keyboard.send(primary_pointer, 2, u32(0, 274, 0))
                 keyboard.send(primary_pointer, 4)
                 keyboard.sync()
+            if os.environ.get("PTYRA_TEST_MOUSE"):
+                from native_mouse import check_mouse
+                check_mouse(root, env, keyboard, app, wait_until, ipc, nodes, u32)
             if os.environ.get("PTYRA_TEST_QUERIES"):
                 from native_queries import check_queries
                 check_queries(root, env, keyboard, app, wait_until, ipc, nodes)

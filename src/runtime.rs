@@ -9,6 +9,7 @@ mod clipboard_offers;
 mod clipboard_receive;
 mod clipboard_send;
 mod keyboard;
+mod mouse;
 mod paste;
 mod pointer;
 mod raster;

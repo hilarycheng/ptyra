@@ -144,6 +144,10 @@ impl Keymap {
         Arc::ptr_eq(&self.epoch, epoch)
     }
 
+    pub(crate) fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+
     /// wl_keyboard.modifiers owns state. Do not infer modifiers from press/release events.
     pub fn update_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;

@@ -45,12 +45,13 @@ def check_scroll(root, env, keyboard, app, wait_until, u32):
     key(109, 4); time.sleep(0.1); key(17, 5); time.sleep(0.1)
     # An application-owned mouse mode reserves wheel events; explicit history keys remain usable.
     mode = root / 'scroll-mode.py'
-    mode.write_text('import os\nos.write(1,b"\\x1b[?1000h")\n')
-    keyboard.text('python3 '+str(mode)); key(28); time.sleep(0.2)
+    mode_ready, mode_stop, mode_done = (root / name for name in ['mode-ready','mode-stop','mode-done'])
+    mode.write_text('import os,select,termios,tty\nfrom pathlib import Path\nold=termios.tcgetattr(0)\ntty.setraw(0)\nos.write(1,b"\\x1b[?1000h")\nPath('+repr(str(mode_ready))+').touch()\nwhile not Path('+repr(str(mode_stop))+').exists():\n if select.select([0],[],[],0.02)[0]: os.read(0,4096)\nos.write(1,b"\\x1b[?1000l")\ntermios.tcsetattr(0,termios.TCSAFLUSH,old)\nPath('+repr(str(mode_done))+').touch()\n')
+    keyboard.text('python3 '+str(mode)); key(28); wait_until(mode_ready.exists); time.sleep(0.2)
     before = len(offsets()); wheel(-100); time.sleep(0.1); assert len(offsets()) == before
     assert changed(lambda: key(104, 1)) > 0
-    mode.write_text('import os\nos.write(1,b"\\x1b[?1000l")\n')
-    changed(lambda: keyboard.text('python3 '+str(mode)), expected=0); key(28); time.sleep(0.2)
+    mode_stop.touch(); wait_until(mode_done.exists); time.sleep(0.1)
+    changed(lambda: keyboard.text('true'), expected=0); key(28); time.sleep(0.2)
     changed(lambda: wheel(-10), expected=1)
     changed(lambda: key(107, 1), expected=0)
     assert app.poll() is None
