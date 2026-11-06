@@ -126,7 +126,7 @@ impl SelectionInput {
         let column = (x.max(0.) / f64::from(geometry.cell.0)) as usize;
         let row = (y.max(0.) / f64::from(geometry.cell.1)) as usize;
         let point = Point::new(
-            Line(row.min(grid.screen_lines() - 1) as i32),
+            Line(row.min(grid.screen_lines() - 1) as i32 - grid.display_offset() as i32),
             Column(column.min(grid.columns() - 1)),
         );
         if start {
@@ -220,6 +220,118 @@ mod tests {
                 serial: 2,
             },
         )
+    }
+    #[test]
+    fn runtime_history_selection_copies_original_lines() {
+        use alacritty_terminal::grid::Scroll;
+        let id = TabId(1);
+        let mut tabs = TabRegistry::<Fake>::with_scrollback(4).unwrap();
+        tabs.insert(id, 3, 8).unwrap();
+        tabs.insert(TabId(2), 3, 8).unwrap();
+        tabs.get_mut(id)
+            .unwrap()
+            .terminal_mut()
+            .feed(
+                id,
+                "A中e\u{301}  XYZW\r\nhard  \r\nlive1\r\nlive2\r\nlive3".as_bytes(),
+            )
+            .unwrap();
+        tabs.get_mut(id)
+            .unwrap()
+            .terminal_mut()
+            .scroll_viewport(Scroll::Top)
+            .unwrap();
+        let clock = crate::clock::FakeClock::default();
+        let geometry = Geometry {
+            origin: 20,
+            size: (80, 30),
+            cell: (10, 10),
+        };
+        let mut input = SelectionInput::default();
+        input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock);
+        input.route(&mut tabs, &release(1, 55., 45.), geometry, &clock);
+        let selected = |tabs: &mut TabRegistry<Fake>| {
+            let tab = tabs.get_mut(id).unwrap();
+            let range = tab.selection_range()?;
+            tab.terminal_mut().copy_range_text(range)
+        };
+        let original = "A中e\u{301}  XYZW      \nhard  ";
+        assert_eq!(selected(&mut tabs).as_deref(), Some(original));
+        let range = tabs.get(id).unwrap().selection_range().unwrap();
+        assert_eq!((range.start.line.0, range.end.line.0), (-3, -1));
+        let mut pixels = vec![0x55; 80 * 30 * 4];
+        super::super::selection_overlay::draw(
+            tabs.get(id).unwrap(),
+            (80, 30),
+            (10, 10),
+            &mut pixels,
+        )
+        .unwrap();
+        assert_eq!(pixels[0], 0xaa);
+        assert_eq!(pixels[(29 * 80 + 59) * 4], 0xaa);
+        assert_eq!(pixels[(29 * 80 + 60) * 4], 0x55);
+
+        // Completed ranges stay attached to unchanged grid/history, even offscreen.
+        tabs.get_mut(id)
+            .unwrap()
+            .terminal_mut()
+            .scroll_viewport(Scroll::Bottom)
+            .unwrap();
+        input.cancel(&mut tabs);
+        assert_eq!(selected(&mut tabs).as_deref(), Some(original));
+        pixels.fill(0x55);
+        super::super::selection_overlay::draw(
+            tabs.get(id).unwrap(),
+            (80, 30),
+            (10, 10),
+            &mut pixels,
+        )
+        .unwrap();
+        assert!(pixels.iter().all(|byte| *byte == 0x55));
+        tabs.activate(TabId(2));
+        assert!(tabs.get(TabId(2)).unwrap().selection_range().is_none());
+        tabs.activate(id);
+        tabs.get_mut(id)
+            .unwrap()
+            .terminal_mut()
+            .scroll_viewport(Scroll::Top)
+            .unwrap();
+        // A wide spacer hit still selects its original complete historical glyph.
+        clock.advance(std::time::Duration::from_secs(1)).unwrap();
+        for _ in 0..2 {
+            input.route(&mut tabs, &press(1, 25., 25.), geometry, &clock);
+            input.route(&mut tabs, &release(1, 25., 25.), geometry, &clock);
+        }
+        assert_eq!(selected(&mut tabs).as_deref(), Some("中"));
+        input.route(&mut tabs, &press(1, 25., 25.), geometry, &clock);
+        assert_eq!(
+            selected(&mut tabs).as_deref(),
+            Some("A中e\u{301}  XYZW      ")
+        );
+        // Runtime scroll cancels an unfinished drag before any later pointer event.
+        clock.advance(std::time::Duration::from_secs(1)).unwrap();
+        input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock);
+        tabs.get_mut(id)
+            .unwrap()
+            .terminal_mut()
+            .scroll_viewport(Scroll::Delta(-1))
+            .unwrap();
+        input.cancel(&mut tabs);
+        assert!(!input.route(&mut tabs, &release(1, 75., 45.), geometry, &clock));
+        assert!(selected(&mut tabs).is_none());
+        // A complete range is invalidated by any output/reflow, including eviction.
+        input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock);
+        input.route(&mut tabs, &release(1, 15., 25.), geometry, &clock);
+        tabs.get_mut(id)
+            .unwrap()
+            .terminal_mut()
+            .feed(id, b"\r\na\r\nb\r\nc\r\nd\r\ne")
+            .unwrap();
+        assert!(selected(&mut tabs).is_none());
+        input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock);
+        input.route(&mut tabs, &release(1, 15., 25.), geometry, &clock);
+        tabs.resize_all(4, 6).unwrap();
+        assert!(selected(&mut tabs).is_none());
     }
     #[test]
     fn primary_publication_waits_for_completed_selection() {

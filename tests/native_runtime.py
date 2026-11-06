@@ -183,7 +183,7 @@ def main():
             env["SHELL"] = str(wrapper)
             if os.environ.get("PTYRA_TEST_TRACE"):
                 env["PTYRA_TRACE_INPUT"] = "1"
-            if os.environ.get("PTYRA_TEST_POINTER") or os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") or os.environ.get("PTYRA_TEST_SCROLL"):
+            if os.environ.get("PTYRA_TEST_POINTER") or os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") or os.environ.get("PTYRA_TEST_SCROLL") or os.environ.get("PTYRA_TEST_HISTORY_SELECTION"):
                 env["PTYRA_TRACE_POINTER"] = "1"
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE") or os.environ.get("PTYRA_TEST_PRIMARY") or os.environ.get("PTYRA_TEST_NO_PRIMARY"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
@@ -247,7 +247,7 @@ def main():
                 keyboard.sync()
             if os.environ.get("PTYRA_TEST_HISTORY"):
                 from native_history import check_history
-                check_history(root, env, keyboard, app, wait_until, ipc, nodes)
+                check_history(root, env, keyboard, app, wait_until, ipc, nodes, u32)
             if os.environ.get("PTYRA_TEST_SCROLL"):
                 from native_scroll import check_scroll
                 check_scroll(root, env, keyboard, app, wait_until, u32)

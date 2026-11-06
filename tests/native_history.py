@@ -5,7 +5,7 @@ import subprocess
 import time
 
 
-def check_history(root, env, keyboard, app, wait_until, ipc, nodes):
+def check_history(root, env, keyboard, app, wait_until, ipc, nodes, u32):
     def key(code, mask=0):
         keyboard.modifiers(mask)
         keyboard.tap(code)
@@ -71,6 +71,10 @@ os.write(1,b'\\x1b[0m\\x1b[?25h\\r\\n')
     key(102, 8 if os.environ.get('PTYRA_TEST_SCROLL') else 1)  # Honor the optional scroll suite's custom Alt+Home binding.
     wait_until(lambda: capture()[start:end] == reference[start:end])
     historical = capture()
+    if os.environ.get('PTYRA_TEST_HISTORY_SELECTION'):
+        from native_history_selection import check_history_selection
+        check_history_selection(root, env, keyboard, wait_until, ipc, nodes, u32, capture, key,
+                                8 if os.environ.get('PTYRA_TEST_SCROLL') else 1, historical, start)
     (root / 'history-cursor').touch()
     wait_until((root / 'history-cursor-done').exists)
     time.sleep(0.2)

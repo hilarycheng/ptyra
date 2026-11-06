@@ -245,3 +245,14 @@
 - Full existing native Clipboard/Primary/selection/tab matrix and separate partial-paste cancellation PASS on both binaries. Read-only review found no raster defect; its combined-suite custom-shortcut finding was fixed and retested.
 - T129 raster additions were reverse-compared with their preserved baseline; README/IME source/fixture byte comparisons passed. No dependency, unsafe, push, install or global settings changes. CPU affinity 0–1 and Cargo jobs=2.
 - Real desktop Sway/Fcitx5/Firefox/Kitty acceptance remains deferred and NOT RUN. This checks native SHM history pixels, not IME acceptance, history selection (TASK-159), HiDPI or GPU rendering. Logs `/tmp/ptyra-t158-*`.
+
+
+## TASK-159
+
+- Dependencies TASK-144/TASK-146/TASK-156/TASK-158 satisfied. Pointer hit-testing subtracts the active display offset after clamping to the visible grid. Drag, double/triple click, Copy and the already offset-aware overlay now share original historical coordinates.
+- Selection policy: completed ranges remain tied to unchanged grid lines across viewport moves and Tab switches, including offscreen Copy. Runtime scroll cancels an active drag/click sequence. Any output or geometry change invalidates the content epoch, preventing history eviction/reflow from silently retargeting a selection.
+- `runtime_history_selection_copies_original_lines`: first FAIL, copying live rows instead of history; then PASS. Covers negative anchors, hard/soft wrap, CJK/combining, exact spaces, historical overlay pixels, offscreen retention, Tab isolation, wide-spacer double click, logical-line triple click, cancelled drag, eviction and resize invalidation.
+- Full workspace: 243 combined / 241 standalone library tests, 13 integration tests and 2 doctests PASS; one existing opt-in integration ignored. Format, Clippy `-D warnings` and build PASS on both trees. Standalone excludes deferred T129.
+- Owned headless Sway on both binaries, with default/custom scroll bindings: negative-row pointer hits, complete CJK spacer Copy, exact soft-wrap/combining/spaces, historical highlight pixels, offscreen settled-range Copy, and output invalidation removing the highlight all PASS. Every Copy first replaces Clipboard with a verified sentinel, preventing a stale result from passing. The pointer sprite is moved outside the sampled surface for exact pixel comparison.
+- Full native Clipboard/Primary/selection/tab and separate partial-paste cancellation matrices PASS on both binaries, plus T158 history/reflow/cursor pixels. Review found no production defect; its stale-Clipboard test gap was fixed and retested.
+- T129 edits unchanged/uncommitted. No push/install, dependency/unsafe addition or global settings changes. CPUs 0–1; Cargo jobs=2. Real desktop Firefox/Kitty/Fcitx5 acceptance NOT RUN. Logs `/tmp/ptyra-t159-*`.

@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（157 已勾選；TASK-129、TASK-159–199 共 42 項未勾選）。
+**Total:** 199 atomic TASKS（158 已勾選；TASK-129、TASK-160–199 共 41 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -706,7 +706,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-126`, `TASK-156` | **Unit Test:** `runtime_history_rows_use_display_offset`
   - **Done:** 負 history row 依 display offset 映射可見 row，唔全部畫到第零行；cursor 離開 viewport 時不誤畫；resize/reflow、CJK 同 soft wrap 在真視窗可見且無殘影。
 
-- [ ] **TASK-159 — 從 scrollback 選取同 Copy 正確文字**
+- [x] **TASK-159 — 從 scrollback 選取同 Copy 正確文字**
   - **Dependencies:** `TASK-144`, `TASK-146`, `TASK-156`, `TASK-158` | **Unit Test:** `runtime_history_selection_copies_original_lines`
   - **Done:** pointer hit-test/selection anchor 同 history offset 一致，跨可見頁選區按已定義策略保留或明確失效；保留 hard/soft wrap、CJK/combining 同空格；history eviction 唔複製成另一段文字。
 
