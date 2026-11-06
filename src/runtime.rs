@@ -197,6 +197,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
     top.set_min_size(160, 80);
     surface.commit();
     app.surface = Some(surface);
+    let mut window_title = crate::APP_NAME.to_owned();
     while app.running {
         queue
             .dispatch_pending(&mut app)
@@ -234,6 +235,11 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             && let Some(tab) = app.tabs.active().and_then(|id| app.tabs.get(id))
         {
             trace.report(tab.terminal());
+        }
+        let title = sessions::active_title(&app.tabs);
+        if window_title != title {
+            top.set_title(title.to_owned());
+            window_title = title.to_owned();
         }
         app.draw(&qh)?;
         let writable = match connection.flush() {
@@ -418,6 +424,11 @@ impl Runtime {
         })
     }
     fn read_output(&mut self) -> Result<()> {
+        let previous_titles: Vec<_> = self
+            .ready_pty
+            .iter()
+            .filter_map(|id| self.tabs.get(*id).map(|tab| (*id, tab.title().to_owned())))
+            .collect();
         let mut bytes = [0; crate::pty::MAX_PTY_READ_BYTES];
         let mut results = Vec::new();
         self.tabs
@@ -452,6 +463,9 @@ impl Runtime {
                 pty.flush_write().map_err(|_| "PTY write failed")?;
             }
         }
+        self.paint.dirty |= previous_titles
+            .iter()
+            .any(|(id, old)| self.tabs.get(*id).is_some_and(|tab| tab.title() != old));
         self.ready_pty.clear();
         Ok(())
     }

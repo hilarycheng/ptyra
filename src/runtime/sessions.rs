@@ -53,6 +53,13 @@ impl ExitHistory {
     }
 }
 
+pub(super) fn active_title<P: TabPty>(tabs: &TabRegistry<P>) -> &str {
+    tabs.active()
+        .and_then(|id| tabs.get(id))
+        .map(|tab| tab.title())
+        .unwrap_or(crate::APP_NAME)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,6 +68,33 @@ mod tests {
         fn tab(&self) -> TabId {
             self.0
         }
+    }
+    #[test]
+    fn runtime_titles_are_sanitized_and_tab_scoped() {
+        let mut tabs = TabRegistry::with_scrollback(0).unwrap();
+        for _ in 0..2 {
+            spawn_tab(&mut tabs, 2, 20, |r| Ok(Fake(r.tab))).unwrap();
+        }
+        let second = tabs.get_mut(TabId(2)).unwrap();
+        second
+            .terminal_mut()
+            .feed(
+                TabId(2),
+                "\x1b[22;0t\x1b]2;繁體\u{202e}hidden\x07".as_bytes(),
+            )
+            .unwrap();
+        assert!(second.refresh_title().unwrap());
+        assert_eq!(second.title(), "繁體hidden");
+        assert_eq!(active_title(&tabs), "Terminal");
+        tabs.activate(TabId(2));
+        assert_eq!(active_title(&tabs), "繁體hidden");
+        let second = tabs.get_mut(TabId(2)).unwrap();
+        second.set_title(&"字".repeat(1000)).unwrap();
+        assert_eq!(second.title().len(), 255);
+        second.terminal_mut().feed(TabId(2), b"\x1b[23;0t").unwrap();
+        second.refresh_title().unwrap();
+        assert_eq!(active_title(&tabs), "Terminal");
+        assert_eq!(tabs.get(TabId(1)).unwrap().title(), "Terminal");
     }
     #[test]
     fn runtime_child_exit_is_per_tab() {
