@@ -244,7 +244,11 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         if !app.running {
             break;
         }
-        let bytes = app.input.tick(app.application_cursor(), &app.clock)?;
+        let bytes = app.input.tick(
+            app.application_cursor(),
+            app.application_keypad(),
+            &app.clock,
+        )?;
         if bytes.is_some()
             && let Some(trace) = &mut app.input_trace
         {
@@ -446,6 +450,13 @@ impl Runtime {
             .and_then(|id| self.tabs.get(id))
             .and_then(|tab| tab.terminal().mode())
             .is_some_and(|mode| mode.contains(alacritty_terminal::term::TermMode::APP_CURSOR))
+    }
+    fn application_keypad(&self) -> bool {
+        self.tabs
+            .active()
+            .and_then(|id| self.tabs.get(id))
+            .and_then(|tab| tab.terminal().mode())
+            .is_some_and(|mode| mode.contains(alacritty_terminal::term::TermMode::APP_KEYPAD))
     }
     fn enqueue_input(&mut self, bytes: Option<Vec<u8>>) -> Result<()> {
         if let Some(bytes) = bytes.filter(|bytes| !bytes.is_empty())

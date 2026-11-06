@@ -56,6 +56,7 @@ pub struct TranslatedKey {
     pub keysyms: Vec<u32>,
     pub unshifted_keysyms: Vec<u32>,
     pub modifiers: Modifiers,
+    pub num_lock: bool,
     pub state: KeyState,
     pub repeatable: bool,
     pub(crate) focus_epoch: Arc<()>,
@@ -67,6 +68,7 @@ pub struct Keymap {
     lookup: LookupTable,
     keys: Vec<u32>,
     modifiers: Modifiers,
+    num_lock_mask: u32,
 }
 
 fn invalid() -> AppError {
@@ -132,11 +134,16 @@ impl Keymap {
             return Err(invalid());
         }
         keys.sort_unstable();
+        let num_lock_mask = map
+            .virtual_modifiers()
+            .find(|modifier| modifier.name() == "NumLock")
+            .map_or(0, |modifier| modifier.mask().0);
         Ok(Self {
             epoch: Arc::new(()),
             lookup: map.to_builder().build_lookup_table(),
             keys,
             modifiers: Modifiers::default(),
+            num_lock_mask,
         })
     }
 
@@ -199,6 +206,7 @@ impl Keymap {
             keysyms,
             unshifted_keysyms,
             modifiers: self.modifiers,
+            num_lock: self.modifiers.effective() & self.num_lock_mask != 0,
             state: if repeat {
                 KeyState::Repeated
             } else if route.pressed {

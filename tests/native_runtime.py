@@ -245,6 +245,9 @@ def main():
                 keyboard.send(primary_pointer, 2, u32(0, 274, 0))
                 keyboard.send(primary_pointer, 4)
                 keyboard.sync()
+            if os.environ.get("PTYRA_TEST_KEYPAD"):
+                from native_keypad import check_keypad
+                check_keypad(root, keyboard, app, wait_until, u32)
             if os.environ.get("PTYRA_TEST_FOCUS"):
                 from native_focus import check_focus
                 check_focus(root, keyboard, app, wait_until, ipc)

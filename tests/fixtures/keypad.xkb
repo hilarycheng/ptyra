@@ -1,0 +1,40 @@
+xkb_keymap {
+    xkb_keycodes "test" {
+        minimum=8; maximum=255;
+        <KP0>=90; <KP1>=87; <KP2>=88; <KP3>=89; <KP4>=83; <KP5>=84;
+        <KP6>=85; <KP7>=79; <KP8>=80; <KP9>=81; <KPDL>=91;
+        <KPEN>=104; <KPDV>=106; <KPMU>=63; <KPSU>=82; <KPAD>=86;
+        <KPCM>=129; <KPEQ>=125; <NMLK>=77; <AC01>=38; <RTRN>=36; <UP>=111;
+    };
+    xkb_types "test" {
+        virtual_modifiers NumLock=Mod3;
+        type "KEYPAD" {
+            modifiers=Shift+NumLock;
+            map[None]=Level1; map[Shift]=Level1;
+            map[NumLock]=Level2; map[Shift+NumLock]=Level1;
+        };
+        type "TWO_LEVEL" {
+            modifiers=Shift; map[None]=Level1; map[Shift]=Level2;
+        };
+    };
+    xkb_compatibility "test" {};
+    xkb_symbols "test" {
+        key <KP0> { type="KEYPAD", [KP_Insert,KP_0] };
+        key <KP1> { type="KEYPAD", [KP_End,KP_1] };
+        key <KP2> { type="KEYPAD", [KP_Down,KP_2] };
+        key <KP3> { type="KEYPAD", [KP_Next,KP_3] };
+        key <KP4> { type="KEYPAD", [KP_Left,KP_4] };
+        key <KP5> { type="KEYPAD", [KP_Begin,KP_5] };
+        key <KP6> { type="KEYPAD", [KP_Right,KP_6] };
+        key <KP7> { type="KEYPAD", [KP_Home,KP_7] };
+        key <KP8> { type="KEYPAD", [KP_Up,KP_8] };
+        key <KP9> { type="KEYPAD", [KP_Prior,KP_9] };
+        key <KPDL> { type="KEYPAD", [KP_Delete,KP_Decimal] };
+        key <KPEN> { [KP_Enter] }; key <KPDV> { [KP_Divide] };
+        key <KPMU> { [KP_Multiply] }; key <KPSU> { [KP_Subtract] };
+        key <KPAD> { [KP_Add] }; key <KPCM> { [KP_Separator] }; key <KPEQ> { [KP_Equal] };
+        key <NMLK> { [Num_Lock] };
+        key <AC01> { type="TWO_LEVEL", [a,A] };
+        key <RTRN> { [Return] }; key <UP> { [Up] };
+    };
+};

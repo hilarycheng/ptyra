@@ -8,6 +8,7 @@ use kbvm::{Keysym, ModifierMask};
 pub struct KeyEncoder {
     pub flags: KeyboardFlags,
     pub application_cursor: bool,
+    pub application_keypad: bool,
 }
 
 impl KeyEncoder {
@@ -23,7 +24,12 @@ impl KeyEncoder {
         let Some(key) = crate::ime::key::route_key(key, owner, focus, map, repeat, clock)? else {
             return Ok(None);
         };
-        let bytes = encode_key(&key, self.flags, self.application_cursor)?;
+        let bytes = encode_key(
+            &key,
+            self.flags,
+            self.application_cursor,
+            self.application_keypad,
+        )?;
         Ok((!bytes.is_empty()).then_some(bytes))
     }
 }
@@ -34,6 +40,7 @@ pub fn encode_key(
     key: &TranslatedKey,
     flags: KeyboardFlags,
     application_cursor: bool,
+    application_keypad: bool,
 ) -> Result<Vec<u8>, AppError> {
     let unsupported = || AppError::new(Component::Terminal, std::io::ErrorKind::Unsupported);
     if !(flags - (KeyboardFlags::DISAMBIGUATE_ESC_CODES | KeyboardFlags::REPORT_EVENT_TYPES))
@@ -55,13 +62,41 @@ pub fn encode_key(
     };
     let modifiers = key.modifiers;
     let super_key = modifiers.effective() & ModifierMask::SUPER.0 != 0;
+    if flags.is_empty() && super_key {
+        return Err(unsupported());
+    }
+    let (mut symbol, mut base) = (*symbol, *base);
+    if flags.is_empty()
+        && let Some((normal, suffix)) = keypad(symbol)
+    {
+        // NumLock comes from the actual XKB mapping, never an assumed Mod2 bit.
+        // Shift/Ctrl keypad combinations use the normal modified-navigation path.
+        if application_keypad
+            && !key.num_lock
+            && !modifiers.shift()
+            && !modifiers.ctrl()
+            && !(0xff91..=0xff94).contains(&symbol)
+        {
+            let mut bytes = vec![0x1b, b'O', suffix];
+            if modifiers.alt() {
+                bytes.insert(0, 0x1b);
+            }
+            return Ok(bytes);
+        }
+        symbol = normal;
+        base = if symbol < 128 {
+            symbol
+        } else {
+            keypad(base).map_or(base, |mapping| mapping.0)
+        };
+    }
     let mods = 1
         + u8::from(modifiers.shift())
         + 2 * u8::from(modifiers.alt())
         + 4 * u8::from(modifiers.ctrl())
         + 8 * u8::from(super_key);
     let enhanced = flags.contains(KeyboardFlags::DISAMBIGUATE_ESC_CODES);
-    let control = match *symbol {
+    let control = match symbol {
         0xff0d => Some(13),
         0xff09 | 0xfe20 => Some(9),
         0xff08 => Some(127),
@@ -89,13 +124,13 @@ pub fn encode_key(
         }
         return Ok(bytes);
     }
-    if let Some((number, suffix, ss3)) = functional(*symbol, enhanced || report_events) {
+    if let Some((number, suffix, ss3)) = functional(symbol, enhanced || report_events) {
         return Ok(
             if !enhanced
                 && event.is_none()
                 && mods == 1
                 && ss3
-                && (application_cursor || (0xffbe..=0xffc1).contains(symbol))
+                && (application_cursor || (0xffbe..=0xffc1).contains(&symbol))
             {
                 format!("\x1bO{suffix}").into_bytes()
             } else {
@@ -104,19 +139,19 @@ pub fn encode_key(
         );
     }
     // Modifier-only events have no legacy byte representation.
-    if (0xffe1..=0xffee).contains(symbol) {
+    if (0xffe1..=0xffee).contains(&symbol) || matches!(symbol, 0xff7f | 0xff14) {
         return Ok(Vec::new());
     }
-    let text = Keysym(*symbol)
+    let text = Keysym(symbol)
         .char()
         .filter(|ch| !ch.is_control())
         .ok_or_else(unsupported)?;
-    let base = Keysym(*base)
+    let base = Keysym(base)
         .char()
         .filter(|ch| !ch.is_control())
         .ok_or_else(unsupported)?;
     if super_key
-        || modifiers.ctrl() && modifiers.shift()
+        || !flags.is_empty() && modifiers.ctrl() && modifiers.shift()
         || enhanced && (modifiers.ctrl() || modifiers.alt())
     {
         return Ok(csi(base as u32, mods, event, 'u'));
@@ -146,6 +181,37 @@ pub fn encode_key(
     Ok(bytes)
 }
 
+// VT100/VT220 keypad SS3 suffixes; navigation aliases retain the existing cursor mode.
+fn keypad(symbol: u32) -> Option<(u32, u8)> {
+    Some(match symbol {
+        0xff80 => (b' ' as u32, b' '),
+        0xff89 => (0xff09, b'I'),
+        0xff8d => (0xff0d, b'M'),
+        0xff91..=0xff94 => (0xffbe + symbol - 0xff91, b'P' + (symbol - 0xff91) as u8),
+        0xff95 => (0xff50, b'w'),
+        0xff96 => (0xff51, b't'),
+        0xff97 => (0xff52, b'x'),
+        0xff98 => (0xff53, b'v'),
+        0xff99 => (0xff54, b'r'),
+        0xff9a => (0xff55, b'y'),
+        0xff9b => (0xff56, b's'),
+        0xff9c => (0xff57, b'q'),
+        0xff9d => (0xff58, b'u'),
+        0xff9e => (0xff63, b'p'),
+        0xff9f => (0xffff, b'n'),
+        0xffaa..=0xffaf => (
+            b"*+,-./"[(symbol - 0xffaa) as usize] as u32,
+            b'j' + (symbol - 0xffaa) as u8,
+        ),
+        0xffb0..=0xffb9 => (
+            b'0' as u32 + symbol - 0xffb0,
+            b'p' + (symbol - 0xffb0) as u8,
+        ),
+        0xffbd => (b'=' as u32, b'X'),
+        _ => return None,
+    })
+}
+
 fn csi(number: u32, mods: u8, event: Option<u8>, suffix: char) -> Vec<u8> {
     if let Some(event) = event {
         return format!("\x1b[{number};{mods}:{event}{suffix}").into_bytes();
@@ -168,6 +234,7 @@ fn functional(symbol: u32, enhanced: bool) -> Option<(u32, char, bool)> {
         0xff51 => (1, 'D', true),
         0xff50 => (1, 'H', true),
         0xff57 => (1, 'F', true),
+        0xff58 => (1, 'E', false),
         0xff63 => (2, '~', false),
         0xffff => (3, '~', false),
         0xff55 => (5, '~', false),
@@ -194,6 +261,76 @@ mod tests {
     use kbvm::ModifierMask;
 
     #[test]
+    fn legacy_keypad_aliases_and_modifier_bytes_are_explicit() {
+        let map = Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap();
+        let mut focus = KeyboardFocus::default();
+        focus.enter(WindowId(1), TabId(1));
+        let mut key = map
+            .translate(focus.route_key(30, true).unwrap(), false)
+            .unwrap()
+            .unwrap();
+        for (symbol, normal, application) in [
+            (0xff80, " ", "\x1bO "),
+            (0xff89, "\t", "\x1bOI"),
+            (0xff91, "\x1bOP", "\x1bOP"),
+            (0xff92, "\x1bOQ", "\x1bOQ"),
+            (0xff93, "\x1bOR", "\x1bOR"),
+            (0xff94, "\x1bOS", "\x1bOS"),
+        ] {
+            key.keysyms = vec![symbol];
+            key.unshifted_keysyms = vec![symbol];
+            assert_eq!(
+                encode_key(&key, KeyboardFlags::empty(), false, false).unwrap(),
+                normal.as_bytes()
+            );
+            assert_eq!(
+                encode_key(&key, KeyboardFlags::empty(), false, true).unwrap(),
+                application.as_bytes()
+            );
+        }
+        for (symbol, number, suffix) in [
+            (0xff50, 1, 'H'),
+            (0xff57, 1, 'F'),
+            (0xff52, 1, 'A'),
+            (0xff54, 1, 'B'),
+            (0xff53, 1, 'C'),
+            (0xff51, 1, 'D'),
+            (0xff63, 2, '~'),
+            (0xffff, 3, '~'),
+            (0xff55, 5, '~'),
+            (0xff56, 6, '~'),
+        ] {
+            key.keysyms = vec![symbol];
+            key.unshifted_keysyms = vec![symbol];
+            for mask in [1, 4, 5, 8, 9, 12, 13] {
+                key.modifiers = Modifiers {
+                    depressed: mask,
+                    ..Default::default()
+                };
+                let modifier = 1
+                    + u32::from(mask & 1 != 0)
+                    + 2 * u32::from(mask & 8 != 0)
+                    + 4 * u32::from(mask & 4 != 0);
+                assert_eq!(
+                    encode_key(&key, KeyboardFlags::empty(), true, true).unwrap(),
+                    format!("\x1b[{number};{modifier}{suffix}").as_bytes()
+                );
+            }
+        }
+        key.modifiers = Modifiers::default();
+        key.keysyms = vec![0x1008ff12];
+        key.unshifted_keysyms = key.keysyms.clone();
+        assert_eq!(
+            encode_key(&key, KeyboardFlags::empty(), false, false)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::Unsupported
+        );
+        key.keysyms = vec![b'a' as u32, b'b' as u32];
+        key.unshifted_keysyms = key.keysyms.clone();
+        assert!(encode_key(&key, KeyboardFlags::empty(), false, false).is_err());
+    }
+    #[test]
     fn kitty_encoder_skips_ime_consumed_text() {
         use crate::{clock::FakeClock, ime::key::KeyOwner, repeat::RepeatScheduler};
         let map = Keymap::from_bytes(include_bytes!("../../tests/fixtures/greek.xkb")).unwrap();
@@ -204,6 +341,7 @@ mod tests {
         let encoder = KeyEncoder {
             flags: KeyboardFlags::DISAMBIGUATE_ESC_CODES | KeyboardFlags::REPORT_EVENT_TYPES,
             application_cursor: false,
+            application_keypad: false,
         };
         for (pressed, repeated) in [(true, false), (true, true), (false, false)] {
             let key = map
@@ -289,30 +427,39 @@ mod tests {
             (KeyState::Released, "\x1b[1;1:3A"),
         ] {
             key.state = state;
-            assert_eq!(encode_key(&key, flags, true).unwrap(), expected.as_bytes());
+            assert_eq!(
+                encode_key(&key, flags, true, false).unwrap(),
+                expected.as_bytes()
+            );
         }
         for symbol in [0xff0d, 0xff09, 0xff08, u32::from(b'a')] {
             key.keysyms = vec![symbol];
             key.unshifted_keysyms = vec![symbol];
-            assert!(encode_key(&key, flags, false).unwrap().is_empty());
+            assert!(encode_key(&key, flags, false, false).unwrap().is_empty());
         }
         key.keysyms = vec![0xff1b];
         key.unshifted_keysyms = vec![0xff1b];
-        assert_eq!(encode_key(&key, flags, false).unwrap(), b"\x1b[27;1:3u");
+        assert_eq!(
+            encode_key(&key, flags, false, false).unwrap(),
+            b"\x1b[27;1:3u"
+        );
         assert!(
-            encode_key(&key, KeyboardFlags::DISAMBIGUATE_ESC_CODES, false)
+            encode_key(&key, KeyboardFlags::DISAMBIGUATE_ESC_CODES, false, false)
                 .unwrap()
                 .is_empty()
         );
         key.state = KeyState::Repeated;
-        assert_eq!(encode_key(&key, flags, false).unwrap(), b"\x1b[27;1:2u");
         assert_eq!(
-            encode_key(&key, KeyboardFlags::empty(), false).unwrap(),
+            encode_key(&key, flags, false, false).unwrap(),
+            b"\x1b[27;1:2u"
+        );
+        assert_eq!(
+            encode_key(&key, KeyboardFlags::empty(), false, false).unwrap(),
             b"\x1b"
         );
         key.keysyms = vec![u32::from(b'a')];
         key.unshifted_keysyms = key.keysyms.clone();
-        assert_eq!(encode_key(&key, flags, false).unwrap(), b"a");
+        assert_eq!(encode_key(&key, flags, false, false).unwrap(), b"a");
     }
 
     #[test]
@@ -353,7 +500,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(
-                encode_key(&key, KeyboardFlags::from_bits(flags).unwrap(), false).unwrap(),
+                encode_key(&key, KeyboardFlags::from_bits(flags).unwrap(), false, false).unwrap(),
                 expected.as_bytes()
             );
         }
@@ -363,10 +510,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            encode_key(&key, KeyboardFlags::empty(), true).unwrap(),
+            encode_key(&key, KeyboardFlags::empty(), true, false).unwrap(),
             b"\x1bOA"
         );
-        assert!(encode_key(&key, KeyboardFlags::REPORT_ASSOCIATED_TEXT, false).is_err());
+        assert!(encode_key(&key, KeyboardFlags::REPORT_ASSOCIATED_TEXT, false, false).is_err());
         let mut key = key;
         for (symbol, flags, expected) in [
             (0xff1b, 0, "\x1b"),
@@ -380,7 +527,7 @@ mod tests {
             key.keysyms = vec![symbol];
             key.unshifted_keysyms = vec![symbol];
             assert_eq!(
-                encode_key(&key, KeyboardFlags::from_bits(flags).unwrap(), false).unwrap(),
+                encode_key(&key, KeyboardFlags::from_bits(flags).unwrap(), false, false).unwrap(),
                 expected.as_bytes()
             );
         }

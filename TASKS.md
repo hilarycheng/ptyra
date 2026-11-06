@@ -728,7 +728,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-027`, `TASK-133`, `TASK-160` | **Unit Test:** `runtime_focus_reports_follow_tab_focus`
   - **Done:** 只喺 application 啟用 focus-report mode 時對應來源 Tab 發送正確 focus transition；切 Tab、window leave、seat 移除無重複或 stale report；disabled mode 完全唔發送。
 
-- [ ] **TASK-164 — 補齊日常 legacy keypad / key mode coverage**
+- [x] **TASK-164 — 補齊日常 legacy keypad / key mode coverage**
   - **Dependencies:** `TASK-012`, `TASK-027`, `TASK-128`, `TASK-130` | **Unit Test:** `legacy_keypad_obeys_terminal_modes`
   - **Done:** 針對現有 encoder 未處理嘅 keypad keys/APP_KEYPAD、NumLock 同 modified navigation 建立明確 mapping；不改已驗證 Enter/arrows/Ctrl+C/F-keys；unsupported keys 明確記錄，普通 legacy Shell 唔意外收到 Kitty-only sequences。
 

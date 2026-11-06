@@ -42,6 +42,7 @@ impl KeyboardInput {
         code: u32,
         pressed: bool,
         application_cursor: bool,
+        application_keypad: bool,
         clock: &impl Clock,
     ) -> Result<Option<Vec<u8>>> {
         let Some(route) = self.focus.route_key(code, pressed) else {
@@ -56,11 +57,12 @@ impl KeyboardInput {
         else {
             return Ok(None);
         };
-        self.encode(key, application_cursor, clock)
+        self.encode(key, application_cursor, application_keypad, clock)
     }
     pub fn tick(
         &mut self,
         application_cursor: bool,
+        application_keypad: bool,
         clock: &impl Clock,
     ) -> Result<Option<Vec<u8>>> {
         let Some(map) = &self.map else {
@@ -73,12 +75,13 @@ impl KeyboardInput {
         else {
             return Ok(None);
         };
-        self.encode(key, application_cursor, clock)
+        self.encode(key, application_cursor, application_keypad, clock)
     }
     fn encode(
         &mut self,
         key: TranslatedKey,
         application_cursor: bool,
+        application_keypad: bool,
         clock: &impl Clock,
     ) -> Result<Option<Vec<u8>>> {
         use crate::config::bindings::BindingAction;
@@ -135,6 +138,7 @@ impl KeyboardInput {
         let encoder = KeyEncoder {
             flags: KeyboardFlags::empty(),
             application_cursor,
+            application_keypad,
         };
         let map = self.map.as_ref().ok_or("keymap unavailable")?;
         match encoder.route(
@@ -371,9 +375,13 @@ impl Runtime {
                 if self.paste_prompt_key(key, pressed)? {
                     return Ok(());
                 }
-                let bytes = self
-                    .input
-                    .key(key, pressed, self.application_cursor(), &self.clock)?;
+                let bytes = self.input.key(
+                    key,
+                    pressed,
+                    self.application_cursor(),
+                    self.application_keypad(),
+                    &self.clock,
+                )?;
                 self.enqueue_input(bytes)?;
                 if let Some(action) = self.input.action.take() {
                     self.dispatch_action(action, qh);
@@ -444,6 +452,164 @@ mod tests {
         keymap::{Keymap, Modifiers},
     };
     #[test]
+    fn legacy_keypad_obeys_terminal_modes() {
+        let clock = FakeClock::default();
+        let mut input = KeyboardInput {
+            map: Some(
+                Keymap::from_bytes(include_bytes!("../../tests/fixtures/keypad.xkb")).unwrap(),
+            ),
+            ..Default::default()
+        };
+        input.focus.enter(WindowId(1), TabId(1));
+        let keys = [
+            (82, "\x1b[2~", b'p', "0"),
+            (79, "\x1b[F", b'q', "1"),
+            (80, "\x1b[B", b'r', "2"),
+            (81, "\x1b[6~", b's', "3"),
+            (75, "\x1b[D", b't', "4"),
+            (76, "\x1b[E", b'u', "5"),
+            (77, "\x1b[C", b'v', "6"),
+            (71, "\x1b[H", b'w', "7"),
+            (72, "\x1b[A", b'x', "8"),
+            (73, "\x1b[5~", b'y', "9"),
+            (83, "\x1b[3~", b'n', "."),
+            (96, "\r", b'M', "\r"),
+            (98, "/", b'o', "/"),
+            (55, "*", b'j', "*"),
+            (74, "-", b'm', "-"),
+            (78, "+", b'k', "+"),
+            (121, ",", b'l', ","),
+            (117, "=", b'X', "="),
+        ];
+        for app_cursor in [false, true] {
+            for app_keypad in [false, true] {
+                for locked in [0, 32] {
+                    // This fixture binds NumLock to Mod3, not conventional Mod2.
+                    input.map.as_mut().unwrap().update_modifiers(Modifiers {
+                        locked,
+                        ..Default::default()
+                    });
+                    for (code, normal, suffix, numeric) in keys {
+                        let mut expected = if locked != 0 {
+                            numeric.as_bytes().to_vec()
+                        } else if app_keypad {
+                            vec![0x1b, b'O', suffix]
+                        } else {
+                            normal.as_bytes().to_vec()
+                        };
+                        if app_cursor
+                            && !app_keypad
+                            && locked == 0
+                            && matches!(code, 79 | 80 | 75 | 77 | 71 | 72)
+                        {
+                            expected[1] = b'O';
+                        }
+                        assert_eq!(
+                            input
+                                .key(code, true, app_cursor, app_keypad, &clock)
+                                .unwrap()
+                                .unwrap(),
+                            expected,
+                            "code={code} cursor={app_cursor} keypad={app_keypad} locked={locked}"
+                        );
+                        assert!(
+                            input
+                                .key(code, false, app_cursor, app_keypad, &clock)
+                                .unwrap()
+                                .is_none()
+                        );
+                    }
+                }
+            }
+        }
+        // A non-NumLock real mask must not disable application keypad mode.
+        input.map.as_mut().unwrap().update_modifiers(Modifiers {
+            locked: 16,
+            ..Default::default()
+        });
+        assert_eq!(
+            input.key(96, true, false, true, &clock).unwrap().unwrap(),
+            b"\x1bOM"
+        );
+        input.key(96, false, false, true, &clock).unwrap();
+        for app_keypad in [false, true] {
+            for (mask, expected) in [
+                (1, "\x1b[1;2A"),
+                (4, "\x1b[1;5A"),
+                (5, "\x1b[1;6A"),
+                (9, "\x1b[1;4A"),
+                (12, "\x1b[1;7A"),
+                (13, "\x1b[1;8A"),
+            ] {
+                input.map.as_mut().unwrap().update_modifiers(Modifiers {
+                    depressed: mask,
+                    ..Default::default()
+                });
+                assert_eq!(
+                    input
+                        .key(72, true, true, app_keypad, &clock)
+                        .unwrap()
+                        .unwrap(),
+                    expected.as_bytes()
+                );
+                input.key(72, false, true, app_keypad, &clock).unwrap();
+            }
+        }
+        input.map.as_mut().unwrap().update_modifiers(Modifiers {
+            depressed: 8,
+            ..Default::default()
+        });
+        assert_eq!(
+            input.key(72, true, false, true, &clock).unwrap().unwrap(),
+            b"\x1b\x1bOx"
+        );
+        input.key(72, false, false, true, &clock).unwrap();
+        input.map.as_mut().unwrap().update_modifiers(Modifiers {
+            depressed: 5,
+            ..Default::default()
+        });
+        assert_eq!(
+            input.key(30, true, false, true, &clock).unwrap().unwrap(),
+            b"\x01"
+        );
+        input.key(30, false, false, true, &clock).unwrap();
+        input.map.as_mut().unwrap().update_modifiers(Modifiers {
+            depressed: 64,
+            ..Default::default()
+        });
+        assert!(input.key(30, true, false, true, &clock).unwrap().is_none());
+        input.key(30, false, false, true, &clock).unwrap();
+        input
+            .map
+            .as_mut()
+            .unwrap()
+            .update_modifiers(Modifiers::default());
+        assert_eq!(
+            input.key(28, true, false, true, &clock).unwrap().unwrap(),
+            b"\r"
+        );
+        input.key(28, false, false, true, &clock).unwrap();
+        assert!(input.key(69, true, false, true, &clock).unwrap().is_none()); // NumLock is state only.
+        input.repeat.configure(20, 100).unwrap();
+        assert_eq!(
+            input.key(72, true, false, false, &clock).unwrap().unwrap(),
+            b"\x1b[A"
+        );
+        clock
+            .advance(std::time::Duration::from_millis(100))
+            .unwrap();
+        assert_eq!(input.tick(false, true, &clock).unwrap().unwrap(), b"\x1bOx");
+        input.map.as_mut().unwrap().update_modifiers(Modifiers {
+            locked: 32,
+            ..Default::default()
+        });
+        clock.advance(std::time::Duration::from_millis(50)).unwrap();
+        assert_eq!(input.tick(false, true, &clock).unwrap().unwrap(), b"8");
+        input.key(72, false, false, true, &clock).unwrap();
+        input.clear_focus();
+        assert!(input.tick(false, true, &clock).unwrap().is_none());
+    }
+    #[test]
     fn runtime_shifted_shortcut_matches_base_symbol() {
         use crate::config::{Config, bindings::BindingAction};
         let clock = FakeClock::default();
@@ -461,9 +627,9 @@ mod tests {
             depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,
             ..Default::default()
         });
-        assert!(input.key(5, true, false, &clock).unwrap().is_none());
+        assert!(input.key(5, true, false, false, &clock).unwrap().is_none());
         assert_eq!(input.action.take(), Some(BindingAction::NewTab));
-        assert!(input.key(5, false, false, &clock).unwrap().is_none());
+        assert!(input.key(5, false, false, false, &clock).unwrap().is_none());
     }
     #[test]
     fn runtime_all_configured_actions_and_ime_ownership() {
@@ -496,12 +662,17 @@ mod tests {
                 depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,
                 ..Default::default()
             });
-            assert!(input.key(15, true, false, &clock).unwrap().is_none());
+            assert!(input.key(15, true, false, false, &clock).unwrap().is_none());
             assert_eq!(input.action.take(), Some(expected));
             input.retarget(TabId(2));
-            assert!(input.key(15, true, false, &clock).unwrap().is_none());
+            assert!(input.key(15, true, false, false, &clock).unwrap().is_none());
             assert!(input.action.take().is_none());
-            assert!(input.key(15, false, false, &clock).unwrap().is_none());
+            assert!(
+                input
+                    .key(15, false, false, false, &clock)
+                    .unwrap()
+                    .is_none()
+            );
         }
         let mut input = KeyboardInput {
             bindings: Config::from_toml(Some("[bindings]\nime_toggle='Ctrl+a'"))
@@ -518,7 +689,7 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            input.key(30, true, false, &clock).unwrap().unwrap(),
+            input.key(30, true, false, false, &clock).unwrap().unwrap(),
             b"\x01"
         );
         assert!(input.action.is_none());
@@ -534,7 +705,7 @@ mod tests {
         };
         input.focus.enter(WindowId(1), TabId(1));
         input.repeat.configure(25, 100).unwrap();
-        input.key(30, true, false, &clock).unwrap();
+        input.key(30, true, false, false, &clock).unwrap();
         let old = input
             .map
             .as_ref()
@@ -545,9 +716,12 @@ mod tests {
         input.retarget(TabId(2));
         assert_eq!(input.focus.target().unwrap().tab, TabId(2));
         clock.advance(std::time::Duration::from_secs(1)).unwrap();
-        assert!(input.tick(false, &clock).unwrap().is_none());
-        assert!(input.encode(old, false, &clock).unwrap().is_none());
-        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
+        assert!(input.tick(false, false, &clock).unwrap().is_none());
+        assert!(input.encode(old, false, false, &clock).unwrap().is_none());
+        assert_eq!(
+            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            b"a"
+        );
         input.clear_focus();
         input.retarget(TabId(1));
         assert!(input.focus.target().is_none());
@@ -571,20 +745,28 @@ mod tests {
             depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,
             ..Default::default()
         });
-        assert!(input.key(30, true, false, &clock).unwrap().is_none());
+        assert!(input.key(30, true, false, false, &clock).unwrap().is_none());
         assert_eq!(input.action.take(), Some(BindingAction::NewTab));
-        assert!(input.key(30, true, false, &clock).unwrap().is_none());
+        assert!(input.key(30, true, false, false, &clock).unwrap().is_none());
         assert!(input.action.take().is_none());
         clock.advance(std::time::Duration::from_secs(1)).unwrap();
-        assert!(input.tick(false, &clock).unwrap().is_none());
+        assert!(input.tick(false, false, &clock).unwrap().is_none());
         input
             .map
             .as_mut()
             .unwrap()
             .update_modifiers(Modifiers::default());
-        assert!(input.key(30, false, false, &clock).unwrap().is_none());
+        assert!(
+            input
+                .key(30, false, false, false, &clock)
+                .unwrap()
+                .is_none()
+        );
         assert!(input.action.take().is_none());
-        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
+        assert_eq!(
+            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            b"a"
+        );
         input.clear_focus();
         assert!(input.action.is_none());
         assert!(input.consumed.is_empty());
@@ -617,13 +799,18 @@ mod tests {
         input.repeat.configure(25, 600).unwrap();
         let mut bytes = Vec::new();
         for _ in 0..2 {
-            bytes.extend(input.key(30, true, false, &clock).unwrap().unwrap());
+            bytes.extend(input.key(30, true, false, false, &clock).unwrap().unwrap());
             clock.advance(std::time::Duration::from_millis(50)).unwrap();
-            assert!(input.key(30, false, false, &clock).unwrap().is_none());
+            assert!(
+                input
+                    .key(30, false, false, false, &clock)
+                    .unwrap()
+                    .is_none()
+            );
             clock
                 .advance(std::time::Duration::from_millis(700))
                 .unwrap();
-            assert!(input.tick(false, &clock).unwrap().is_none());
+            assert!(input.tick(false, false, &clock).unwrap().is_none());
         }
         assert_eq!(bytes, b"aa", "two real taps produce exactly two bytes");
     }
@@ -633,23 +820,29 @@ mod tests {
         let clock = FakeClock::default();
         input.map =
             Some(Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap());
-        assert!(input.key(30, true, false, &clock).unwrap().is_none());
+        assert!(input.key(30, true, false, false, &clock).unwrap().is_none());
         input.focus.enter(WindowId(1), TabId(1));
         input.repeat.configure(25, 200).unwrap();
-        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
-        input.key(30, false, false, &clock).unwrap();
+        assert_eq!(
+            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            b"a"
+        );
+        input.key(30, false, false, false, &clock).unwrap();
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
             depressed: kbvm::ModifierMask::SHIFT.0,
             ..Default::default()
         });
-        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"A");
-        input.key(30, false, false, &clock).unwrap();
+        assert_eq!(
+            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            b"A"
+        );
+        input.key(30, false, false, false, &clock).unwrap();
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
             depressed: kbvm::ModifierMask::CONTROL.0,
             ..Default::default()
         });
         assert_eq!(
-            input.key(30, true, false, &clock).unwrap().unwrap(),
+            input.key(30, true, false, false, &clock).unwrap().unwrap(),
             b"\x01"
         );
         input
@@ -657,22 +850,28 @@ mod tests {
             .as_mut()
             .unwrap()
             .update_modifiers(Modifiers::default());
-        assert_eq!(input.key(28, true, false, &clock).unwrap().unwrap(), b"\r");
         assert_eq!(
-            input.key(103, true, false, &clock).unwrap().unwrap(),
+            input.key(28, true, false, false, &clock).unwrap().unwrap(),
+            b"\r"
+        );
+        assert_eq!(
+            input.key(103, true, false, false, &clock).unwrap().unwrap(),
             b"\x1b[A"
         );
-        input.key(103, false, false, &clock).unwrap();
+        input.key(103, false, false, false, &clock).unwrap();
         assert_eq!(
-            input.key(103, true, true, &clock).unwrap().unwrap(),
+            input.key(103, true, true, false, &clock).unwrap().unwrap(),
             b"\x1bOA"
         );
         clock
             .advance(std::time::Duration::from_millis(200))
             .unwrap();
-        assert_eq!(input.tick(false, &clock).unwrap().unwrap(), b"\x1b[A");
+        assert_eq!(
+            input.tick(false, false, &clock).unwrap().unwrap(),
+            b"\x1b[A"
+        );
         input.clear_focus();
-        assert!(input.tick(false, &clock).unwrap().is_none());
-        assert!(input.key(30, true, false, &clock).unwrap().is_none());
+        assert!(input.tick(false, false, &clock).unwrap().is_none());
+        assert!(input.key(30, true, false, false, &clock).unwrap().is_none());
     }
 }
