@@ -1,6 +1,7 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod bar;
 mod clipboard;
+mod clipboard_offers;
 mod clipboard_send;
 mod keyboard;
 mod pointer;

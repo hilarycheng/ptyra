@@ -1,7 +1,7 @@
 //! Seat-owned Wayland Clipboard adapter. Payloads never appear in diagnostics.
 use super::Runtime;
 use crate::{
-    clipboard::{ClipboardState, DataSourceRequest, InputSerialEvent, SeatId, SeatSerialState},
+    clipboard::{DataSourceRequest, InputSerialEvent, SeatId, SeatSerialState},
     input::FocusTarget,
 };
 use wayland_client::{
@@ -104,7 +104,7 @@ pub(super) struct Clipboard {
     pub manager: Option<(u32, wl_data_device_manager::WlDataDeviceManager)>,
     device: Option<wl_data_device::WlDataDevice>,
     pub binding: Binding,
-    state: ClipboardState,
+    offers: super::clipboard_offers::Offers<wl_data_offer::WlDataOffer>,
     source: Option<Source>,
     limit: usize,
     source_generation: u64,
@@ -122,7 +122,7 @@ impl Clipboard {
         if let Some(source) = self.source.take() {
             self.sends.cancel_source(source.id);
             source.proxy.destroy();
-            self.state.cancel_local_owner(source.tab);
+            self.offers.state.cancel_local_owner(source.tab);
         }
     }
     pub fn send_fds(&self) -> impl Iterator<Item = (u64, &std::fs::File)> {
@@ -133,8 +133,26 @@ impl Clipboard {
             eprintln!("Ptyra copy: transfer failed");
         }
     }
+    fn clear_offers(&mut self) {
+        for offer in self.offers.clear() {
+            offer.destroy();
+        }
+    }
+    pub fn clear_external_offers(&mut self) {
+        let retired = self.offers.clear_external();
+        if !retired.is_empty()
+            && std::env::var_os("PTYRA_TRACE_CLIPBOARD").as_deref()
+                == Some(std::ffi::OsStr::new("1"))
+        {
+            eprintln!("Ptyra clipboard: external offers cleared");
+        }
+        for offer in retired {
+            offer.destroy();
+        }
+    }
     fn remove_device(&mut self) {
         self.remove_source();
+        self.clear_offers();
         if let Some(device) = self.device.take() {
             device.release();
         }
@@ -178,7 +196,8 @@ impl Runtime {
             .ok_or("clipboard source identity exhausted")?;
         self.clipboard.source_generation = source_id;
         self.clipboard.remove_source();
-        if !self.clipboard.state.set_local_owner(target.tab) {
+        self.clipboard.clear_offers();
+        if !self.clipboard.offers.state.set_local_owner(target.tab) {
             return Err("clipboard identity exhausted");
         }
         let proxy = manager.create_data_source(qh, target.tab);
@@ -214,6 +233,7 @@ impl Runtime {
             return;
         }
         self.clipboard.remove_source();
+        self.clipboard.clear_offers();
         if let Some(device) = self.clipboard.device.take() {
             device.release();
         }
@@ -248,9 +268,47 @@ impl Dispatch<wl_data_device::WlDataDevice, DeviceId> for Runtime {
             }
             return;
         }
-        // Offer consumption is TASK-148. Retire announcements until that lifecycle is connected.
-        if let wl_data_device::Event::DataOffer { id } = event {
-            id.destroy();
+        match event {
+            wl_data_device::Event::DataOffer { id } => {
+                if let Err(offer) = state.clipboard.offers.created(id) {
+                    // Capacity/identity failure must not leave older text readable.
+                    state.clipboard.clear_external_offers();
+                    offer.destroy();
+                }
+            }
+            wl_data_device::Event::Selection { id } => {
+                let (changed, retired) = state.clipboard.offers.select(id.as_ref());
+                for offer in retired {
+                    offer.destroy();
+                }
+                if changed
+                    && std::env::var_os("PTYRA_TRACE_CLIPBOARD").as_deref()
+                        == Some(std::ffi::OsStr::new("1"))
+                {
+                    let message = match state.clipboard.offers.selected() {
+                        Some((_, offer)) if offer.preferred_text_mime().is_some() => {
+                            "text offer selected"
+                        }
+                        Some(_) => "non-text offer selected",
+                        None => "offer cleared",
+                    };
+                    eprintln!("Ptyra clipboard: {message}");
+                }
+            }
+            wl_data_device::Event::Enter {
+                id: Some(offer), ..
+            } => {
+                if state
+                    .clipboard
+                    .offers
+                    .selected()
+                    .is_none_or(|(current, _)| current != &offer)
+                    && let Some(offer) = state.clipboard.offers.discard(&offer)
+                {
+                    offer.destroy();
+                }
+            }
+            _ => {}
         }
     }
     wayland_client::event_created_child!(Runtime,wl_data_device::WlDataDevice,[0 => (wl_data_offer::WlDataOffer,())]);
@@ -299,7 +357,22 @@ impl Dispatch<wl_data_source::WlDataSource, crate::TabId> for Runtime {
     }
 }
 delegate_noop!(Runtime: ignore wl_data_device_manager::WlDataDeviceManager);
-delegate_noop!(Runtime: ignore wl_data_offer::WlDataOffer);
+impl Dispatch<wl_data_offer::WlDataOffer, ()> for Runtime {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_data_offer::WlDataOffer,
+        event: wl_data_offer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_data_offer::Event::Offer { mime_type } = event
+            && state.clipboard.offers.advertise(proxy, &mime_type).is_err()
+        {
+            eprintln!("Ptyra clipboard: invalid offer");
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

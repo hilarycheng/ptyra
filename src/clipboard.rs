@@ -492,6 +492,13 @@ impl ClipboardState {
         true
     }
 
+    /// Clear ownership without recycling offer identities or accepting older announcements.
+    pub fn clear_selection(&mut self) {
+        self.owner = None;
+        self.latest_offer = None;
+        self.current_epoch = self.next_epoch;
+    }
+
     pub fn cancel_local_owner(&mut self, tab: TabId) {
         if self.owner == Some(ClipboardOwner::Local(tab)) {
             self.owner = None;

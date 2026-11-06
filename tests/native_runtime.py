@@ -198,6 +198,23 @@ def main():
                 wait_until(lambda: "Ptyra clipboard: device bound" in (root / "app.log").read_text())
                 assert (root / "app.log").read_text().count("Ptyra clipboard: device bound") == 1
                 print("PASS: native seat binds exactly one clipboard data device")
+            if os.environ.get("PTYRA_TEST_CLIPBOARD_OFFERS"):
+                for mime, message in [("text/plain;charset=utf-8", "text offer selected"), ("application/octet-stream", "non-text offer selected")]:
+                    before = (root / "app.log").read_text().count("Ptyra clipboard: " + message)
+                    subprocess.run(["wl-copy", "--type", mime, "fixture"], env=env, check=True, timeout=5)
+                    wait_until(lambda: (root / "app.log").read_text().count("Ptyra clipboard: " + message) > before)
+                subprocess.run(["wl-copy", "--clear"], env=env, check=True, timeout=5)
+                wait_until(lambda: "Ptyra clipboard: offer cleared" in (root / "app.log").read_text())
+                before = (root / "app.log").read_text().count("Ptyra clipboard: text offer selected")
+                subprocess.run(["wl-copy", "--type", "text/plain;charset=utf-8", "focus-fixture"], env=env, check=True, timeout=5)
+                wait_until(lambda: (root / "app.log").read_text().count("Ptyra clipboard: text offer selected") > before)
+                before = (root / "app.log").read_text().count("Ptyra clipboard: external offers cleared")
+                ipc("workspace number 2")
+                wait_until(lambda: (root / "app.log").read_text().count("Ptyra clipboard: external offers cleared") > before)
+                before = (root / "app.log").read_text().count("Ptyra clipboard: text offer selected")
+                ipc("workspace number 1")
+                wait_until(lambda: (root / "app.log").read_text().count("Ptyra clipboard: text offer selected") > before)
+                print("PASS: native offer replacement, selection None, focus-loss cleanup and reacquisition")
             if os.environ.get("PTYRA_TEST_TRACE"):
                 keyboard.key(30)
                 keyboard.sync()
@@ -340,7 +357,12 @@ def main():
                     if os.environ.get("PTYRA_TEST_COPY_TRANSFER"):
                         for mime in formats:
                             assert subprocess.check_output(["wl-paste", "--no-newline", "--type", mime], env=env, timeout=5) == "中".encode()
-                        print("PASS: native nonblocking Copy sends exact UTF-8 bytes for both advertised MIME types")
+                        ipc("workspace number 2")
+                        time.sleep(0.15)
+                        assert subprocess.check_output(["wl-paste", "--no-newline", "--type", "text/plain"], env=env, timeout=5) == "中".encode()
+                        ipc("workspace number 1")
+                        time.sleep(0.15)
+                        print("PASS: native Copy sends exact UTF-8 for both MIME types and retains its source after focus loss")
 
                     subprocess.run(["wl-copy", "--type", "application/octet-stream", "replacement"], env=env, check=True, timeout=5)
                     wait_until(lambda: "Ptyra copy: cancelled" in (root / "app.log").read_text())

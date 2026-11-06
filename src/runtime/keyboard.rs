@@ -232,6 +232,7 @@ impl Runtime {
         }
     }
     pub(super) fn remove_keyboard(&mut self) {
+        self.clipboard.clear_external_offers();
         if let Some(keyboard) = self.keyboard.take() {
             keyboard.release();
         }
@@ -264,6 +265,7 @@ impl Runtime {
                 }
             }
             wl_keyboard::Event::Leave { .. } => {
+                self.clipboard.clear_external_offers();
                 self.cancel_pointer_drag();
                 self.input.clear_focus();
                 self.paint.dirty = true;
