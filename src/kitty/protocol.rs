@@ -5,15 +5,25 @@ use std::collections::VecDeque;
 const MAX_KEYBOARD_REPLIES: usize = 32;
 const MAX_KEYBOARD_STACK: usize = 32;
 
-#[derive(Default)]
 pub(crate) struct KeyboardProtocol {
     parser: Parser,
     state: KeyboardState,
 }
 
+impl Default for KeyboardProtocol {
+    fn default() -> Self {
+        Self {
+            parser: Parser::default(),
+            state: KeyboardState {
+                supported: super::encode::READY_KEYBOARD_FLAGS,
+                ..Default::default()
+            },
+        }
+    }
+}
+
 #[derive(Default)]
 struct KeyboardState {
-    // shortcut: advertise no modes until complete key coverage and native input integration are verified.
     supported: KeyboardFlags,
     active: ModeStack,
     inactive: ModeStack,
@@ -31,6 +41,10 @@ struct ModeStack {
 }
 
 impl KeyboardProtocol {
+    pub(crate) fn flags(&self) -> KeyboardFlags {
+        self.state.active.current & self.state.supported
+    }
+
     pub(crate) fn set_screen(&mut self, alternate: bool) {
         if self.state.alternate != alternate {
             std::mem::swap(&mut self.state.active, &mut self.state.inactive);
@@ -195,7 +209,7 @@ mod tests {
         }
         let reply = terminal.take_keyboard_reply().unwrap();
         assert_eq!(reply.tab, TabId(7));
-        assert_eq!(reply.bytes, b"\x1b[?0u");
+        assert_eq!(reply.bytes, b"\x1b[?1u");
         assert!(terminal.take_keyboard_reply().is_none());
         let mut protocol = KeyboardProtocol::default();
         protocol.state.supported = KeyboardFlags::DISAMBIGUATE_ESC_CODES;

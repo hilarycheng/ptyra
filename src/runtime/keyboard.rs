@@ -43,6 +43,7 @@ impl KeyboardInput {
         pressed: bool,
         application_cursor: bool,
         application_keypad: bool,
+        flags: KeyboardFlags,
         clock: &impl Clock,
     ) -> Result<Option<Vec<u8>>> {
         let Some(route) = self.focus.route_key(code, pressed) else {
@@ -57,12 +58,13 @@ impl KeyboardInput {
         else {
             return Ok(None);
         };
-        self.encode(key, application_cursor, application_keypad, clock)
+        self.encode(key, application_cursor, application_keypad, flags, clock)
     }
     pub fn tick(
         &mut self,
         application_cursor: bool,
         application_keypad: bool,
+        flags: KeyboardFlags,
         clock: &impl Clock,
     ) -> Result<Option<Vec<u8>>> {
         let Some(map) = &self.map else {
@@ -75,13 +77,14 @@ impl KeyboardInput {
         else {
             return Ok(None);
         };
-        self.encode(key, application_cursor, application_keypad, clock)
+        self.encode(key, application_cursor, application_keypad, flags, clock)
     }
     fn encode(
         &mut self,
         key: TranslatedKey,
         application_cursor: bool,
         application_keypad: bool,
+        flags: KeyboardFlags,
         clock: &impl Clock,
     ) -> Result<Option<Vec<u8>>> {
         use crate::config::bindings::BindingAction;
@@ -136,7 +139,7 @@ impl KeyboardInput {
             }
         }
         let encoder = KeyEncoder {
-            flags: KeyboardFlags::empty(),
+            flags,
             application_cursor,
             application_keypad,
         };
@@ -379,6 +382,7 @@ impl Runtime {
                     pressed,
                     self.application_cursor(),
                     self.application_keypad(),
+                    self.keyboard_flags(),
                     &self.clock,
                 )?;
                 self.enqueue_input(bytes);
@@ -450,6 +454,8 @@ mod tests {
         clock::FakeClock,
         keymap::{Keymap, Modifiers},
     };
+    const LEGACY: KeyboardFlags = KeyboardFlags::empty();
+
     #[test]
     fn legacy_keypad_obeys_terminal_modes() {
         let clock = FakeClock::default();
@@ -505,7 +511,7 @@ mod tests {
                         }
                         assert_eq!(
                             input
-                                .key(code, true, app_cursor, app_keypad, &clock)
+                                .key(code, true, app_cursor, app_keypad, LEGACY, &clock)
                                 .unwrap()
                                 .unwrap(),
                             expected,
@@ -513,7 +519,7 @@ mod tests {
                         );
                         assert!(
                             input
-                                .key(code, false, app_cursor, app_keypad, &clock)
+                                .key(code, false, app_cursor, app_keypad, LEGACY, &clock)
                                 .unwrap()
                                 .is_none()
                         );
@@ -527,10 +533,13 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            input.key(96, true, false, true, &clock).unwrap().unwrap(),
+            input
+                .key(96, true, false, true, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\x1bOM"
         );
-        input.key(96, false, false, true, &clock).unwrap();
+        input.key(96, false, false, true, LEGACY, &clock).unwrap();
         for app_keypad in [false, true] {
             for (mask, expected) in [
                 (1, "\x1b[1;2A"),
@@ -546,12 +555,14 @@ mod tests {
                 });
                 assert_eq!(
                     input
-                        .key(72, true, true, app_keypad, &clock)
+                        .key(72, true, true, app_keypad, LEGACY, &clock)
                         .unwrap()
                         .unwrap(),
                     expected.as_bytes()
                 );
-                input.key(72, false, true, app_keypad, &clock).unwrap();
+                input
+                    .key(72, false, true, app_keypad, LEGACY, &clock)
+                    .unwrap();
             }
         }
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
@@ -559,54 +570,82 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            input.key(72, true, false, true, &clock).unwrap().unwrap(),
+            input
+                .key(72, true, false, true, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\x1b\x1bOx"
         );
-        input.key(72, false, false, true, &clock).unwrap();
+        input.key(72, false, false, true, LEGACY, &clock).unwrap();
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
             depressed: 5,
             ..Default::default()
         });
         assert_eq!(
-            input.key(30, true, false, true, &clock).unwrap().unwrap(),
+            input
+                .key(30, true, false, true, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\x01"
         );
-        input.key(30, false, false, true, &clock).unwrap();
+        input.key(30, false, false, true, LEGACY, &clock).unwrap();
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
             depressed: 64,
             ..Default::default()
         });
-        assert!(input.key(30, true, false, true, &clock).unwrap().is_none());
-        input.key(30, false, false, true, &clock).unwrap();
+        assert!(
+            input
+                .key(30, true, false, true, LEGACY, &clock)
+                .unwrap()
+                .is_none()
+        );
+        input.key(30, false, false, true, LEGACY, &clock).unwrap();
         input
             .map
             .as_mut()
             .unwrap()
             .update_modifiers(Modifiers::default());
         assert_eq!(
-            input.key(28, true, false, true, &clock).unwrap().unwrap(),
+            input
+                .key(28, true, false, true, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\r"
         );
-        input.key(28, false, false, true, &clock).unwrap();
-        assert!(input.key(69, true, false, true, &clock).unwrap().is_none()); // NumLock is state only.
+        input.key(28, false, false, true, LEGACY, &clock).unwrap();
+        assert!(
+            input
+                .key(69, true, false, true, LEGACY, &clock)
+                .unwrap()
+                .is_none()
+        ); // NumLock is state only.
         input.repeat.configure(20, 100).unwrap();
         assert_eq!(
-            input.key(72, true, false, false, &clock).unwrap().unwrap(),
+            input
+                .key(72, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\x1b[A"
         );
         clock
             .advance(std::time::Duration::from_millis(100))
             .unwrap();
-        assert_eq!(input.tick(false, true, &clock).unwrap().unwrap(), b"\x1bOx");
+        assert_eq!(
+            input.tick(false, true, LEGACY, &clock).unwrap().unwrap(),
+            b"\x1bOx"
+        );
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
             locked: 32,
             ..Default::default()
         });
         clock.advance(std::time::Duration::from_millis(50)).unwrap();
-        assert_eq!(input.tick(false, true, &clock).unwrap().unwrap(), b"8");
-        input.key(72, false, false, true, &clock).unwrap();
+        assert_eq!(
+            input.tick(false, true, LEGACY, &clock).unwrap().unwrap(),
+            b"8"
+        );
+        input.key(72, false, false, true, LEGACY, &clock).unwrap();
         input.clear_focus();
-        assert!(input.tick(false, true, &clock).unwrap().is_none());
+        assert!(input.tick(false, true, LEGACY, &clock).unwrap().is_none());
     }
     #[test]
     fn runtime_shifted_shortcut_matches_base_symbol() {
@@ -626,9 +665,19 @@ mod tests {
             depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,
             ..Default::default()
         });
-        assert!(input.key(5, true, false, false, &clock).unwrap().is_none());
+        assert!(
+            input
+                .key(5, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(input.action.take(), Some(BindingAction::NewTab));
-        assert!(input.key(5, false, false, false, &clock).unwrap().is_none());
+        assert!(
+            input
+                .key(5, false, false, false, LEGACY, &clock)
+                .unwrap()
+                .is_none()
+        );
     }
     #[test]
     fn runtime_all_configured_actions_and_ime_ownership() {
@@ -661,14 +710,24 @@ mod tests {
                 depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,
                 ..Default::default()
             });
-            assert!(input.key(15, true, false, false, &clock).unwrap().is_none());
+            assert!(
+                input
+                    .key(15, true, false, false, LEGACY, &clock)
+                    .unwrap()
+                    .is_none()
+            );
             assert_eq!(input.action.take(), Some(expected));
             input.retarget(TabId(2));
-            assert!(input.key(15, true, false, false, &clock).unwrap().is_none());
+            assert!(
+                input
+                    .key(15, true, false, false, LEGACY, &clock)
+                    .unwrap()
+                    .is_none()
+            );
             assert!(input.action.take().is_none());
             assert!(
                 input
-                    .key(15, false, false, false, &clock)
+                    .key(15, false, false, false, LEGACY, &clock)
                     .unwrap()
                     .is_none()
             );
@@ -688,7 +747,10 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\x01"
         );
         assert!(input.action.is_none());
@@ -704,7 +766,7 @@ mod tests {
         };
         input.focus.enter(WindowId(1), TabId(1));
         input.repeat.configure(25, 100).unwrap();
-        input.key(30, true, false, false, &clock).unwrap();
+        input.key(30, true, false, false, LEGACY, &clock).unwrap();
         let old = input
             .map
             .as_ref()
@@ -715,10 +777,18 @@ mod tests {
         input.retarget(TabId(2));
         assert_eq!(input.focus.target().unwrap().tab, TabId(2));
         clock.advance(std::time::Duration::from_secs(1)).unwrap();
-        assert!(input.tick(false, false, &clock).unwrap().is_none());
-        assert!(input.encode(old, false, false, &clock).unwrap().is_none());
+        assert!(input.tick(false, false, LEGACY, &clock).unwrap().is_none());
+        assert!(
+            input
+                .encode(old, false, false, LEGACY, &clock)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
-            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"a"
         );
         input.clear_focus();
@@ -744,12 +814,22 @@ mod tests {
             depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::SHIFT.0,
             ..Default::default()
         });
-        assert!(input.key(30, true, false, false, &clock).unwrap().is_none());
+        assert!(
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(input.action.take(), Some(BindingAction::NewTab));
-        assert!(input.key(30, true, false, false, &clock).unwrap().is_none());
+        assert!(
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .is_none()
+        );
         assert!(input.action.take().is_none());
         clock.advance(std::time::Duration::from_secs(1)).unwrap();
-        assert!(input.tick(false, false, &clock).unwrap().is_none());
+        assert!(input.tick(false, false, LEGACY, &clock).unwrap().is_none());
         input
             .map
             .as_mut()
@@ -757,13 +837,16 @@ mod tests {
             .update_modifiers(Modifiers::default());
         assert!(
             input
-                .key(30, false, false, false, &clock)
+                .key(30, false, false, false, LEGACY, &clock)
                 .unwrap()
                 .is_none()
         );
         assert!(input.action.take().is_none());
         assert_eq!(
-            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"a"
         );
         input.clear_focus();
@@ -798,18 +881,23 @@ mod tests {
         input.repeat.configure(25, 600).unwrap();
         let mut bytes = Vec::new();
         for _ in 0..2 {
-            bytes.extend(input.key(30, true, false, false, &clock).unwrap().unwrap());
+            bytes.extend(
+                input
+                    .key(30, true, false, false, LEGACY, &clock)
+                    .unwrap()
+                    .unwrap(),
+            );
             clock.advance(std::time::Duration::from_millis(50)).unwrap();
             assert!(
                 input
-                    .key(30, false, false, false, &clock)
+                    .key(30, false, false, false, LEGACY, &clock)
                     .unwrap()
                     .is_none()
             );
             clock
                 .advance(std::time::Duration::from_millis(700))
                 .unwrap();
-            assert!(input.tick(false, false, &clock).unwrap().is_none());
+            assert!(input.tick(false, false, LEGACY, &clock).unwrap().is_none());
         }
         assert_eq!(bytes, b"aa", "two real taps produce exactly two bytes");
     }
@@ -819,29 +907,43 @@ mod tests {
         let clock = FakeClock::default();
         input.map =
             Some(Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap());
-        assert!(input.key(30, true, false, false, &clock).unwrap().is_none());
+        assert!(
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .is_none()
+        );
         input.focus.enter(WindowId(1), TabId(1));
         input.repeat.configure(25, 200).unwrap();
         assert_eq!(
-            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"a"
         );
-        input.key(30, false, false, false, &clock).unwrap();
+        input.key(30, false, false, false, LEGACY, &clock).unwrap();
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
             depressed: kbvm::ModifierMask::SHIFT.0,
             ..Default::default()
         });
         assert_eq!(
-            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"A"
         );
-        input.key(30, false, false, false, &clock).unwrap();
+        input.key(30, false, false, false, LEGACY, &clock).unwrap();
         input.map.as_mut().unwrap().update_modifiers(Modifiers {
             depressed: kbvm::ModifierMask::CONTROL.0,
             ..Default::default()
         });
         assert_eq!(
-            input.key(30, true, false, false, &clock).unwrap().unwrap(),
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\x01"
         );
         input
@@ -850,27 +952,41 @@ mod tests {
             .unwrap()
             .update_modifiers(Modifiers::default());
         assert_eq!(
-            input.key(28, true, false, false, &clock).unwrap().unwrap(),
+            input
+                .key(28, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\r"
         );
         assert_eq!(
-            input.key(103, true, false, false, &clock).unwrap().unwrap(),
+            input
+                .key(103, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\x1b[A"
         );
-        input.key(103, false, false, false, &clock).unwrap();
+        input.key(103, false, false, false, LEGACY, &clock).unwrap();
         assert_eq!(
-            input.key(103, true, true, false, &clock).unwrap().unwrap(),
+            input
+                .key(103, true, true, false, LEGACY, &clock)
+                .unwrap()
+                .unwrap(),
             b"\x1bOA"
         );
         clock
             .advance(std::time::Duration::from_millis(200))
             .unwrap();
         assert_eq!(
-            input.tick(false, false, &clock).unwrap().unwrap(),
+            input.tick(false, false, LEGACY, &clock).unwrap().unwrap(),
             b"\x1b[A"
         );
         input.clear_focus();
-        assert!(input.tick(false, false, &clock).unwrap().is_none());
-        assert!(input.key(30, true, false, false, &clock).unwrap().is_none());
+        assert!(input.tick(false, false, LEGACY, &clock).unwrap().is_none());
+        assert!(
+            input
+                .key(30, true, false, false, LEGACY, &clock)
+                .unwrap()
+                .is_none()
+        );
     }
 }

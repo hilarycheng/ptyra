@@ -1108,7 +1108,7 @@ fn runtime_kitty_queries_drain_before_reply_queue_fills() {
 
     // Query completion order crosses all three parser dispatches, main/alt and reset.
     let query = b"\x1b[5n\x1b[=31u\x1b[?u\x1b]4;1;?\x07\x1b[?u\x1b[18t\x1b[?2026$p\x1b[?1049h\x1b[>31u\x1b[?u\x1b[?1049l\x1bc\x1b[?u";
-    let replies = b"\x1b[0n\x1b[?0u\x1b]4;1;rgb:cccc/0000/0000\x07\x1b[?0u\x1b[8;4;16t\x1b[?2026;2$y\x1b[?0u\x1b[?0u";
+    let replies = b"\x1b[0n\x1b[?1u\x1b]4;1;rgb:cccc/0000/0000\x07\x1b[?1u\x1b[8;4;16t\x1b[?2026;2$y\x1b[?1u\x1b[?0u";
     let queue = &mut tabs.get_mut(id).unwrap().pty_mut().unwrap().queue;
     queue.enqueue(id, true, b"before").unwrap();
     queue.reserve_paste(id, true).unwrap();

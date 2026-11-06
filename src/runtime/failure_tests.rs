@@ -37,7 +37,9 @@ fn runtime() -> Runtime {
             .unwrap(),
     );
     app.input.repeat.configure(20, 100).unwrap();
-    app.input.key(30, true, false, false, &app.clock).unwrap();
+    app.input
+        .key(30, true, false, false, app.keyboard_flags(), &app.clock)
+        .unwrap();
     assert!(
         app.input
             .repeat

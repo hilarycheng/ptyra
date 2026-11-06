@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（178 已勾選；TASK-129、TASK-175–176、TASK-182–199 共 21 項未勾選）。
+**Total:** 199 atomic TASKS（179 已勾選；TASK-129、TASK-175–176、TASK-183–199 共 20 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -808,7 +808,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-108`, `TASK-110`, `TASK-111`, `TASK-164` | **Unit Test:** `kitty_supported_flags_match_complete_encoder_coverage`
   - **Done:** 對擬宣告 subset 建立 printable/control/function/keypad/modified press-repeat-release byte fixtures，包括 Shift+Enter；補齊該 flags 要求嘅 encoding，未完成旗標仍拒絕/不宣告；唔因已有 bit definition 就開啟全 flags。
 
-- [ ] **TASK-182 — Negotiated Kitty mode 驅動 active Tab encoder**
+- [x] **TASK-182 — Negotiated Kitty mode 驅動 active Tab encoder**
   - **Dependencies:** `TASK-112`, `TASK-113`, `TASK-130`, `TASK-133`, `TASK-180`, `TASK-181` | **Unit Test:** `runtime_kitty_negotiation_controls_active_encoder`
   - **Done:** 將每 Tab main/alt stack current flags 提供 runtime key encoder；set/push/pop/query/reset 都一致；只宣告已測 subset，legacy apps 維持原輸入；Tab/screen switch 不混入另一個 mode stack。
 

@@ -143,6 +143,6 @@ mod tests {
         assert_eq!(cell.bg, Color::Named(NamedColor::Background));
         assert!(!cell.flags.contains(Flags::INVERSE));
         terminal.feed(TabId(1), b"\x1b[>31u\x1b[?u").unwrap();
-        assert_eq!(terminal.take_keyboard_reply().unwrap().bytes, b"\x1b[?0u");
+        assert_eq!(terminal.take_keyboard_reply().unwrap().bytes, b"\x1b[?1u");
     }
 }

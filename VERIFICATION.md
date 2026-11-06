@@ -393,3 +393,35 @@ Known limitations: 只有 bit 1 ready；bit 2 欠 press/release ownership；其�
   Runtime 仍宣告 0 flags，negotiation 屬 TASK-182；TASK-129 保持未提交及未勾選
 Ready for [x]: YES — 沿用已批准嘅 checkbox 更新同逐項 commit
 ```
+
+## TASK-182 — Runtime Kitty negotiation（2026-11-07）
+
+- 預設保持 0 flags；app 要求 enhancement 後，只接受 TASK-181 已驗證嘅 bit 1。要求 31 flags 時，query 如實回覆 1。Runtime press／repeat 每次直接讀取 active Tab 嘅當前 mode；冇新增另一份 cached flags。Shift+Enter 喺 bit 1 下輸出 `CSI 13;2u`，未 opt-in 時維持 legacy bytes。
+- 沿用每 Tab 嘅 main／alt stacks 同 32-entry 上限；set／add／remove、push／pop、screen switch 同 RIS reset 共用同一 state。未完成嘅 bits 2／4／8／16 不參與 negotiation，release 維持不輸出。Protocol 依據：[Kitty keyboard progressive enhancement](https://sw.kovidgoyal.net/kitty/keyboard-protocol/#progressive-enhancement)。
+- `runtime_kitty_negotiation_controls_active_encoder` 使用固定 font/XKB fixtures、無 PTY 嘅 Tab registry 同 fake clock。逐 byte feed 驗證 query 同 actual encoder bytes、malformed mode、main／alt 隔離、mode 改變後嘅 repeat、切 Tab 取消 repeat、hidden Tab negotiation、close 同新 Tab reset。先測試失敗：`/tmp/ptyra-t182-red.log` 顯示要求 bit 1 後仍回覆 0；接線後 PASS。
+- 更新已有 query fixtures，讓 negotiated flags 同 encoder 一致；native raw-child fixture 結束前重設 mode。新 native probe 逐步核對 Ctrl／Alt keys、Shift+Enter、F1、arrows、keypad Enter、Esc、普通文字、repeat 同 consumed shortcuts；兩個真 PTY 驗證 hidden Tab mode 改變唔影響 active Tab。首次 native run 嘅 Kitty assertions 已 PASS，但舊 harness 假設全程只發生一次 Copy；改為核對該步驟增加一次後，整套重跑 PASS。
+- Combined workspace：312 unit tests、13 integration tests、2 doctests PASS；ignored fish regression 另行執行 PASS。獨立 checkout 排除 TASK-129：308 unit tests、13 integration tests、2 doctests，加跑 fish regression 全部 PASS。兩份 source 嘅目標 test、Format、Clippy `-D warnings` 同 build 均 PASS。Cargo 使用 `--locked --offline`、CPU affinity 0–1、jobs/test threads=2。Logs：`/tmp/ptyra-t182-{focused,workspace,fish,fmt,clippy}.log` 同 `/tmp/ptyra-t182-clean-*.log`。
+- Combined／獨立 debug binaries 喺 Ubuntu 24.04.4、owned headless Sway 1.9 + pixman 通過新 Kitty probe、legacy keypad、query flood/backpressure、4096-query bursts、keyboard/focus/reconnect 同 font pixels。Combined 額外通過 Clipboard／Primary／Selection／Tabs matrix；private Fcitx5 5.1.7 通過既有 legacy-mode 倉頡 preedit、一次 UTF-8 commit、focus、restart regression。Logs：`/tmp/ptyra-t182-native-final.log`、`/tmp/ptyra-t182-clean-native.log`、`/tmp/ptyra-t182-clipboard.log`、`/tmp/ptyra-t182-ime.log`。
+- Release build 同 native Kitty／query／ordinary keyboard probes PASS；`target/release/ptyra` SHA-256：`d878d4369b13b04130e6ca1d56052240ebd97b79011bf72ce028310e5c92a1d3`。Logs：`/tmp/ptyra-t182-release-build.log`、`/tmp/ptyra-t182-release-native.log`。冇重新啟動使用者現有 Ptyra。
+- 冇新增 dependency、unsafe、FFI、payload logging 或系統設定改動。TASK-129 獨立檔案逐 byte 保留；共用 runtime/keyboard 檔案嘅原有 IME hunks 亦核對相同，唔包含喺本次 commit。未執行真 Sway 1.10.1 desktop、AMD/Mesa 或 enhanced multi-Tab IME acceptance；TASK-175／183 同其他 gates 保持未完成。
+
+```text
+TASK: TASK-182
+Status: DONE
+Dependencies: satisfied — TASK-112, TASK-113, TASK-130, TASK-133, TASK-180, TASK-181
+Changed files: src/kitty/{encode.rs,encode_coverage.rs,protocol.rs}, src/terminal.rs,
+  src/runtime.rs, src/runtime/{keyboard.rs,kitty_tests.rs,failure_tests.rs},
+  src/pty/write/tests.rs, src/terminfo.rs,
+  tests/{native_kitty.py,native_replies.py,native_runtime.py}, TASKS.md, VERIFICATION.md
+Unit test: cargo test --workspace --locked --offline runtime_kitty_negotiation_controls_active_encoder
+Result: PASS
+Workspace tests: PASS — combined 312 unit；獨立提交 308 unit；各有 13 integration、2 doctests
+  ignored fish regression 兩份 source 均另行執行 PASS
+Format / Clippy: PASS
+Manual / Integration checks: 隔離 Sway Kitty/legacy probes、Clipboard/Primary/Tabs、legacy Fcitx5 PASS
+  release build/native probes PASS；真 desktop/enhanced multi-Tab IME acceptance NOT RUN
+Security / Privacy impact: 只協商已驗證 bit 1；原有 resource limits、Tab ownership 同 logging policy 保留
+Known limitations: bits 2/4/8/16 不支援 negotiation；未宣稱完整 Kitty Keyboard 支援
+  TASK-129 保持未提交及未勾選；enhanced IME ownership 屬 TASK-183
+Ready for [x]: YES — 沿用已批准嘅 checkbox 更新同逐項 commit
+```

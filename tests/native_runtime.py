@@ -281,6 +281,9 @@ def main():
             if os.environ.get("PTYRA_TEST_KEYPAD"):
                 from native_keypad import check_keypad
                 check_keypad(root, keyboard, app, wait_until, u32)
+            if os.environ.get("PTYRA_TEST_KITTY"):
+                from native_kitty import check_kitty
+                check_kitty(root, keyboard, app, wait_until)
             if os.environ.get("PTYRA_TEST_FOCUS"):
                 from native_focus import check_focus
                 check_focus(root, keyboard, app, wait_until, ipc)
@@ -520,15 +523,16 @@ pending.replace(result)
                 print("PASS: native focus/Tab cancellation drops unsent payload, closes original framing, preserves tail and other Shell" + (" for Clipboard and Primary" if os.environ.get("PTYRA_TEST_PRIMARY") else ""))
             if os.environ.get("PTYRA_TEST_COPY_OWNER"):
                 subprocess.run(["wl-copy", "--type", "application/octet-stream", "sentinel"], env=env, check=True, timeout=5)
+            copy_before = (root / "app.log").read_text().count("Ptyra copy: no valid selection")
             keyboard.modifiers(5)
             keyboard.key(30)
             keyboard.sync()
-            wait_until(lambda: "Ptyra copy: no valid selection" in (root / "app.log").read_text())
+            wait_until(lambda: (root / "app.log").read_text().count("Ptyra copy: no valid selection") > copy_before)
             time.sleep(0.7)  # Holding a shortcut must not repeat or leak into the Shell.
             keyboard.modifiers(0)
             keyboard.key(30, False)
             keyboard.sync()
-            assert (root / "app.log").read_text().count("Ptyra copy: no valid selection") == 1
+            assert (root / "app.log").read_text().count("Ptyra copy: no valid selection") == copy_before + 1
             if os.environ.get("PTYRA_TEST_COPY_OWNER"):
                 assert subprocess.check_output(["wl-paste", "--type", "application/octet-stream", "--no-newline"], env=env, timeout=5) == b"sentinel"
 

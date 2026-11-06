@@ -14,6 +14,8 @@ mod focus_reports;
 mod fonts;
 mod hyperlink;
 mod keyboard;
+#[cfg(test)]
+mod kitty_tests;
 mod mouse;
 mod paste;
 mod pointer;
@@ -307,6 +309,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         let bytes = app.input.tick(
             app.application_cursor(),
             app.application_keypad(),
+            app.keyboard_flags(),
             &app.clock,
         )?;
         if bytes.is_some()
@@ -507,6 +510,14 @@ pub fn run(config: crate::config::Config) -> Result<()> {
 }
 
 impl Runtime {
+    fn keyboard_flags(&self) -> crate::kitty::KeyboardFlags {
+        self.tabs
+            .active()
+            .and_then(|id| self.tabs.get(id))
+            .and_then(|tab| tab.terminal().keyboard_flags())
+            .unwrap_or_default()
+    }
+
     fn application_cursor(&self) -> bool {
         self.tabs
             .active()

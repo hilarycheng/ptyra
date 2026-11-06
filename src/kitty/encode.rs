@@ -5,7 +5,7 @@ use crate::{
 };
 use kbvm::{Keysym, ModifierMask};
 
-/// Complete subset ready for TASK-182 negotiation; runtime still advertises zero.
+/// Complete subset used by runtime negotiation.
 /// Event primitives remain testable, but flag 2 needs press/release ownership first.
 pub const READY_KEYBOARD_FLAGS: KeyboardFlags = KeyboardFlags::DISAMBIGUATE_ESC_CODES;
 

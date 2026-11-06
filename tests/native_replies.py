@@ -16,9 +16,9 @@ def check_replies(root, keyboard, app, wait_until, ipc):
         query = (b"\x1b[c\x1b[5n\x1b[=31u\x1b[?u\x1b]4;1;?\x07\x1b[?u"
                  + f"\x1b[{row};{column}H\x1b[6n".encode()
                  + b"\x1b[?2026$p\x1b[?u")
-        expected = (b"\x1b[?6c\x1b[0n\x1b[?0u\x1b]4;1;rgb:cccc/0000/0000\x07\x1b[?0u"
+        expected = (b"\x1b[?6c\x1b[0n\x1b[?1u\x1b]4;1;rgb:cccc/0000/0000\x07\x1b[?1u"
                     + f"\x1b[{row};{column}R".encode()
-                    + b"\x1b[?2026;2$y\x1b[?0u")
+                    + b"\x1b[?2026;2$y\x1b[?1u")
         script.write_text(
             "import os,select,termios,time,tty\nfrom pathlib import Path\n"
             f"prefix=Path({str(prefix)!r})\n"
@@ -30,7 +30,7 @@ def check_replies(root, keyboard, app, wait_until, ipc):
             "  assert time.monotonic()<end, 'gate timeout'\n"
             "  time.sleep(0.01)\n"
             # Split sequences across writes, then a burst larger than kernel input capacity.
-            f" query={query!r}\n expected={expected!r}+b'\\x1b[?0u'*4096\n"
+            f" query={query!r}\n expected={expected!r}+b'\\x1b[?1u'*4096\n"
             " for byte in query:\n  os.write(1,bytes([byte])); time.sleep(0.002)\n"
             " os.write(1,b'\\x1b[?u'*4096)\n time.sleep(0.15)\n"
             " received=bytearray()\n end=time.monotonic()+6\n"
@@ -39,7 +39,7 @@ def check_replies(root, keyboard, app, wait_until, ipc):
             " assert bytes(received)==expected, (len(received),len(expected),bytes(received[:64]))\n"
             " assert not select.select([0],[],[],0.2)[0], 'duplicate or cross-Tab reply'\n"
             " prefix.with_suffix('.done').write_text('done')\n"
-            "finally:\n termios.tcsetattr(0,termios.TCSANOW,old)\n"
+            "finally:\n os.write(1,b'\\x1b[=0u')\n termios.tcsetattr(0,termios.TCSANOW,old)\n"
         )
         keyboard.text('python3 ' + str(script))
         key(28)
@@ -60,4 +60,4 @@ def check_replies(root, keyboard, app, wait_until, ipc):
     time.sleep(0.1)
     key(17, 5)  # Close Tab 2; leave Tab 1's Shell for the remaining native suite.
     time.sleep(0.1)
-    print('PASS: native split mixed DA/DSR/OSC/sync/Kitty queries and 4096-query bursts return exact ordered zero flags once to both original unfocused/hidden PTYs')
+    print('PASS: native split mixed DA/DSR/OSC/sync/Kitty queries and 4096-query bursts return exact ordered negotiated flags once to both original unfocused/hidden PTYs')

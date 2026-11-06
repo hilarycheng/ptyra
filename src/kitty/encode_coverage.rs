@@ -685,7 +685,10 @@ fn kitty_unsupported_flags_and_keys_never_partially_encode_or_advertise() {
         terminal
             .feed(TabId(1), format!("\x1b[={bits}u\x1b[?u").as_bytes())
             .unwrap();
-        assert_eq!(terminal.take_keyboard_reply().unwrap().bytes, b"\x1b[?0u");
+        assert_eq!(
+            terminal.take_keyboard_reply().unwrap().bytes,
+            format!("\x1b[?{}u", bits & 1).as_bytes()
+        );
     }
 }
 

@@ -206,6 +206,10 @@ impl Terminal {
             })
     }
 
+    pub(crate) fn keyboard_flags(&self) -> Option<crate::kitty::KeyboardFlags> {
+        self.core.as_ref().map(|core| core.keyboard.flags())
+    }
+
     /// Drain once; the adapter owns accepted bytes and must never replay a rejected batch.
     pub(crate) fn take_core_replies(&mut self) -> (Vec<u8>, bool) {
         let Some(core) = &mut self.core else {
