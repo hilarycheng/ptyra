@@ -226,6 +226,30 @@ impl Terminal {
         self.core.as_ref().map(|core| core.term.grid())
     }
 
+    /// Move only the viewport using the core's page/top/bottom policy.
+    /// Positive deltas move toward older history; every operation clamps to history.
+    /// Returns whether the offset changed, without touching Shell cursor or input bytes.
+    pub fn scroll_viewport(
+        &mut self,
+        scroll: alacritty_terminal::grid::Scroll,
+    ) -> Result<bool, TerminalError> {
+        use alacritty_terminal::grid::Scroll;
+        let core = self.core.as_mut().ok_or_else(|| TerminalError {
+            tab: self.tab,
+            error: AppError::new(Component::Terminal, ErrorKind::NotConnected),
+        })?;
+        // The core adds signed deltas; clamp before addition to avoid i32 overflow.
+        let scroll = match scroll {
+            Scroll::Delta(lines) => Scroll::Delta(
+                lines.clamp(-(MAX_SCROLLBACK_LINES as i32), MAX_SCROLLBACK_LINES as i32),
+            ),
+            other => other,
+        };
+        let before = core.term.grid().display_offset();
+        core.term.scroll_display(scroll);
+        Ok(core.term.grid().display_offset() != before)
+    }
+
     /// Resize both screens while preserving content, subject to the original allocation budget.
     pub fn resize(&mut self, rows: u16, columns: u16) -> Result<(), TerminalError> {
         let error = |kind| TerminalError {

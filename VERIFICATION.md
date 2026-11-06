@@ -178,3 +178,11 @@
 - Owned headless Sway: `PTYRA_TEST_CLIPBOARD_RECEIVE=1 PTYRA_TEST_PASTE_CANCEL=1` PASS on both binaries. Gated raw readers force partial 120,000-byte paste; focus loss and Tab creation drop its unsent suffix, close only its original framing, preserve FIFO tail, and leave a new Shell's probe uncontaminated. Native multiline accept/Escape/focus cancellation also PASS.
 - Full clipboard/selection/multi-tab native matrix PASS on both binaries, including MIME/FD send and receive, Unicode, original-target routing, hidden output, title, resize and child exit. Read-only review found no correctness/security defects. No Clipboard/key/PTY payload diagnostics added.
 - CPUs 0–1; Cargo jobs=2. T129 independent files byte-compared unchanged and excluded. Actual desktop Firefox/Kitty/Fcitx5 acceptance: NOT RUN. No push or system-setting changes.
+
+
+## TASK-156 (independent dependency-satisfied task)
+
+- Dependencies TASK-029/TASK-030 satisfied. Terminal exposes bounded viewport scrolling through the core API, including delta/page/top/bottom operations and a changed-offset result. Extreme signed deltas clamp before core arithmetic; no Shell cursor, terminal cells, content epoch, or input bytes are changed by scrolling.
+- `terminal_viewport_scroll_clamps_to_history`: first failed against a no-op stub, then PASS. Covers history bounds, signed extremes, zero history, alternate screen/main offset restoration, oldest-row eviction, resize, stopped core and unchanged cell/cursor/input state. A test-only raw Grid equality assumption was corrected to compare logical cells because the upstream ring-buffer equality requires normalized storage.
+- Full workspace: 234 library + 13 integration + 2 doc tests PASS; clean standalone tree excluding T129: 232 library + same integration/doc tests PASS. One existing opt-in integration test ignored. Format and Clippy `-D warnings` PASS on both trees. Independent read-only review found no issues.
+- Pure adapter-only API: native wheel/bindings, history pixels and history selection are not claimed here; TASK-157–159 remain unchecked. Native/desktop viewport acceptance NOT RUN because this task adds no runtime input path. CPU affinity 0–1, Cargo jobs=2; T129 edits remain uncommitted. No push or system-setting changes.

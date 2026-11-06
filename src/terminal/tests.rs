@@ -812,3 +812,94 @@ fn terminal_copy_preserves_tabstops_and_selected_spaces() {
     terminal.feed(id, b"Z").unwrap();
     assert_eq!(terminal.grid().unwrap()[Line(1)][Column(0)].c, 'Z');
 }
+
+#[test]
+fn terminal_viewport_scroll_clamps_to_history() {
+    use alacritty_terminal::grid::Scroll;
+    let mut term = Terminal::with_scrollback(TabId(7), 3, 4, 5).unwrap();
+    for number in 0..8 {
+        feed(&mut term, format!("{number:04}\r\n").as_bytes());
+    }
+    assert_eq!(term.grid().unwrap().history_size(), 5);
+    let grid = term.grid().unwrap().clone();
+    let epoch = term.content_epoch();
+    for (scroll, expected, changed) in [
+        (Scroll::PageUp, 3, true),
+        (Scroll::PageUp, 5, true),
+        (Scroll::PageUp, 5, false),
+        (Scroll::PageDown, 2, true),
+        (Scroll::Delta(1), 3, true),
+        (Scroll::Top, 5, true),
+        (Scroll::Delta(i32::MAX), 5, false),
+        (Scroll::Delta(i32::MIN), 0, true),
+        (Scroll::PageDown, 0, false),
+        (Scroll::Bottom, 0, false),
+    ] {
+        assert_eq!(term.scroll_viewport(scroll).unwrap(), changed);
+        assert_eq!(term.grid().unwrap().display_offset(), expected);
+        assert_eq!(term.grid().unwrap().cursor, grid.cursor);
+        assert_eq!(term.content_epoch(), epoch);
+        assert!(term.take_keyboard_reply().is_none());
+        assert!(term.take_osc52_write(SelectionKind::Clipboard).is_none());
+        assert!(term.take_osc52_write(SelectionKind::Primary).is_none());
+    }
+    // Compare logical cells, since core Storage equality requires a normalized ring buffer.
+    for row in -(grid.history_size() as i32)..grid.screen_lines() as i32 {
+        for column in 0..grid.columns() {
+            assert_eq!(
+                term.grid().unwrap()[Line(row)][Column(column)],
+                grid[Line(row)][Column(column)]
+            );
+        }
+    }
+    term.scroll_viewport(Scroll::Top).unwrap();
+    feed(&mut term, b"\x1b[?1049h");
+    for _ in 0..12 {
+        feed(&mut term, b"alt\r\n");
+    }
+    assert_eq!(term.grid().unwrap().history_size(), 0);
+    for scroll in [
+        Scroll::Top,
+        Scroll::Delta(i32::MAX),
+        Scroll::PageUp,
+        Scroll::PageDown,
+        Scroll::Bottom,
+    ] {
+        assert!(!term.scroll_viewport(scroll).unwrap());
+        assert_eq!(term.grid().unwrap().display_offset(), 0);
+    }
+    feed(&mut term, b"\x1b[?1049l");
+    assert_eq!(term.grid().unwrap().display_offset(), 5);
+    for number in 8..24 {
+        feed(&mut term, format!("{number:04}\r\n").as_bytes());
+        assert_eq!(term.grid().unwrap().display_offset(), 5);
+        assert_eq!(term.grid().unwrap().history_size(), 5);
+        assert!(!term.scroll_viewport(Scroll::Top).unwrap());
+        assert_eq!(term.snapshot().unwrap().content.display_iter.count(), 12);
+    }
+    term.resize(5, 6).unwrap();
+    assert!(term.grid().unwrap().display_offset() <= term.grid().unwrap().history_size());
+    term.scroll_viewport(Scroll::Bottom).unwrap();
+    assert_eq!(term.grid().unwrap().display_offset(), 0);
+    let mut no_history = Terminal::with_scrollback(TabId(8), 2, 4, 0).unwrap();
+    for _ in 0..10 {
+        feed(&mut no_history, b"line\r\n");
+    }
+    assert!(!no_history.scroll_viewport(Scroll::Top).unwrap());
+    assert!(!no_history.scroll_viewport(Scroll::Delta(i32::MAX)).unwrap());
+    assert!(!no_history.scroll_viewport(Scroll::Delta(i32::MIN)).unwrap());
+    feed(&mut no_history, b"\x1b]2;");
+    assert!(
+        no_history
+            .feed(TabId(8), &vec![b'x'; MAX_OSC_BYTES])
+            .is_err()
+    );
+    assert_eq!(
+        no_history
+            .scroll_viewport(Scroll::Top)
+            .unwrap_err()
+            .error
+            .kind(),
+        ErrorKind::NotConnected
+    );
+}

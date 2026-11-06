@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（151 已勾選；TASK-129、TASK-153–199 共 48 項未勾選）。
+**Total:** 199 atomic TASKS（152 已勾選；TASK-129、TASK-153–155、TASK-157–199 共 47 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -694,7 +694,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## R. Scrollback View / History Interaction
 
-- [ ] **TASK-156 — Terminal adapter 暴露有界 viewport scroll**
+- [x] **TASK-156 — Terminal adapter 暴露有界 viewport scroll**
   - **Dependencies:** `TASK-029`, `TASK-030` | **Unit Test:** `terminal_viewport_scroll_clamps_to_history`
   - **Done:** 以 core API 移動 display offset，page/top/bottom 操作有確定邊界；history=0、alt screen 同淘汰舊行唔越界；操作只移 viewport，唔改 Shell cursor 或 PTY bytes。
 
