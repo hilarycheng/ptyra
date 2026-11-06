@@ -204,7 +204,7 @@ impl Runtime {
         if pty.has_paste() {
             return Err("paste already in progress");
         }
-        self.cancel_waiting_paste();
+        self.cancel_paste();
         self.clipboard.start_receive()?;
         let result = self
             .tabs
@@ -219,7 +219,7 @@ impl Runtime {
         self.paste = Some(paste);
         Ok(())
     }
-    pub(super) fn cancel_waiting_paste(&mut self) {
+    pub(super) fn cancel_paste(&mut self) {
         self.paint.dirty |= self.presented_paste.take().is_some();
         if let Some(paste) = self.paste.take()
             && let Some(pty) = self
@@ -227,7 +227,7 @@ impl Runtime {
                 .get_mut(paste.target.tab)
                 .and_then(|tab| tab.pty_mut())
         {
-            pty.cancel_waiting_paste();
+            pty.cancel_paste();
         }
         self.clipboard.cancel_receive();
     }
@@ -237,7 +237,18 @@ impl Runtime {
             .as_ref()
             .is_some_and(|paste| !paste.valid(&self.input.focus))
         {
-            self.cancel_waiting_paste();
+            self.cancel_paste();
+        }
+        if self.paste.as_ref().is_some_and(|paste| paste.queued) {
+            if !self.paste.as_ref().is_some_and(|paste| {
+                self.tabs
+                    .get(paste.target.tab)
+                    .and_then(|tab| tab.pty())
+                    .is_some_and(|pty| pty.has_paste())
+            }) {
+                self.paste = None;
+            }
+            return;
         }
         match self.clipboard.pump_receive() {
             Ok(Some(text)) => {
@@ -267,12 +278,12 @@ impl Runtime {
                 }
                 if let Err(error) = result {
                     eprintln!("Ptyra paste: {error}");
-                    self.cancel_waiting_paste();
+                    self.cancel_paste();
                 }
             }
             Err(error) => {
                 eprintln!("Ptyra paste: {error}");
-                self.cancel_waiting_paste();
+                self.cancel_paste();
             }
             Ok(None) => {}
         }
@@ -281,10 +292,11 @@ impl Runtime {
         };
         let Some(pending) = &mut paste.pending else {
             if self.clipboard.receive_fd().is_none() {
-                self.cancel_waiting_paste();
+                self.cancel_paste();
             }
             return;
         };
+        let bracketed = pending.bracketed();
         let Some(bytes) = pending.ready_bytes() else {
             return;
         };
@@ -296,14 +308,15 @@ impl Runtime {
             self.paste = None;
             return;
         };
-        match pty.enqueue_paste(bytes) {
+        match pty.enqueue_paste(bytes, bracketed) {
             Ok(_) => {
-                self.paste = None;
+                paste.queued = true;
+                paste.pending = None;
                 eprintln!("Ptyra paste: queued");
             }
             Err(error) if error.reason == crate::pty::PtyWriteFailure::QueueFull => {}
             Err(_) => {
-                self.cancel_waiting_paste();
+                self.cancel_paste();
                 eprintln!("Ptyra paste: target unavailable");
             }
         }

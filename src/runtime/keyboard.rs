@@ -164,7 +164,14 @@ impl Runtime {
         if !super::sessions::close_tab(&mut self.tabs, id) {
             return;
         }
-        self.clipboard.cancel_receive();
+        if self
+            .paste
+            .as_ref()
+            .is_some_and(|paste| paste.target.tab == id)
+            || previous != self.tabs.active()
+        {
+            self.cancel_paste();
+        }
         self.cancel_pointer_drag();
         self.ready_pty.retain(|ready| *ready != id);
         if let Some(active) = self.tabs.active() {
@@ -181,7 +188,7 @@ impl Runtime {
     }
     pub(super) fn activate_tab(&mut self, id: TabId) {
         if self.tabs.activate(id) {
-            self.clipboard.cancel_receive();
+            self.cancel_paste();
             self.cancel_pointer_drag();
             self.input.retarget(id);
             self.pointer_input.retarget(id);
@@ -239,6 +246,7 @@ impl Runtime {
         }
     }
     pub(super) fn remove_keyboard(&mut self) {
+        self.cancel_paste();
         self.clipboard.clear_external_offers();
         if let Some(keyboard) = self.keyboard.take() {
             keyboard.release();
@@ -264,7 +272,7 @@ impl Runtime {
             wl_keyboard::Event::Enter { surface, .. }
                 if self.surface.as_ref() == Some(&surface) =>
             {
-                self.clipboard.cancel_receive();
+                self.cancel_paste();
                 self.cancel_pointer_drag();
                 self.input.clear_focus();
                 self.paint.dirty = true;
@@ -273,6 +281,7 @@ impl Runtime {
                 }
             }
             wl_keyboard::Event::Leave { .. } => {
+                self.cancel_paste();
                 self.clipboard.clear_external_offers();
                 self.cancel_pointer_drag();
                 self.input.clear_focus();

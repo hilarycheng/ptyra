@@ -147,6 +147,7 @@ impl PasteIntent {
             payload,
             sent: 0,
             confirmation_pending,
+            bracketed: mode.contains(TermMode::BRACKETED_PASTE),
         })
     }
 }
@@ -167,9 +168,14 @@ pub struct PendingPaste {
     payload: PastePayload,
     sent: usize,
     confirmation_pending: bool,
+    bracketed: bool,
 }
 
 impl PendingPaste {
+    pub(crate) fn bracketed(&self) -> bool {
+        self.bracketed
+    }
+
     /// Runtime queues take ownership only after the exact instance is ready and unstarted.
     pub(crate) fn ready_bytes(&mut self) -> Option<&mut Vec<u8>> {
         (!self.confirmation_pending && self.sent == 0).then_some(&mut self.payload.bytes)
@@ -203,9 +209,9 @@ impl PendingPaste {
         true
     }
 
-    /// Call when the target Tab closes or loses keyboard focus.
-    /// Discards undelivered bytes; bytes already accepted by the sink stay queued.
-    /// shortcut: partial cancellation leaves framing incomplete; revisit when lifecycle routing separates focus loss from Tab closure.
+    /// Discard preparation when its target closes or before delivery begins.
+    /// Accepted sink bytes are not retractable here; native focus cancellation
+    /// is handled by the PTY-owned queue, including any remaining framing.
     pub fn cancel_for_tab(&mut self, tab: TabId) {
         if self.target.tab == tab {
             self.payload.bytes = Vec::new();

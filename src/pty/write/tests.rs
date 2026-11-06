@@ -401,13 +401,13 @@ fn runtime_paste_queue_preserves_payload_under_backpressure() {
     queue.enqueue(tab, true, b"before").unwrap();
     let expected = [b"\x1b[200~".as_slice(), &vec![b'x'; 100_000], b"\x1b[201~"].concat();
     let mut payload = expected.clone();
-    queue.enqueue_paste(tab, true, &mut payload).unwrap();
+    queue.enqueue_paste(tab, true, &mut payload, false).unwrap();
     assert!(payload.is_empty());
     queue.enqueue(tab, true, b"after").unwrap();
     let mut rejected = b"new".to_vec();
     assert_eq!(
         queue
-            .enqueue_paste(tab, true, &mut rejected)
+            .enqueue_paste(tab, true, &mut rejected, false)
             .unwrap_err()
             .reason,
         PtyWriteFailure::QueueFull
@@ -426,7 +426,9 @@ fn runtime_paste_queue_preserves_payload_under_backpressure() {
         [b"before".as_slice(), &expected, b"after"].concat()
     );
     assert!(writer.largest_write <= MAX_PTY_WRITE_BYTES);
-    queue.enqueue_paste(tab, true, &mut rejected).unwrap();
+    queue
+        .enqueue_paste(tab, true, &mut rejected, false)
+        .unwrap();
     assert!(rejected.is_empty());
 }
 
@@ -437,7 +439,7 @@ fn runtime_paste_queue_preserves_limits_and_closed_payload() {
     let mut payload = b"paste".to_vec();
     assert_eq!(
         queue
-            .enqueue_paste(tab, false, &mut payload)
+            .enqueue_paste(tab, false, &mut payload, false)
             .unwrap_err()
             .reason,
         PtyWriteFailure::Closed
@@ -446,7 +448,7 @@ fn runtime_paste_queue_preserves_limits_and_closed_payload() {
     let mut too_large = vec![0; crate::clipboard::read::MAX_PASTE_BYTES + 13];
     assert_eq!(
         queue
-            .enqueue_paste(tab, true, &mut too_large)
+            .enqueue_paste(tab, true, &mut too_large, false)
             .unwrap_err()
             .reason,
         PtyWriteFailure::QueueFull
@@ -459,7 +461,7 @@ fn runtime_paste_queue_preserves_limits_and_closed_payload() {
     queue
         .enqueue(tab, true, &vec![b'a'; MAX_PTY_PENDING_BYTES])
         .unwrap();
-    queue.enqueue_paste(tab, true, &mut payload).unwrap();
+    queue.enqueue_paste(tab, true, &mut payload, false).unwrap();
     assert_eq!(queue.pending(), MAX_PTY_PENDING_BYTES + 5);
     assert_eq!(
         queue.enqueue(tab, true, b"x").unwrap_err().reason,
@@ -473,7 +475,9 @@ fn runtime_paste_queue_preserves_limits_and_closed_payload() {
         writer.output,
         [vec![b'a'; MAX_PTY_PENDING_BYTES], b"paste".to_vec()].concat()
     );
-    queue.enqueue_paste(tab, true, &mut Vec::new()).unwrap();
+    queue
+        .enqueue_paste(tab, true, &mut Vec::new(), false)
+        .unwrap();
     assert!(!queue.has_paste());
 }
 
@@ -501,7 +505,7 @@ fn runtime_paste_reservation_orders_keys_before_receive_eof() {
     );
     assert_eq!(writer.calls, 1);
     let mut payload = b"paste".to_vec();
-    queue.enqueue_paste(tab, true, &mut payload).unwrap();
+    queue.enqueue_paste(tab, true, &mut payload, false).unwrap();
     assert!(queue.wants_write());
     queue.flush(tab, Some(&mut writer)).unwrap();
     assert_eq!(writer.output, b"beforepa");
@@ -525,10 +529,102 @@ fn runtime_paste_reservation_orders_keys_before_receive_eof() {
     assert_eq!(writer.output, b"released");
     queue.reserve_paste(tab, true).unwrap();
     queue.enqueue(tab, true, b"empty tail").unwrap();
-    queue.enqueue_paste(tab, true, &mut Vec::new()).unwrap();
+    queue
+        .enqueue_paste(tab, true, &mut Vec::new(), false)
+        .unwrap();
     assert!(!queue.has_paste());
     assert!(queue.wants_write());
     let mut writer = FakeWriter::new([Step::Accept(usize::MAX)]);
     queue.flush(tab, Some(&mut writer)).unwrap();
     assert_eq!(writer.output, b"empty tail");
+}
+
+#[test]
+fn runtime_partial_paste_cancel_never_crosses_tabs() {
+    let original = TabId(1);
+    for bracketed in [false, true] {
+        // A literal opening marker is still ordinary payload when framing is disabled.
+        let payload = "\x1b[200~繁體e\u{301}\n".as_bytes();
+        let framed = if bracketed {
+            [b"\x1b[200~".as_slice(), payload, b"\x1b[201~"].concat()
+        } else {
+            payload.to_vec()
+        };
+        for sent in 0..=framed.len() {
+            let mut queue = WriteQueue::default();
+            queue.enqueue(original, true, b"before").unwrap();
+            queue.reserve_paste(original, true).unwrap();
+            queue.enqueue(original, true, b"after").unwrap();
+            queue
+                .enqueue_paste(original, true, &mut framed.clone(), bracketed)
+                .unwrap();
+            let mut writer = FakeWriter::new([Step::Accept(6), Step::Accept(sent)]);
+            queue.flush(original, Some(&mut writer)).unwrap();
+            if sent > 0 {
+                queue.flush(original, Some(&mut writer)).unwrap();
+            }
+            queue.cancel_paste(true);
+            queue.cancel_paste(true); // Repeated focus events cannot discard necessary framing.
+            let expected = if bracketed && sent > 0 && sent < framed.len() {
+                [
+                    b"before".as_slice(),
+                    &framed[..sent],
+                    &b"\x1b[200~"[sent.min(6)..],
+                    &b"\x1b[201~"[sent.saturating_sub(framed.len() - 6)..],
+                    b"after",
+                ]
+                .concat()
+            } else {
+                [b"before".as_slice(), &framed[..sent], b"after"].concat()
+            };
+            writer.steps = [blocked(), interrupted()]
+                .into_iter()
+                .chain((0..32).map(|_| Step::Accept(1)))
+                .collect();
+            while queue.wants_write() {
+                queue.flush(original, Some(&mut writer)).unwrap();
+            }
+            assert_eq!(writer.output, expected, "bracketed={bracketed} sent={sent}");
+            assert!(!queue.has_paste());
+            let mut other = WriteQueue::default();
+            other.enqueue(TabId(2), true, b"other").unwrap();
+            let mut other_writer = FakeWriter::new([Step::Accept(5)]);
+            other.flush(TabId(2), Some(&mut other_writer)).unwrap();
+            assert_eq!(other_writer.output, b"other");
+        }
+    }
+    // Closing a Tab discards even partially emitted framing. No writer is invoked.
+    for sent in 0..18 {
+        let mut queue = WriteQueue::default();
+        queue
+            .enqueue_paste(
+                original,
+                true,
+                &mut b"\x1b[200~secret\x1b[201~".to_vec(),
+                true,
+            )
+            .unwrap();
+        let mut writer = FakeWriter::new([Step::Accept(sent)]);
+        if sent > 0 {
+            queue.flush(original, Some(&mut writer)).unwrap();
+        }
+        queue.cancel_paste(false);
+        assert!(!queue.has_paste());
+        assert_eq!(queue.pending(), 0);
+        assert_eq!(
+            queue
+                .flush::<FakeWriter>(original, None)
+                .unwrap_err()
+                .reason,
+            PtyWriteFailure::Closed
+        );
+    }
+    // Receive/confirmation is an unfilled barrier, which cancellation releases.
+    let mut queue = WriteQueue::default();
+    queue.reserve_paste(original, true).unwrap();
+    queue.enqueue(original, true, b"tail").unwrap();
+    queue.cancel_paste(true);
+    let mut writer = FakeWriter::new([Step::Accept(4)]);
+    queue.flush(original, Some(&mut writer)).unwrap();
+    assert_eq!(writer.output, b"tail");
 }

@@ -319,6 +319,61 @@ def main():
                 print("PASS: multiline native prompt, zero bytes before decision, accept/Escape/focus cancellation")
                 assert "繁體" not in (root / "app.log").read_text()
                 print("PASS: native receive cap/UTF-8 recovery and exact raw PTY paste, framing, backpressure and later-key order")
+            if os.environ.get("PTYRA_TEST_PASTE_CANCEL"):
+                assert not os.environ.get("PTYRA_TEST_MULTI_PTY"), "run paste cancellation fixture separately"
+                for change in ("focus", "tab"):
+                    received = root / "cancel-received"
+                    gate = root / "cancel-read"
+                    for path in (received, gate):
+                        if path.exists():
+                            path.unlink()
+                    script = root / "cancel.py"
+                    script.write_text("import os, select, termios, tty, time\nfrom pathlib import Path\nold=termios.tcgetattr(0)\ntry:\n tty.setraw(0)\n os.write(1,b'\\x1b[?2004h\\x1b]2;Cancel fixture\\x07')\n end=time.monotonic()+10\n while not Path(" + repr(str(gate)) + ").exists():\n  assert time.monotonic()<end\n  time.sleep(0.01)\n data=bytearray()\n while not data.endswith(b'z'):\n  assert time.monotonic()<end\n  if select.select([0],[],[],0.1)[0]: data.extend(os.read(0,16384))\nfinally:\n termios.tcsetattr(0,termios.TCSANOW,old)\n os.write(1,b'\\x1b[?2004l\\x1b]2;Terminal\\x07')\nPath(" + repr(str(received)) + ").write_bytes(data)\n")
+                    keyboard.text(f"python3 {script}")
+                    keyboard.tap(28)
+                    keyboard.sync()
+                    wait_until(lambda: any(n.get("app_id") == "ptyra" and n.get("name") == "Cancel fixture" for n in nodes(json.loads(ipc("-t", "get_tree")))))
+                    before = (root / "app.log").read_text().count("Ptyra paste: queued")
+                    subprocess.run(["wl-copy", "--type", "text/plain;charset=utf-8"], input=b'x'*120000, env=env, check=True, timeout=5)
+                    time.sleep(0.1)
+                    keyboard.modifiers(5)
+                    keyboard.tap(47)
+                    keyboard.modifiers(0)
+                    keyboard.text("z")
+                    wait_until(lambda: (root / "app.log").read_text().count("Ptyra paste: queued") > before)
+                    time.sleep(0.1)  # The raw reader is gated, forcing real PTY backpressure.
+                    if change == "focus":
+                        ipc("workspace number 2")
+                        time.sleep(0.1)
+                        ipc("workspace number 1")
+                    else:
+                        keyboard.modifiers(5)
+                        keyboard.tap(20)  # New Tab cancels the old paste, not the old shell.
+                        keyboard.modifiers(0)
+                        keyboard.sync()
+                        wait_until(lambda: len(Path(f"/proc/{app.pid}/task/{app.pid}/children").read_text().split()) == 2)
+                        time.sleep(0.2)
+                        probe = root / "cancel-isolated"
+                        keyboard.text(f"echo isolated > {probe}")
+                        keyboard.tap(28)
+                        keyboard.sync()
+                        wait_until(probe.exists)
+                        assert probe.read_text() == "isolated\n", "new Shell input was contaminated"
+                        keyboard.modifiers(5)
+                        keyboard.tap(17)  # Close only the new Tab; the original raw reader survives.
+                        keyboard.modifiers(0)
+                        keyboard.sync()
+                        wait_until(lambda: len(Path(f"/proc/{app.pid}/task/{app.pid}/children").read_text().split()) == 1)
+                    time.sleep(0.1)
+                    gate.touch()
+                    wait_until(received.exists)
+                    data = received.read_bytes()
+                    assert data.startswith(b'\x1b[200~') and data.endswith(b'\x1b[201~z'), "cancelled paste lost framing or FIFO tail"
+                    assert 12 < len(data) < 120013, "fixture did not interrupt a partial PTY paste"
+                    assert data[6:-7] == b'x'*(len(data)-13), "cancelled bytes or other Tab input leaked"
+                    assert app.poll() is None
+                    time.sleep(0.2)
+                print("PASS: native focus/Tab cancellation drops unsent payload, closes original framing, preserves tail and other Shell")
             if os.environ.get("PTYRA_TEST_COPY_OWNER"):
                 subprocess.run(["wl-copy", "--type", "application/octet-stream", "sentinel"], env=env, check=True, timeout=5)
             keyboard.modifiers(5)

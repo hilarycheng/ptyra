@@ -60,6 +60,8 @@ struct PasteSegment {
     sent: usize,
     before: usize,
     ready: bool,
+    bracketed: bool,
+    finishing: bool,
 }
 
 impl WriteQueue {
@@ -80,12 +82,37 @@ impl WriteQueue {
             sent: 0,
             before: self.bytes.len(),
             ready: false,
+            bracketed: false,
+            finishing: false,
         });
         Ok(())
     }
     pub(super) fn cancel_waiting_paste(&mut self) {
         if self.paste.as_ref().is_some_and(|paste| !paste.ready) {
             self.paste = None;
+        }
+    }
+    /// Cancel undelivered payload, retaining only required framing on this live PTY.
+    pub(super) fn cancel_paste(&mut self, open: bool) {
+        let Some(paste) = &mut self.paste else {
+            return;
+        };
+        if !open
+            || !paste.ready
+            || paste.sent == 0 && !paste.finishing
+            || !paste.bracketed && !paste.finishing
+        {
+            self.paste = None;
+        } else if !paste.finishing {
+            let end = paste.bytes.len() - 6;
+            let mut framing = Vec::with_capacity(12);
+            if paste.sent < 6 {
+                framing.extend_from_slice(&paste.bytes[paste.sent..6]);
+            }
+            framing.extend_from_slice(&paste.bytes[paste.sent.max(end)..]);
+            paste.bytes = framing;
+            paste.sent = 0;
+            paste.finishing = true;
         }
     }
     pub(super) fn wants_write(&self) -> bool {
@@ -100,8 +127,18 @@ impl WriteQueue {
         tab: TabId,
         open: bool,
         bytes: &mut Vec<u8>,
+        bracketed: bool,
     ) -> Result<PtyEnqueueResult, PtyWriteError> {
-        let reason = if !open {
+        let reason = if bracketed
+            && (bytes.len() < 12
+                || !bytes.starts_with(b"\x1b[200~")
+                || !bytes.ends_with(b"\x1b[201~"))
+        {
+            Some(PtyWriteFailure::Io(AppError::new(
+                Component::Pty,
+                io::ErrorKind::InvalidData,
+            )))
+        } else if !open {
             Some(PtyWriteFailure::Closed)
         } else if self.paste.as_ref().is_some_and(|paste| paste.ready)
             || bytes.len() > crate::clipboard::read::MAX_PASTE_BYTES + 12
@@ -122,12 +159,15 @@ impl WriteQueue {
         } else if let Some(paste) = &mut self.paste {
             paste.bytes = std::mem::take(bytes);
             paste.ready = true;
+            paste.bracketed = bracketed;
         } else {
             self.paste = Some(PasteSegment {
                 bytes: std::mem::take(bytes),
                 sent: 0,
                 before: self.bytes.len(),
                 ready: true,
+                bracketed,
+                finishing: false,
             });
         }
         Ok(PtyEnqueueResult {

@@ -10,6 +10,7 @@ pub(super) struct Paste {
     epoch: Arc<()>,
     identity: Arc<()>,
     pub pending: Option<PendingPaste>,
+    pub queued: bool,
 }
 impl Paste {
     pub fn capture(focus: &KeyboardFocus) -> super::Result<Self> {
@@ -18,6 +19,7 @@ impl Paste {
             epoch: focus.epoch(),
             identity: Arc::new(()),
             pending: None,
+            queued: false,
         })
     }
     pub fn prompt_token(&self, focus: &KeyboardFocus) -> Option<Arc<()>> {
@@ -45,7 +47,7 @@ impl Paste {
         terminal: &Terminal,
         text: String,
     ) -> super::Result<()> {
-        if !self.valid(focus) || self.pending.is_some() {
+        if !self.valid(focus) || (self.pending.is_some() || self.queued) {
             return Err("paste target changed");
         }
         self.pending = Some(
@@ -166,7 +168,7 @@ impl super::Runtime {
             self.presented_paste = None;
             self.paint.dirty = true;
             if cancel {
-                self.cancel_waiting_paste();
+                self.cancel_paste();
                 eprintln!("Ptyra paste: confirmation cancelled");
             } else {
                 self.pump_paste();

@@ -380,16 +380,17 @@ impl PtySession {
     pub(crate) fn enqueue_paste(
         &mut self,
         bytes: &mut Vec<u8>,
+        bracketed: bool,
     ) -> Result<PtyEnqueueResult, PtyWriteError> {
         self.write_queue
-            .enqueue_paste(self.tab, self.master.is_some(), bytes)
+            .enqueue_paste(self.tab, self.master.is_some(), bytes, bracketed)
     }
     pub(crate) fn reserve_paste(&mut self) -> Result<(), PtyWriteError> {
         self.write_queue
             .reserve_paste(self.tab, self.master.is_some())
     }
-    pub(crate) fn cancel_waiting_paste(&mut self) {
-        self.write_queue.cancel_waiting_paste();
+    pub(crate) fn cancel_paste(&mut self) {
+        self.write_queue.cancel_paste(self.master.is_some());
     }
     pub(crate) fn wants_write(&self) -> bool {
         self.write_queue.wants_write()
@@ -436,6 +437,7 @@ impl PtySession {
     /// return Closed rather than transferring it to another session.
     pub fn terminate(&mut self) -> Result<(), AppError> {
         self.master.take();
+        self.write_queue.cancel_paste(false);
         self.child
             .terminate()
             .map_err(|e| AppError::from_io(Component::Pty, e))
