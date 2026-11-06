@@ -24,6 +24,12 @@ pub(super) struct KeyboardInput {
     pub(super) consumed: std::collections::HashSet<u32>,
 }
 impl KeyboardInput {
+    pub(super) fn retarget(&mut self, tab: TabId) {
+        self.repeat.cancel();
+        if let Some(target) = self.focus.target() {
+            self.focus.enter(target.window, tab);
+        }
+    }
     pub fn clear_focus(&mut self) {
         self.focus.clear();
         self.repeat.cancel();
@@ -136,21 +142,41 @@ fn read_keymap(file: &File, size: usize) -> Result<Keymap> {
 }
 
 impl Runtime {
+    pub(super) fn activate_tab(&mut self, id: TabId) {
+        if self.tabs.activate(id) {
+            self.input.retarget(id);
+            self.paint.dirty = true;
+        }
+    }
     fn dispatch_action(&mut self, action: crate::config::bindings::BindingAction) {
-        if action == crate::config::bindings::BindingAction::NewTab {
-            let size = self
-                .tabs
-                .active()
-                .and_then(|id| self.tabs.get(id))
-                .and_then(|tab| tab.pty())
-                .map(|pty| pty.current_size());
-            if let Some(size) = size
-                && let Err(error) = self.new_tab(size)
-            {
-                eprintln!("Ptyra: {error}");
+        use crate::config::bindings::BindingAction;
+        match action {
+            BindingAction::NewTab => {
+                let size = self
+                    .tabs
+                    .active()
+                    .and_then(|id| self.tabs.get(id))
+                    .and_then(|tab| tab.pty())
+                    .map(|pty| pty.current_size());
+                if let Some(size) = size {
+                    match self.new_tab(size) {
+                        Ok(id) => self.activate_tab(id),
+                        Err(error) => eprintln!("Ptyra: {error}"),
+                    }
+                }
             }
-        } else {
-            eprintln!("Ptyra action unavailable: {action:?}");
+            BindingAction::NextTab | BindingAction::PreviousTab => {
+                let ids: Vec<_> = self.tabs.ids().collect();
+                if let Some(index) = ids.iter().position(|id| Some(*id) == self.tabs.active()) {
+                    let next = if action == BindingAction::NextTab {
+                        (index + 1) % ids.len()
+                    } else {
+                        (index + ids.len() - 1) % ids.len()
+                    };
+                    self.activate_tab(ids[next]);
+                }
+            }
+            _ => eprintln!("Ptyra action unavailable: {action:?}"),
         }
     }
     pub(super) fn remove_keyboard(&mut self) {
@@ -179,7 +205,9 @@ impl Runtime {
             {
                 self.input.clear_focus();
                 self.paint.dirty = true;
-                self.input.focus.enter(WindowId(1), TabId(1));
+                if let Some(id) = self.tabs.active() {
+                    self.input.focus.enter(WindowId(1), id);
+                }
             }
             wl_keyboard::Event::Leave { .. } => {
                 self.input.clear_focus();
@@ -280,6 +308,35 @@ mod tests {
         clock::FakeClock,
         keymap::{Keymap, Modifiers},
     };
+    #[test]
+    fn runtime_tab_switch_retargets_keyboard() {
+        let clock = FakeClock::default();
+        let mut input = KeyboardInput {
+            map: Some(
+                Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap(),
+            ),
+            ..Default::default()
+        };
+        input.focus.enter(WindowId(1), TabId(1));
+        input.repeat.configure(25, 100).unwrap();
+        input.key(30, true, false, &clock).unwrap();
+        let old = input
+            .map
+            .as_ref()
+            .unwrap()
+            .translate(input.focus.route_key(30, true).unwrap(), false)
+            .unwrap()
+            .unwrap();
+        input.retarget(TabId(2));
+        assert_eq!(input.focus.target().unwrap().tab, TabId(2));
+        clock.advance(std::time::Duration::from_secs(1)).unwrap();
+        assert!(input.tick(false, &clock).unwrap().is_none());
+        assert!(input.encode(old, false, &clock).unwrap().is_none());
+        assert_eq!(input.key(30, true, false, &clock).unwrap().unwrap(), b"a");
+        input.clear_focus();
+        input.retarget(TabId(1));
+        assert!(input.focus.target().is_none());
+    }
     #[test]
     fn runtime_bindings_route_actions_once() {
         use crate::config::{Config, bindings::BindingAction};

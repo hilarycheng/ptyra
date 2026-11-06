@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（131 已勾選；TASK-129、TASK-133–199 共 68 項未勾選）。
+**Total:** 199 atomic TASKS（132 已勾選；TASK-129、TASK-134–199 共 67 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -594,7 +594,7 @@
   - **Dependencies:** `TASK-090`, `TASK-102`, `TASK-131` | **Unit Test:** `runtime_multi_pty_poll_is_fair`
   - **Done:** 依 ready FD 同 TabId drain/flush 對應 session；inactive Tab 繼續收 output；設每輪總 budget 同公平輪轉，flood 唔餓死 keyboard/Wayland/其他 PTY，idle 唔忙等。
 
-- [ ] **TASK-133 — Runtime 切換 active Tab 同 keyboard target**
+- [x] **TASK-133 — Runtime 切換 active Tab 同 keyboard target**
   - **Dependencies:** `TASK-085`, `TASK-086`, `TASK-091`, `TASK-130`, `TASK-131` | **Unit Test:** `runtime_tab_switch_retargets_keyboard`
   - **Done:** Next/Previous/direct activation 更新唯一 active Tab；取消舊 repeat，重新綁定 focus epoch；keyboard 只寫新 target，renderer 只畫 active grid；保留其他 Tab state，切換唔新開 Shell。
 

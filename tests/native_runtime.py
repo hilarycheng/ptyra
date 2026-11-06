@@ -122,7 +122,7 @@ class Keyboard:
         codes.update(zip("zxcvbnm", range(44, 51)))
         codes.update(zip("1234567890", range(2, 12)))
         codes.update({" ": 57, "/": 53, ".": 52, "-": 12, "'": 40, "=": 13, "\\": 43, "[": 26, "]": 27})
-        shifted = {">": (52, 1), "_": (12, 1)}
+        shifted = {">": (52, 1), "_": (12, 1), "$": (5, 1)}
         for character in text:
             code, mask = shifted.get(character, (codes.get(character.lower()), int(character.isupper())))
             assert code is not None, character
@@ -225,6 +225,25 @@ def main():
                     wait_until(lambda: (root / "drained").exists())
                     print("PASS: hidden Shell drains 256 KiB without starving active input")
                 print("PASS: one held NewTab shortcut creates exactly one additional independent Shell")
+            if os.environ.get("PTYRA_TEST_TAB_SWITCH"):
+                proof1, proof2 = root / "tab1", root / "tab2"
+                keyboard.text("echo $$ > " + str(proof2))
+                keyboard.tap(28)
+                keyboard.sync()
+                wait_until(proof2.exists)
+                keyboard.modifiers(4)
+                keyboard.tap(104)  # Ctrl+PageUp
+                keyboard.modifiers(0)
+                keyboard.sync()
+                keyboard.text("echo $$ > " + str(proof1))
+                keyboard.tap(28)
+                keyboard.sync()
+                wait_until(proof1.exists)
+                assert proof1.read_text().strip() == first[0]
+                assert proof2.read_text().strip() != first[0]
+                assert proof2.read_text().strip() in children.read_text().split()
+                assert len(children.read_text().split()) == 2
+                print("PASS: new Tab activation and previous Tab shortcut route input without spawning")
             proof = root / "proof"
             keyboard.text("echo wrongx")
             keyboard.tap(14)  # Backspace
