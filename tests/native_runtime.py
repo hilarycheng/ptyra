@@ -263,6 +263,27 @@ def main():
                 assert "Ptyra pointer: press" in (root / "app.log").read_text()
                 assert "Ptyra pointer: release" in (root / "app.log").read_text()
                 print("PASS: real Wayland pointer enter/button/axis events reach the targeted adapter")
+            if os.environ.get("PTYRA_TEST_TAB_CLICK"):
+                node = next(n for n in nodes(json.loads(ipc("-t", "get_tree"))) if n.get("app_id") == "ptyra")
+                rect, window = node["rect"], node["window_rect"]
+                for fraction, name, expected in [(0.75, "click2", proof2.read_text().strip()), (0.25, "click1", first[0])]:
+                    x = int(rect["x"] + window["x"] + window["width"] * fraction)
+                    y = int(rect["y"] + window["y"] + 6)
+                    keyboard.send(pointer, 1, u32(0, x, y, 800, 600))
+                    keyboard.send(pointer, 4)
+                    keyboard.sync()
+                    time.sleep(0.1)
+                    keyboard.send(pointer, 2, u32(0, 272, 1))
+                    keyboard.send(pointer, 2, u32(0, 272, 0))
+                    keyboard.send(pointer, 4)
+                    keyboard.sync()
+                    time.sleep(0.1)
+                    keyboard.text("echo $$ > " + str(root / name))
+                    keyboard.tap(28)
+                    keyboard.sync()
+                    wait_until(lambda: (root / name).exists())
+                    assert (root / name).read_text().strip() == expected
+                print("PASS: actual tab-strip clicks select the exact first/second Shell PID")
             if os.environ.get("PTYRA_TEST_TAB_BAR"):
                 wait_until(lambda: b"\x34\x65\xa4" * 24 in subprocess.check_output(["grim", "-t", "ppm", "-"], env=env))
                 print("PASS: native compositor pixels contain the active GUI tab strip")

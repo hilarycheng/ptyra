@@ -13,6 +13,8 @@ pub(super) struct Item {
 }
 pub(super) struct Layout {
     pub height: u32,
+    pub size: (u32, u32),
+    cell_width: u32,
     pub content: (u32, u32),
     pub columns: u16,
     pub items: Vec<Item>,
@@ -48,10 +50,33 @@ impl Layout {
         }
         Self {
             height,
+            size,
+            cell_width: cell.0.max(1),
             content: (size.0, size.1 - height),
             columns,
             items,
         }
+    }
+    pub fn tab_at<P: TabPty>(
+        &self,
+        tabs: &TabRegistry<P>,
+        size: (u32, u32),
+        point: crate::input::Point,
+    ) -> Option<TabId> {
+        if size != self.size
+            || point.x() < 0.0
+            || point.y() < 0.0
+            || point.x() >= f64::from(size.0)
+            || point.y() >= f64::from(self.height)
+        {
+            return None;
+        }
+        let column = (point.x() / f64::from(self.cell_width)) as usize;
+        let item = self
+            .items
+            .iter()
+            .find(|item| column >= item.column && column < item.column + item.columns)?;
+        tabs.get(item.tab).map(|_| item.tab)
     }
     pub fn draw<P: TabPty>(
         &self,
@@ -104,6 +129,46 @@ mod tests {
         fn tab(&self) -> TabId {
             self.0
         }
+    }
+    #[test]
+    fn runtime_tab_bar_click_selects_exact_tab() {
+        use crate::input::Point;
+        let mut tabs = TabRegistry::<Fake>::with_scrollback(0).unwrap();
+        for id in [1, 5, 9] {
+            tabs.insert(TabId(id), 2, 8).unwrap();
+        }
+        let size = (288, 200);
+        let layout = Layout::new(&tabs, size, (8, 16));
+        for (x, expected) in [
+            (0.0, Some(TabId(1))),
+            (95.9, Some(TabId(1))),
+            (96.0, Some(TabId(5))),
+            (287.9, Some(TabId(9))),
+            (288.0, None),
+            (-0.1, None),
+        ] {
+            assert_eq!(
+                layout.tab_at(&tabs, size, Point::new(x, 5.0).unwrap()),
+                expected
+            );
+        }
+        assert!(
+            layout
+                .tab_at(&tabs, size, Point::new(1.0, 24.0).unwrap())
+                .is_none()
+        );
+        assert!(
+            layout
+                .tab_at(&tabs, (200, 200), Point::new(100.0, 5.0).unwrap())
+                .is_none()
+        );
+        tabs.close(TabId(5));
+        assert!(
+            layout
+                .tab_at(&tabs, size, Point::new(100.0, 5.0).unwrap())
+                .is_none()
+        );
+        assert_eq!(tabs.active(), Some(TabId(1)));
     }
     #[test]
     fn runtime_tab_bar_layout_reserves_content_area() {

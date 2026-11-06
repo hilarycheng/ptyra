@@ -107,7 +107,7 @@ impl Runtime {
         if self.tabs.active() != Some(event.target.tab) {
             return;
         }
-        // Selection, application mouse reporting and tab clicks are separate tasks.
+        // Only the last submitted layout is clickable, and only at its current size.
         if self.trace_pointer {
             let kind = match event.kind {
                 Kind::Enter => "enter",
@@ -118,6 +118,20 @@ impl Runtime {
                 Kind::Axis { .. } => "axis",
             };
             eprintln!("Ptyra pointer: {kind}");
+        }
+        if let Kind::Button {
+            button: 272,
+            pressed: true,
+            ..
+        } = event.kind
+            && let Some(id) = self
+                .presented_bar
+                .as_ref()
+                .and_then(|layout| layout.tab_at(&self.tabs, self.paint.size, event.position))
+        {
+            self.pointer_input.cancel_drag();
+            self.activate_tab(id);
+            return;
         }
         match event.kind {
             Kind::Button { button, serial, .. } => {

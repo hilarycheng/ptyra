@@ -65,3 +65,9 @@
 - `runtime_pointer_lifecycle_preserves_serials`, workspace regression, fmt, Clippy: PASS.
 - Native test with `PTYRA_TEST_POINTER=1`: PASS; actual virtual-pointer enter/press/release/axis events reach the native adapter. Trace is opt-in and contains event categories only.
 - Scale remains the existing runtime scale=1; output scaling is separately TASK-167. Selection and application mouse reporting remain later tasks.
+
+## TASK-138
+
+- Dependencies satisfied, including TASK-140. Left press hit-tests the same layout that was last submitted to the compositor and routes through common Tab activation. Resized layouts and removed IDs reject stale clicks; terminal-area clicks do not activate tabs.
+- `runtime_tab_bar_click_selects_exact_tab`, workspace regression, fmt, Clippy: PASS.
+- Native test with `PTYRA_TEST_POINTER=1 PTYRA_TEST_TAB_CLICK=1`: PASS; real clicks on first/second labels route a PID probe to exactly the corresponding Shell.

@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（137 已勾選；TASK-129、TASK-138–139、TASK-141–199 共 62 項未勾選）。
+**Total:** 199 atomic TASKS（138 已勾選；TASK-129、TASK-139、TASK-141–199 共 61 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -614,7 +614,7 @@
   - **Dependencies:** `TASK-088`, `TASK-089`, `TASK-126`, `TASK-131`, `TASK-136` | **Unit Test:** `runtime_tab_bar_layout_reserves_content_area`
   - **Done:** 一個 native Window 畫出 labels 同 active 狀態，唔用 Sway tabbed/tmux 代替；Tab Bar 唔覆蓋 terminal rows；窄視窗/多 Tabs 有有界顯示策略，全部 Tabs 仍可透過切換操作到達。
 
-- [ ] **TASK-138 — Tab Bar pointer click 切換目標 Tab**
+- [x] **TASK-138 — Tab Bar pointer click 切換目標 Tab**
   - **Dependencies:** `TASK-133`, `TASK-137`, `TASK-140` | **Unit Test:** `runtime_tab_bar_click_selects_exact_tab`
   - **Done:** 實際 pointer press 經同一 layout hit-test 只選中一個 Tab；Tab Bar click 唔變成 terminal selection/mouse report；resize 或 stale target 唔切錯 Tab。
 

@@ -123,6 +123,7 @@ struct Runtime {
     ready_pty: Vec<crate::TabId>,
     exit_history: sessions::ExitHistory,
     rejected_resize: Option<PtySize>,
+    presented_bar: Option<bar::Layout>,
     seat: Option<wl_seat::WlSeat>,
     seat_name: Option<u32>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -159,6 +160,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
         ready_pty: Vec::new(),
         exit_history: sessions::ExitHistory::default(),
         rejected_resize: None,
+        presented_bar: None,
         seat: None,
         seat_name: None,
         keyboard: None,
@@ -534,6 +536,7 @@ impl Runtime {
         surface.commit();
         slot.busy = true;
         self.paint.submitted();
+        self.presented_bar = Some(layout);
         Ok(())
     }
     fn fail(&mut self, error: &'static str) {
