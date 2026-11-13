@@ -11,7 +11,8 @@ from native_runtime import nodes, wait_until
 
 
 def main():
-    binary, terminfo, desktop = map(Path, sys.argv[1:])
+    binary, terminfo, desktop, icon = map(Path, sys.argv[1:])
+    assert icon.is_file() and icon.name == 'ptyra.svg'
     subprocess.run(['desktop-file-validate', str(desktop)], check=True, timeout=5)
     with tempfile.TemporaryDirectory(prefix='ptyra-launch-') as folder:
         root = Path(folder)
@@ -52,6 +53,7 @@ while not (root/'stop').exists():
             display = wait_until(lambda: next((p for p in root.glob('wayland-*') if not p.name.endswith('.lock')), None))
             app = Gio.DesktopAppInfo.new_from_filename(str(desktop))
             assert app is not None
+            assert app.get_icon().get_file().get_path() == str(icon)
             context = Gio.AppLaunchContext()
             for key in ['WAYLAND_SOCKET', 'WAYLAND_DEBUG']:
                 context.unsetenv(key)

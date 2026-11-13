@@ -19,11 +19,19 @@ pub enum EntryKind {
 }
 
 pub struct InstallPlan {
-    files: [PathBuf; 3],
+    files: [PathBuf; 4],
     review_only: bool,
 }
 impl InstallPlan {
     pub fn user_local(home: &Path) -> Result<Self, AppError> {
+        Self::user_local_xdg(home, &home.join(".local/share"))
+    }
+    pub fn user_local_xdg(home: &Path, data_home: &Path) -> Result<Self, AppError> {
+        Self::validate_root(home)?;
+        Self::validate_root(data_home)?;
+        Ok(Self::at_paths(&home.join(".local/bin"), data_home))
+    }
+    fn validate_root(home: &Path) -> Result<(), AppError> {
         let bytes = home.as_os_str().as_bytes();
         if !home.is_absolute()
             || home == Path::new("/")
@@ -35,7 +43,7 @@ impl InstallPlan {
         {
             return Err(AppError::new(Component::Config, ErrorKind::InvalidInput));
         }
-        Ok(Self::at(&home.join(".local")))
+        Ok(())
     }
     pub fn system_local() -> Self {
         Self {
@@ -49,16 +57,20 @@ impl InstallPlan {
         Ok(Self::at(&root.join("usr/local")))
     }
     fn at(prefix: &Path) -> Self {
+        Self::at_paths(&prefix.join("bin"), &prefix.join("share"))
+    }
+    fn at_paths(bin: &Path, data: &Path) -> Self {
         Self {
             files: [
-                prefix.join("bin/ptyra"),
-                prefix.join("share/terminfo/p/ptyra"),
-                prefix.join("share/applications/ptyra.desktop"),
+                bin.join("ptyra"),
+                data.join("terminfo/p/ptyra"),
+                data.join("applications/ptyra.desktop"),
+                data.join("ptyra/ptyra.svg"),
             ],
             review_only: false,
         }
     }
-    pub fn files(&self) -> &[PathBuf; 3] {
+    pub fn files(&self) -> &[PathBuf; 4] {
         &self.files
     }
     /// This snapshot authorizes no writes and never treats an existing destination as replaceable.
@@ -118,6 +130,7 @@ mod tests {
                 ("Name", crate::APP_NAME),
                 ("Exec", env!("CARGO_PKG_NAME")),
                 ("TryExec", env!("CARGO_PKG_NAME")),
+                ("Icon", "ptyra"),
                 ("Terminal", "false"),
                 ("Categories", "System;TerminalEmulator;"),
             ])

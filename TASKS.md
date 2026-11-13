@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（199 已勾選）。整體 Integration / Acceptance gates 仍按下方 Matrix 獨立驗收。
+**Total:** 200 atomic TASKS（199 已勾選）。整體 Integration / Acceptance gates 仍按下方 Matrix 獨立驗收。
 
 ## A. Foundation / 測試基礎
 
@@ -885,6 +885,12 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 - [x] **TASK-199 — 將 malformed fixtures 擴展到 runtime boundaries**
   - **Dependencies:** `TASK-106`, `TASK-149`, `TASK-160`, `TASK-175`, `TASK-179` | **Unit Test:** `runtime_malformed_events_remain_bounded_and_isolated`
   - **Done:** 固定 seed/property tests 覆蓋 Wayland object/serial lifecycle、Clipboard FD cancellation、IME stale done、PTY query flood 同 parser 限額；驗證不 panic/無界 allocation/busy loop/跨 Tab 輸入；Kitty query flood 另見 TASK-180，Graphics APC/decode/store 限額另見 TASK-184/TASK-190，唔令基本安全 gate 依賴後續 Kitty 交付；未接通部分明確標示，唔以幾個 fixture 宣稱全面 fuzz 完成。
+
+## Application launcher（2026-11-13 使用者 APPROVE 實作）
+
+- [ ] **TASK-200 — 透過 install.sh 安裝 application icon 同 fuzzel launcher**
+  - **Dependencies:** `TASK-124`, `TASK-191`, `TASK-192`, `TASK-193` | **Unit Test:** `launcher_icon_is_installed_and_rolled_back`
+  - **Done:** `install.sh` 重用 installer 安裝 binary、terminfo、desktop entry 同 SVG icon；已有 binary 時只補 launcher/icon；支援 `XDG_DATA_HOME`，launcher 使用 absolute binary path；衝突唔覆寫，失敗回滾包含 icon；暫存 prefix 驗證 script 同 launcher。真 desktop fuzzel 搜尋／啟動另作驗收。
 
 ## Integration / Acceptance Matrix（唔當作 Unit TASK）
 

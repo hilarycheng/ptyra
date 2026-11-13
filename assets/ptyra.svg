@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Ptyra</title>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#102b35"/>
+  <path d="M34 45 55 64 34 83" fill="none" stroke="#62e5c0" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M69 83h25" fill="none" stroke="#eaf7f4" stroke-width="10" stroke-linecap="round"/>
+</svg>

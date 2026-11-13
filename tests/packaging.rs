@@ -4,6 +4,78 @@ use ptyra::install::InstallPlan;
 use std::{fs, path::Path, process::Command};
 
 #[test]
+fn install_script_registers_launcher_and_icon() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = nix::unistd::mkdtemp("/tmp/ptyra-launcher-XXXXXX").unwrap();
+    let check = || {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let home = root.join("home with spaces");
+        let data = root.join("custom data");
+        let cargo = root.join("cargo");
+        fs::write(&cargo, "#!/bin/sh\nset -eu\n[ \"$*\" = 'run --release --locked --offline --bin ptyra -- --install' ]\nexec \"$PTYRA_TEST_BINARY\" --install\n").unwrap();
+        fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
+        let invoke = || {
+            Command::new("/bin/sh")
+                .arg(repo.join("install.sh"))
+                .current_dir(&root)
+                .env("HOME", &home)
+                .env("XDG_DATA_HOME", &data)
+                .env("PATH", format!("{}:/usr/bin:/bin", root.display()))
+                .env("PTYRA_TEST_BINARY", env!("CARGO_BIN_EXE_ptyra"))
+                .output()
+                .unwrap()
+        };
+        let output = invoke();
+        assert!(output.status.success(), "{output:?}");
+        let desktop = data.join("applications/ptyra.desktop");
+        let icon = data.join("ptyra/ptyra.svg");
+        let text = fs::read_to_string(&desktop).unwrap();
+        assert!(text.contains(&format!(
+            "Exec=\"{}\"",
+            home.join(".local/bin/ptyra").display()
+        )));
+        assert!(
+            text.lines()
+                .any(|line| line == format!("Icon={}", icon.display()))
+        );
+        assert_eq!(
+            fs::read(&icon).unwrap(),
+            fs::read(repo.join("assets/ptyra.svg")).unwrap()
+        );
+        assert!(
+            Command::new("desktop-file-validate")
+                .arg(&desktop)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            !invoke().status.success(),
+            "existing installation must be preserved"
+        );
+        assert_eq!(fs::read_to_string(&desktop).unwrap(), text);
+        assert_eq!(
+            fs::read(data.join("terminfo/p/ptyra")).unwrap(),
+            ptyra::terminfo::COMPILED
+        );
+        fs::remove_file(&desktop).unwrap();
+        fs::remove_file(&icon).unwrap();
+        let binary = home.join(".local/bin/ptyra");
+        fs::write(&binary, b"existing executable").unwrap();
+        let output = invoke();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(fs::read(&binary).unwrap(), b"existing executable");
+        assert_eq!(fs::read_to_string(&desktop).unwrap(), text);
+        assert!(icon.is_file());
+    };
+    let result = std::panic::catch_unwind(check);
+    fs::remove_dir_all(root).unwrap();
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}
+
+#[test]
 fn packaged_capabilities_match_runtime_support_on_disk() {
     let root = nix::unistd::mkdtemp("/tmp/ptyra-package-XXXXXX").unwrap();
     let check = || {

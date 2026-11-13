@@ -86,9 +86,17 @@ Preedit 只係 overlay；commit 經 transaction 同 focus／Tab 檢查後先輸�
 
 ## 安裝同移除
 
-目前提供 Linux GNU library adapter，**未有 install／uninstall CLI 或持久 receipt**。
+執行 `./install.sh`，再開 fuzzel 搜尋 `Ptyra`。Script 用 Cargo offline release build，需先準備好 Rust toolchain 同 dependency cache。
+安裝入口係 `ptyra --install`。未有 `~/.local/bin/ptyra` 時會安裝 binary、terminfo、desktop entry 同 SVG icon。
+如果該位置已有普通 executable，只會新增 desktop entry 同 icon，沿用現有版本；唔會更新 binary。
+Desktop entry 同 icon 使用 `XDG_DATA_HOME`；未設定或唔係 absolute path 時用 `~/.local/share`。
+Icon 放喺 data directory 嘅 `ptyra/ptyra.svg`，desktop entry 使用 absolute icon path，唔依賴 icon theme cache。
+Launcher 使用 absolute binary path，唔需要將 `~/.local/bin` 加入 Sway 嘅 `PATH`。安裝後重新開 fuzzel；icon 顯示仍取決於 fuzzel 有冇啟用 icons。
+Script 唔改 Sway、Fcitx5 或全域設定；已有 desktop entry／icon 會拒絕覆寫。**未有 uninstall CLI 或持久 receipt**。
+
+Linux GNU library adapter：
 `InstallPlan::user_local(home).install(binary)` 寫入 `home/.local`；`InstallPlan::staged(root).install(binary)` 寫入 `root/usr/local`。
-兩者只建立 `bin/ptyra`、`share/terminfo/p/ptyra` 同 `share/applications/ptyra.desktop`。
+兩者只建立 `bin/ptyra`、`share/terminfo/p/ptyra`、`share/applications/ptyra.desktop` 同 `share/ptyra/ptyra.svg`。
 目的檔案已存在會拒絕；唔會覆寫舊版本。Prefix 要由 operator 控制，須為 UTF-8，唔可以包含 `=`、`%` 或 control characters。
 Installed launcher 使用 absolute binary path，已測空格、引號、dollar、backtick 同 backslash；staged 目錄搬位後要重新建立 entry。
 
@@ -96,7 +104,7 @@ Installed launcher 使用 absolute binary path，已測空格、引號、dollar�
 Uninstall 只接受相同 plan 嘅完整 receipt；檔案被改動、替換或變成 symlink 時保留並回報 error。
 已消失嘅檔案可重試；parent directories 同其他程式保留。Install 途中失敗亦只回滾本次建立嘅檔案。
 錯誤包含 path 同 error kind；若檔案留喺 private recovery directory，先檢查回報位置。
-Receipt 遺失後，現有 API 唔會憑三條 path 猜測 ownership，亦唔提供跨 process 自動 uninstall。
+Receipt 遺失後，現有 API 唔會憑 paths 猜測 ownership，亦唔提供跨 process 自動 uninstall。
 `system_local()` 只供檢視 `/usr/local` 路徑；install／uninstall 會拒絕執行，真正系統寫入或移除仍需另行批准。
 
 可重跑嘅暫存 packaging 驗證：
@@ -2094,3 +2102,39 @@ Known limitations: 保守 reserve 可能提早拒絕；唔提供 hard latency �
 Ready for [x]: YES
 Approval: APPROVE FINISH TASK-184 to TASK-190 (2026-11-13)
 ```
+
+## TASK-200 — Application icon / fuzzel launcher（2026-11-13）
+
+```text
+TASK: TASK-200
+Status: DONE（實作完成；Checkbox 待使用者批准）
+Dependencies: satisfied（TASK-124、191、192、193 全部 [x]）
+Changed files: install.sh, assets/ptyra.svg, assets/ptyra.desktop,
+  src/main.rs, src/install.rs, src/install/adapter.rs,
+  src/install/adapter/tests.rs, tests/packaging.rs,
+  tests/native_packaging.py, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline launcher_icon_is_installed_and_rolled_back
+Result: PASS
+Workspace tests: PASS（337 unit、18 integration、2 doctests；1 existing fish test ignored）
+Format / Clippy: PASS
+Manual / Integration checks:
+  install.sh 暫存 HOME / XDG_DATA_HOME、空格路徑、衝突保留、沿用既有 binary：PASS
+  user-local / staged launcher、absolute icon path、terminfo、uninstall：PASS
+  desktop-file-validate、sh -n、git diff --check：PASS
+  真 user-local launcher/icon 安裝：PASS；沿用既有 ~/.local/bin/ptyra
+  獨立 Sway 1.9 + fuzzel 1.9.2 搜尋、icon 顯示、啟動正確 binary：PASS
+  使用者現有 Sway desktop 操作：NOT RUN
+Security / Privacy impact:
+  無新增 dependency、unsafe、telemetry；唔改 Sway/Fcitx5 或現有目錄 permissions
+  沿用 exclusive create、失敗回滾；只新增 user-local desktop entry 同 icon
+Known limitations:
+  Script 唔更新既有 binary，亦唔覆寫已有 desktop entry/icon
+  Offline build 需要 dependency cache；未提供持久 receipt / uninstall CLI
+Ready for [x]: YES（等使用者批准狀態更新）
+```
+
+兩個新測試先喺未實作時失敗，實作後通過。Sandbox 首輪 regression 因既有 ownership/socket 限制失敗；sandbox 外完整測試通過，冇放寬檢查。
+首次真安裝因現有 `icons/hicolor` 目錄可由 group 寫入而拒絕，已建立 desktop entry 正常回滾。
+最終 icon 使用專用 `share/ptyra` 目錄；absolute `Icon` 符合 [Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry/latest/recognized-keys.html)。
+首輪 fuzzel probe 喺 Sway keyboard readiness timeout；第二輪未見 app entry。修正測試啟動環境同等候 IPC 後，搜尋、顯示同啟動全部通過。
+Fuzzel probe 用臨時 config/cache 同測試 shell，冇執行使用者 shell startup；唔代替指定 desktop 嘅整體 acceptance gates。

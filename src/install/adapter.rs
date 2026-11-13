@@ -57,7 +57,7 @@ trait InstallFs {
 
 fn execute(
     plan: &InstallPlan,
-    binary: &mut dyn Read,
+    binary: Option<&mut dyn Read>,
     fs: &mut impl InstallFs,
 ) -> Result<InstallReceipt, InstallFailure> {
     if plan.review_only {
@@ -68,18 +68,23 @@ fn execute(
         .map_err(|error| failure(error.kind()))?;
     let mut terminfo = crate::terminfo::COMPILED;
     let mut desktop = desktop_entry.as_bytes();
+    let mut icon = &include_bytes!("../../assets/ptyra.svg")[..];
     let terminfo_len = terminfo.len() as u64;
     let desktop_len = desktop.len() as u64;
-    let inputs: [(&mut dyn Read, u64, u32); 3] = [
-        (binary, MAX_BINARY_BYTES, 0o755),
-        (&mut terminfo, terminfo_len, 0o644),
-        (&mut desktop, desktop_len, 0o644),
-    ];
-    let mut created = Vec::with_capacity(3);
+    let icon_len = icon.len() as u64;
+    let mut inputs: Vec<(&mut dyn Read, u64, u32)> = Vec::with_capacity(4);
+    if let Some(binary) = binary {
+        inputs.push((binary, MAX_BINARY_BYTES, 0o755));
+        inputs.push((&mut terminfo, terminfo_len, 0o644));
+    }
+    inputs.push((&mut desktop, desktop_len, 0o644));
+    inputs.push((&mut icon, icon_len, 0o644));
+    let paths = &plan.files()[plan.files().len() - inputs.len()..];
+    let mut created = Vec::with_capacity(inputs.len());
     let result = (|| {
-        let mut files = Vec::with_capacity(3);
+        let mut files = Vec::with_capacity(inputs.len());
         for (index, (input, limit, mode)) in inputs.into_iter().enumerate() {
-            created.push(fs.create(&plan.files()[index])?);
+            created.push(fs.create(&paths[index])?);
             let file = &mut created[index];
             copy_bounded(input, file, limit)?;
             files.push(fs.finish(file, mode)?);
@@ -112,11 +117,25 @@ fn failure(kind: io::ErrorKind) -> InstallFailure {
 }
 
 impl InstallPlan {
+    /// Register an existing executable without replacing it or its terminfo.
+    pub fn install_launcher(&self) -> Result<(), InstallFailure> {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata =
+            std::fs::symlink_metadata(&self.files()[0]).map_err(|error| failure(error.kind()))?;
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            return Err(failure(io::ErrorKind::InvalidInput));
+        }
+        execute(self, None, &mut filesystem::Filesystem).map(|_| ())
+    }
+
     fn desktop_entry(&self) -> io::Result<String> {
         // shortcut: reject '%' until launchers resolve escaped executable paths reliably.
         let binary = self.files()[0]
             .to_str()
             .filter(|path| !path.contains(['=', '%']))
+            .ok_or(io::ErrorKind::InvalidInput)?;
+        let icon = self.files()[3]
+            .to_str()
             .ok_or(io::ErrorKind::InvalidInput)?;
         let mut command = String::from("\"");
         for character in binary.chars() {
@@ -135,6 +154,10 @@ impl InstallPlan {
             .replace(
                 "\nTryExec=ptyra\n",
                 &format!("\nTryExec={}\n", binary.replace('\\', "\\\\")),
+            )
+            .replace(
+                "\nIcon=ptyra\n",
+                &format!("\nIcon={}\n", icon.replace('\\', "\\\\")),
             ))
     }
 
@@ -144,7 +167,7 @@ impl InstallPlan {
         uninstall(self, receipt, filesystem::remove)
     }
 
-    /// Install three files without replacement. Existing or created directories remain on failure.
+    /// Install bundled files without replacement. Existing or created directories remain on failure.
     /// The prefix must be operator-controlled; concurrent writers with the same UID are not isolated.
     /// System plans are review-only. Use `staged` to prepare the system layout without system writes.
     pub fn install(&self, binary: &Path) -> Result<InstallReceipt, InstallFailure> {
@@ -166,7 +189,7 @@ impl InstallPlan {
         if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_BINARY_BYTES {
             return Err(failure(io::ErrorKind::InvalidInput));
         }
-        execute(self, &mut source, &mut filesystem::Filesystem)
+        execute(self, Some(&mut source), &mut filesystem::Filesystem)
     }
 }
 
