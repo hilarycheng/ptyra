@@ -188,7 +188,7 @@ def main():
             if os.environ.get("PTYRA_TEST_CLIPBOARD_DEVICE") or os.environ.get("PTYRA_TEST_PRIMARY") or os.environ.get("PTYRA_TEST_NO_PRIMARY"):
                 env["PTYRA_TRACE_CLIPBOARD"] = "1"
             (root / "test.toml").write_text(("clipboard_bytes=131072\n" if os.environ.get("PTYRA_TEST_CLIPBOARD_RECEIVE") else ("clipboard_bytes=16\n" if os.environ.get("PTYRA_TEST_OSC52") or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "")) + ("osc52_write=true\n" if os.environ.get("PTYRA_TEST_OSC52") == "enabled" or os.environ.get("PTYRA_TEST_CLIPBOARD_NOTICE") else "") + "[bindings]\ncopy='Ctrl+Shift+a'\n" + ("scroll_top='Alt+Home'\n" if os.environ.get("PTYRA_TEST_SCROLL") else ""))
-            if os.environ.get("PTYRA_TEST_FONTS") or os.environ.get("PTYRA_TEST_STYLES") or os.environ.get("PTYRA_TEST_CURSOR") or os.environ.get("PTYRA_TEST_PALETTE") or os.environ.get("PTYRA_TEST_TERMINFO"):
+            if os.environ.get("PTYRA_TEST_FONTS") or os.environ.get("PTYRA_TEST_STYLES") or os.environ.get("PTYRA_TEST_CURSOR") or os.environ.get("PTYRA_TEST_PALETTE") or os.environ.get("PTYRA_TEST_TERMINFO") or os.environ.get("PTYRA_TEST_GRAPHICS"):
                 from native_fonts import configure_fonts
                 configure_fonts(root, env)
             if os.environ.get("PTYRA_TEST_PALETTE"):
@@ -281,6 +281,9 @@ def main():
             if os.environ.get("PTYRA_TEST_KEYPAD"):
                 from native_keypad import check_keypad
                 check_keypad(root, keyboard, app, wait_until, u32)
+            if os.environ.get("PTYRA_TEST_GRAPHICS"):
+                from native_graphics import check_graphics
+                check_graphics(root, env, keyboard, app, wait_until, ipc, nodes)
             if os.environ.get("PTYRA_TEST_KITTY"):
                 from native_kitty import check_kitty
                 check_kitty(root, keyboard, app, wait_until)

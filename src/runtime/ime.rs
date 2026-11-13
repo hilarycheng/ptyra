@@ -1,3 +1,6 @@
+pub(super) mod layout;
+#[cfg(test)]
+mod malformed_tests;
 use super::{Result, Runtime};
 use crate::{
     WindowId,
@@ -37,28 +40,21 @@ impl ImeInput {
         layout: &crate::renderer::CellLayout,
         keyboard: &KeyboardFocus,
     ) -> Result<Option<super::damage::Band>> {
-        use crate::renderer::overlay::{OverlayCommand, Preedit, overlay_commands};
         let Some(preedit) = &mut self.preedit else {
             return Ok(None);
         };
         let preedit = preedit.preedit(&self.state, keyboard);
-        let commands = overlay_commands(
+        if preedit.text.is_empty() {
+            return Ok(None);
+        }
+        Ok(layout::compose(
             terminal.snapshot().ok_or("terminal unavailable")?,
             layout,
-            Some(Preedit {
-                tab: terminal.tab(),
-                text: &preedit.text,
-            }),
-        )
-        .map_err(|_| "invalid IME overlay")?;
-        Ok(commands
-            .filter_map(|command| match command {
-                OverlayCommand::Preedit { clip, .. } => {
-                    super::damage::Band::new(clip.y as u32, clip.y as u32 + clip.height)
-                }
-                _ => None,
-            })
-            .next())
+            preedit,
+        )?
+        .and_then(|view| {
+            super::damage::Band::new(view.clip.y as u32, view.clip.y as u32 + view.clip.height)
+        }))
     }
 
     fn new(seat: u32, manager: u32) -> Self {
@@ -104,7 +100,9 @@ impl ImeInput {
         keyboard: &KeyboardFocus,
         serial: u32,
         sink: &mut impl PasteSink,
+        repeat: &mut crate::repeat::RepeatScheduler,
     ) -> Result<Done> {
+        let had_batch = self.batch_focus.is_some();
         let focus = self.batch_focus.take().unwrap_or_else(|| {
             self.state
                 .capture_focus(self.state.seat(), WindowId(1), keyboard)
@@ -117,6 +115,10 @@ impl ImeInput {
             > self.state.commit_serial().wrapping_sub(self.focus_serial)
         {
             return Ok(Done::default());
+        }
+        // A compositor-owned IME batch ends a previously forwarded key's local repeat.
+        if had_batch {
+            repeat.cancel();
         }
         self.state_is_current = update.state_is_current;
         // The transaction is consumed once, including a visibly rejected commit.
@@ -165,6 +167,7 @@ impl Runtime {
     }
 
     pub(super) fn remove_text_input(&mut self) {
+        self.input.repeat.cancel();
         if let Some(input) = self.text_input.take() {
             input.destroy();
         }
@@ -207,15 +210,20 @@ impl Runtime {
                 return Ok(());
             };
             let snapshot = tab.terminal().snapshot().ok_or("terminal unavailable")?;
-            if let Some(mut requests) = ime.state.update_cursor_rectangle(
+            let empty = crate::ime::ImePreedit::default();
+            let preedit = ime
+                .preedit
+                .as_mut()
+                .map(|p| p.preedit(&ime.state, &self.input.focus))
+                .unwrap_or(&empty);
+            let rect = layout::compose(snapshot, &layout, preedit)?
+                .map(|view| view.surface_anchor(bar_height, self.paint.scale));
+            if let Some(requests) = ime.state.update_cursor_rect(
                 ime.state.seat(),
                 &self.input.focus,
-                snapshot,
-                &layout,
+                tab.terminal().tab(),
+                rect,
             ) {
-                if let ImeRequest::SetCursorRectangle(rect) = &mut requests[0] {
-                    rect.y += bar_height as i32;
-                }
                 send_requests(input, &requests);
             }
         }
@@ -232,12 +240,14 @@ impl Runtime {
         };
         match event {
             Event::Enter { surface } if self.surface.as_ref() == Some(&surface) => {
+                self.input.repeat.cancel();
                 ime.batch_focus = None;
                 ime.state.enter(ime.state.seat(), WindowId(1));
                 self.sync_ime_focus();
                 self.paint.dirty = true;
             }
             Event::Leave { surface } if self.surface.as_ref() == Some(&surface) => {
+                self.input.repeat.cancel();
                 ime.batch_focus = None;
                 ime.state.leave(ime.state.seat(), WindowId(1));
                 self.sync_ime_focus();
@@ -278,7 +288,7 @@ impl Runtime {
                     .and_then(|id| self.tabs.get_mut(id))
                     .and_then(|tab| tab.pty_mut())
                 {
-                    let done = ime.done(&self.input.focus, serial, pty)?;
+                    let done = ime.done(&self.input.focus, serial, pty, &mut self.input.repeat)?;
                     self.paint.dirty |= done.changed;
                     if done.rejected {
                         self.input.repeat.cancel();
@@ -322,6 +332,100 @@ mod tests {
     use crate::{TabId, WindowId, clipboard::PasteSink, ime::ImeEvent, input::KeyboardFocus};
 
     #[test]
+    fn runtime_kitty_ime_ownership_never_duplicates_text() {
+        use super::super::keyboard::KeyboardInput;
+        use crate::{clock::FakeClock, keymap::Keymap, kitty::KeyboardFlags};
+        struct Sink(Vec<u8>);
+        impl PasteSink for Sink {
+            type Error = std::convert::Infallible;
+            fn tab(&self) -> TabId {
+                TabId(1)
+            }
+            fn enqueue(&mut self, bytes: &[u8]) -> std::result::Result<(), Self::Error> {
+                self.0.extend_from_slice(bytes);
+                Ok(())
+            }
+        }
+        for flags in [
+            KeyboardFlags::empty(),
+            KeyboardFlags::DISAMBIGUATE_ESC_CODES,
+        ] {
+            let clock = FakeClock::default();
+            let mut keyboard = KeyboardInput {
+                map: Some(
+                    Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb"))
+                        .unwrap(),
+                ),
+                ..Default::default()
+            };
+            keyboard.focus.enter(WindowId(1), TabId(1));
+            keyboard.repeat.configure(25, 100).unwrap();
+            let mut ime = ImeInput::new(7, 3);
+            ime.state.enter(ime.state.seat(), WindowId(1));
+            ime.sync_focus(&keyboard.focus);
+            let serial = ime.state.commit_serial();
+            let mut sink = Sink(
+                keyboard
+                    .key(30, true, false, false, flags, &clock)
+                    .unwrap()
+                    .unwrap(),
+            );
+            // IME takes the keyboard grab; its consumed key/release never reach wl_keyboard.
+            ime.stage(
+                &keyboard.focus,
+                ImeEvent::Preedit {
+                    text: Some("中"),
+                    cursor_begin: 3,
+                    cursor_end: 3,
+                },
+            );
+            ime.done(&keyboard.focus, serial, &mut sink, &mut keyboard.repeat)
+                .unwrap();
+            clock.advance(std::time::Duration::from_secs(1)).unwrap();
+            assert!(
+                keyboard
+                    .tick(false, false, flags, &clock)
+                    .unwrap()
+                    .is_none(),
+                "IME must stop the old terminal repeat"
+            );
+            ime.stage(&keyboard.focus, ImeEvent::Commit { text: Some("中") });
+            assert!(
+                ime.done(&keyboard.focus, serial, &mut sink, &mut keyboard.repeat)
+                    .unwrap()
+                    .committed
+            );
+            assert!(
+                !ime.done(&keyboard.focus, serial, &mut sink, &mut keyboard.repeat)
+                    .unwrap()
+                    .committed
+            );
+            assert_eq!(sink.0, "a中".as_bytes());
+            assert!(
+                keyboard
+                    .key(30, false, false, false, flags, &clock)
+                    .unwrap()
+                    .is_none()
+            );
+            // Compositor-forwarded keys remain usable after commit.
+            assert_eq!(
+                keyboard
+                    .key(30, true, false, false, flags, &clock)
+                    .unwrap()
+                    .unwrap(),
+                b"a"
+            );
+            keyboard.clear_focus();
+            clock.advance(std::time::Duration::from_secs(1)).unwrap();
+            assert!(
+                keyboard
+                    .tick(false, false, flags, &clock)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+    #[test]
     fn runtime_ime_tab_switch_invalidates_old_batches() {
         struct Sink(TabId, Vec<u8>);
         impl PasteSink for Sink {
@@ -335,6 +439,7 @@ mod tests {
             }
         }
         let mut input = ImeInput::new(7, 3);
+        let mut repeat = crate::repeat::RepeatScheduler::default();
         let mut focus = KeyboardFocus::default();
         focus.enter(WindowId(1), TabId(7));
         input.state.enter(input.state.seat(), WindowId(1));
@@ -353,7 +458,7 @@ mod tests {
                 cursor_end: 3,
             },
         );
-        input.done(&focus, old, &mut first).unwrap();
+        input.done(&focus, old, &mut first, &mut repeat).unwrap();
         assert_eq!(
             input
                 .preedit
@@ -388,7 +493,12 @@ mod tests {
                 .text
                 .is_empty()
         );
-        assert!(!input.done(&focus, old, &mut second).unwrap().committed);
+        assert!(
+            !input
+                .done(&focus, old, &mut second, &mut repeat)
+                .unwrap()
+                .committed
+        );
         // Entire old batches can arrive after the local Tab switch.
         input.stage(
             &focus,
@@ -396,7 +506,12 @@ mod tests {
                 text: Some("遲到")
             },
         );
-        assert!(!input.done(&focus, old, &mut second).unwrap().committed);
+        assert!(
+            !input
+                .done(&focus, old, &mut second, &mut repeat)
+                .unwrap()
+                .committed
+        );
         let current = input.state.commit_serial();
         let terminal = crate::terminal::Terminal::new(TabId(8), 4, 8).unwrap();
         let layout = crate::renderer::CellLayout::new(
@@ -424,7 +539,9 @@ mod tests {
                 cursor_end: 3,
             },
         );
-        input.done(&focus, current, &mut second).unwrap();
+        input
+            .done(&focus, current, &mut second, &mut repeat)
+            .unwrap();
         assert!(!input.state_is_current);
         input.stage(
             &focus,
@@ -432,7 +549,12 @@ mod tests {
                 text: Some("遲到")
             },
         );
-        assert!(!input.done(&focus, old, &mut second).unwrap().committed);
+        assert!(
+            !input
+                .done(&focus, old, &mut second, &mut repeat)
+                .unwrap()
+                .committed
+        );
         assert_eq!(
             input
                 .preedit
@@ -448,8 +570,18 @@ mod tests {
                 text: Some("中文")
             },
         );
-        assert!(input.done(&focus, current, &mut second).unwrap().committed);
-        assert!(!input.done(&focus, current, &mut second).unwrap().committed);
+        assert!(
+            input
+                .done(&focus, current, &mut second, &mut repeat)
+                .unwrap()
+                .committed
+        );
+        assert!(
+            !input
+                .done(&focus, current, &mut second, &mut repeat)
+                .unwrap()
+                .committed
+        );
         assert_eq!(second.1, "中文".as_bytes());
         // Closing the active Tab retargets focus; queued events cannot reach its sibling.
         input.stage(
@@ -460,7 +592,9 @@ mod tests {
         );
         focus.enter(WindowId(1), TabId(7));
         input.sync_focus(&focus);
-        input.done(&focus, current, &mut first).unwrap();
+        input
+            .done(&focus, current, &mut first, &mut repeat)
+            .unwrap();
         input.stage(
             &focus,
             ImeEvent::Commit {
@@ -468,7 +602,12 @@ mod tests {
             },
         );
         let serial = input.state.commit_serial();
-        assert!(input.done(&focus, serial, &mut first).unwrap().committed);
+        assert!(
+            input
+                .done(&focus, serial, &mut first, &mut repeat)
+                .unwrap()
+                .committed
+        );
         assert_eq!(first.1, "返回".as_bytes());
         assert_eq!(second.1, "中文".as_bytes());
         input.stage(
@@ -479,7 +618,7 @@ mod tests {
         );
         focus.clear();
         input.sync_focus(&focus);
-        input.done(&focus, serial, &mut first).unwrap();
+        input.done(&focus, serial, &mut first, &mut repeat).unwrap();
         focus.enter(WindowId(1), TabId(7));
         input.sync_focus(&focus);
         input.stage(
@@ -488,7 +627,7 @@ mod tests {
                 text: Some("舊焦點"),
             },
         );
-        input.done(&focus, serial, &mut first).unwrap();
+        input.done(&focus, serial, &mut first, &mut repeat).unwrap();
         assert_eq!(first.1, "返回".as_bytes());
     }
 
@@ -536,6 +675,39 @@ mod tests {
             .unwrap();
         let band = input.damage(&terminal, &layout, &focus).unwrap();
         assert_eq!(band, Band::new(0, 20));
+        let composition = layout::compose(
+            terminal.snapshot().unwrap(),
+            &layout,
+            input
+                .preedit
+                .as_mut()
+                .unwrap()
+                .preedit(&input.state, &focus),
+        )
+        .unwrap()
+        .unwrap();
+        let first = composition.surface_anchor(20, 1);
+        assert_eq!((first.x, first.y), (40, 20));
+        assert!(
+            input
+                .state
+                .update_cursor_rect(input.state.seat(), &focus, TabId(1), Some(first))
+                .is_some()
+        );
+        assert!(
+            input
+                .state
+                .update_cursor_rect(input.state.seat(), &focus, TabId(1), Some(first))
+                .is_none()
+        );
+        let moved = composition.surface_anchor(40, 2);
+        assert!(
+            input
+                .state
+                .update_cursor_rect(input.state.seat(), &focus, TabId(1), Some(moved))
+                .is_some()
+        );
+
         assert_eq!(damage.prepare(view(), None, band).content, band);
         focus.clear();
         input.sync_focus(&focus);
@@ -560,6 +732,7 @@ mod tests {
             }
         }
         let mut input = ImeInput::new(7, 3);
+        let mut repeat = crate::repeat::RepeatScheduler::default();
         let mut focus = KeyboardFocus::default();
         focus.enter(WindowId(1), TabId(1));
         input.state.enter(input.state.seat(), WindowId(1));
@@ -579,7 +752,7 @@ mod tests {
         let mut sink = Sink(Vec::new());
         assert!(
             !input
-                .done(&focus, input.state.commit_serial(), &mut sink)
+                .done(&focus, input.state.commit_serial(), &mut sink, &mut repeat)
                 .unwrap()
                 .committed
         );
@@ -589,7 +762,7 @@ mod tests {
         input.sync_focus(&focus);
         assert!(
             !input
-                .done(&focus, input.state.commit_serial(), &mut sink)
+                .done(&focus, input.state.commit_serial(), &mut sink, &mut repeat)
                 .unwrap()
                 .committed
         );
@@ -608,6 +781,7 @@ mod tests {
             }
         }
         let mut input = ImeInput::new(7, 3);
+        let mut repeat = crate::repeat::RepeatScheduler::default();
         let mut keyboard = KeyboardFocus::default();
         keyboard.enter(WindowId(1), TabId(1));
         input.state.enter(input.state.seat(), WindowId(1));
@@ -620,7 +794,12 @@ mod tests {
                 cursor_end: 6,
             },
         );
-        assert!(!input.done(&keyboard, 1, &mut Full).unwrap().rejected);
+        assert!(
+            !input
+                .done(&keyboard, 1, &mut Full, &mut repeat)
+                .unwrap()
+                .rejected
+        );
         assert_eq!(
             input
                 .preedit
@@ -637,7 +816,7 @@ mod tests {
             },
         );
         let rejected = input
-            .done(&keyboard, 1, &mut Full)
+            .done(&keyboard, 1, &mut Full, &mut repeat)
             .expect("recoverable rejection");
         assert!(rejected.changed && rejected.rejected);
         assert!(
@@ -650,7 +829,7 @@ mod tests {
                 .is_empty(),
             "rejection still applies the done overlay"
         );
-        let duplicate = input.done(&keyboard, 1, &mut Full).unwrap();
+        let duplicate = input.done(&keyboard, 1, &mut Full, &mut repeat).unwrap();
         assert!(
             !duplicate.rejected,
             "a consumed rejected commit is never replayed"
@@ -671,6 +850,7 @@ mod tests {
             }
         }
         let mut input = ImeInput::new(7, 3);
+        let mut repeat = crate::repeat::RepeatScheduler::default();
         let mut keyboard = KeyboardFocus::default();
         keyboard.enter(WindowId(1), TabId(1));
         input.state.enter(input.state.seat(), WindowId(1));
@@ -688,7 +868,7 @@ mod tests {
             },
         );
         assert!(sink.0.is_empty());
-        input.done(&keyboard, 1, &mut sink).unwrap();
+        input.done(&keyboard, 1, &mut sink, &mut repeat).unwrap();
         assert_eq!(
             input
                 .preedit
@@ -706,8 +886,8 @@ mod tests {
             },
         );
         assert!(sink.0.is_empty());
-        input.done(&keyboard, 1, &mut sink).unwrap();
-        input.done(&keyboard, 1, &mut sink).unwrap();
+        input.done(&keyboard, 1, &mut sink, &mut repeat).unwrap();
+        input.done(&keyboard, 1, &mut sink, &mut repeat).unwrap();
         assert_eq!(sink.0, "繁體中文".as_bytes());
         assert!(
             input
@@ -720,7 +900,7 @@ mod tests {
         );
         // Repeated serials are valid independent batches, not duplicate text.
         input.stage(&keyboard, ImeEvent::Commit { text: Some("字") });
-        input.done(&keyboard, 1, &mut sink).unwrap();
+        input.done(&keyboard, 1, &mut sink, &mut repeat).unwrap();
         assert_eq!(sink.0, "繁體中文字".as_bytes());
         input.stage(&keyboard, ImeEvent::Commit { text: Some("舊") });
         keyboard.clear();
@@ -729,12 +909,22 @@ mod tests {
         input.sync_focus(&keyboard);
         input.stage(&keyboard, ImeEvent::Commit { text: Some("新") });
         input
-            .done(&keyboard, input.state.commit_serial(), &mut sink)
+            .done(
+                &keyboard,
+                input.state.commit_serial(),
+                &mut sink,
+                &mut repeat,
+            )
             .unwrap();
         assert_eq!(sink.0, "繁體中文字新".as_bytes());
         assert!(input.state_is_current);
         input
-            .done(&keyboard, input.state.commit_serial(), &mut sink)
+            .done(
+                &keyboard,
+                input.state.commit_serial(),
+                &mut sink,
+                &mut repeat,
+            )
             .unwrap();
         assert!(input.state_is_current);
         input.stage(&keyboard, ImeEvent::Commit { text: Some("舊") });
@@ -745,7 +935,7 @@ mod tests {
         );
         keyboard.enter(WindowId(1), TabId(1));
         input.sync_focus(&keyboard);
-        input.done(&keyboard, 1, &mut sink).unwrap();
+        input.done(&keyboard, 1, &mut sink, &mut repeat).unwrap();
         assert_eq!(sink.0, "繁體中文字新".as_bytes());
         // Invalid UTF-8 cursor boundaries discard the complete batch.
         input.stage(&keyboard, ImeEvent::Commit { text: Some("壞") });
@@ -757,7 +947,7 @@ mod tests {
                 cursor_end: 1,
             },
         );
-        input.done(&keyboard, 3, &mut sink).unwrap();
+        input.done(&keyboard, 3, &mut sink, &mut repeat).unwrap();
         assert_eq!(sink.0, "繁體中文字新".as_bytes());
         input.stage(
             &keyboard,
@@ -766,7 +956,7 @@ mod tests {
                 after_length: 3,
             },
         );
-        input.done(&keyboard, 3, &mut sink).unwrap();
+        input.done(&keyboard, 3, &mut sink, &mut repeat).unwrap();
         assert_eq!(sink.0, "繁體中文字新".as_bytes());
     }
 }

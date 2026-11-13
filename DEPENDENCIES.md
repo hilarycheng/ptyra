@@ -1,5 +1,25 @@
 # Dependency review — TASK-012 (2026-10-29)
 
+## Optional EGL/GLES comparison probe — TASK-197（2026-11-13）
+
+- 只喺 `gles-probe` feature 使用 system `libEGL` / `libGLESv2`；冇新增 Cargo package，Cargo.lock 不變。
+  Default build 不連結 EGL/GLES。PoC 共享 CPU glyph raster，測 texture upload + GLES3 framebuffer blit，唔係 GPU glyph renderer。
+- 本機 libglvnd 1.7.0-1build1、Mesa 25.2.8-0ubuntu0.24.04.4。
+  [libglvnd](https://github.com/NVIDIA/libglvnd) 採 MIT-style licenses；本機 `/usr/share/doc/libglvnd0/copyright` 有逐檔授權。
+  [Mesa license](https://docs.mesa3d.org/license.html) 主要係 MIT，個別 components 有獨立授權。
+  [Mesa EGL](https://docs.mesa3d.org/egl.html) 維護 EGL 1.5；[Khronos headers/specs](https://registry.khronos.org/EGL/) 係 FFI signatures 依據。
+- 查閱 [USN-8427-1](https://ubuntu.com/security/notices/USN-8427-1)：Ubuntu 24.04 修正版本係 25.2.8-0ubuntu0.24.04.2。
+  本機版本較新；呢次唔係完整 system advisory audit，唔代表所有 driver/kernel 漏洞已排除。冇安裝或更新 system packages。
+- 新 `unsafe extern C` 只喺 `renderer_probe/gpu/native.rs`。必要性係直接使用已安裝 EGL/GLES，避免為獨立 PoC 加框架。
+  Context 唔跨 thread，raw handles 私有，固定 terminated attribute arrays；partial initialization 用 Drop 清理。
+  每個 pointer 只指向仍然存活嘅本地 scalar/array/slice；GL call 同步讀取 upload，readback buffer 大小先核對。
+  GL errors、context/config 不可用、texture limits、incomplete framebuffer 都回傳固定 metadata error，context failure 後禁止重用。
+- Frame 上限沿用 4,194,304 pixels；兩張 RGBA8 textures 最多 32 MiB，另外有一個 <=16 MiB upload/readback scratch。
+  Driver metadata/allocator/temporary internal copies 不受呢個 byte 上限直接控制，實際 PSS/RSS/GPU 由 harness 記錄。
+  Resize 先刪舊資源；每次 blit `glFinish`，避免 timing 漏計未完成 GPU work。
+- 只讀固定 fonts/fixtures，唔處理 user PTY；冇 network、payload logs 或 user compositor 連線。
+  Surfaceless 1×1 pbuffer 提供 context；framebuffer 係 offscreen，唔代表 Sway presentation 正確。
+
 ## Runtime cursor blinking — TASK-170 (2026-11-06)
 
 - Reuses pinned core `cursor_style().blinking` for DEC12 and DECSCUSR. No new dependency, unsafe, FFI, thread, subprocess, payload log or global setting. Default/RIS/DECSCUSR0 keep the core's steady block default; DECSCUSR1/3/5 blink block/underline/beam, and 2/4/6 are steady.

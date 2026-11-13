@@ -38,6 +38,9 @@ impl Header {
         }
         Ok(())
     }
+    pub(crate) fn set_quiet(&mut self, value: i64) {
+        self.fields[index(b'q').unwrap()] = Some(value);
+    }
     pub fn get(&self, key: u8) -> Option<i64> {
         self.fields.get(index(key)?).copied().flatten()
     }
@@ -78,7 +81,7 @@ impl Header {
                     i64::from(raw[0])
                 }
                 b'f' | b's' | b'v' | b'i' | b'p' | b'm' | b'q' | b'c' | b'r' | b'x' | b'y'
-                | b'z' => {
+                | b'z' | b'w' | b'h' | b'X' | b'Y' | b'C' => {
                     let digits = if key == b'z' {
                         raw.strip_prefix(b"-").unwrap_or(raw)
                     } else {
@@ -136,6 +139,7 @@ pub struct GraphicsParser {
     body: Vec<u8>,
     separator: Option<usize>,
     failed: bool,
+    rejected: Header,
 }
 impl GraphicsParser {
     pub fn push(&mut self, byte: u8) -> Result<Option<GraphicsCommand>, AppError> {
@@ -144,10 +148,35 @@ impl GraphicsParser {
         }
         let result = self.step(byte);
         if result.is_err() {
+            self.rejected = Header::default();
+            for key in *b"ipq" {
+                let mut pairs = self.body[..self.separator.unwrap_or(self.body.len())]
+                    .split(|b| *b == b',')
+                    .filter(|p| p.len() >= 3 && p[0] == key && p[1] == b'=');
+                if let Some(pair) = pairs.next() {
+                    let n = std::str::from_utf8(&pair[2..])
+                        .ok()
+                        .and_then(|s| s.parse::<u32>().ok());
+                    if pairs.next().is_none() && n.is_some_and(|n| key != b'q' || n <= 2) {
+                        self.rejected.fields[index(key).unwrap()] = n.map(i64::from);
+                    }
+                }
+            }
             self.failed = true;
             self.body = Vec::new();
         }
         result
+    }
+    pub(crate) fn recover(&mut self, byte: u8) -> Header {
+        self.failed = false;
+        self.state = if matches!(self.state, State::End) && byte == b'\\' {
+            State::Ground
+        } else if byte == 0x1b {
+            State::IgnoreEscape(false)
+        } else {
+            State::Ignore(false)
+        };
+        std::mem::take(&mut self.rejected)
     }
     fn step(&mut self, byte: u8) -> Result<Option<GraphicsCommand>, AppError> {
         if matches!(byte, 0x18 | 0x1a) {

@@ -1,4 +1,5 @@
 //! Stateful byte-to-grid adapter. No PTY, Wayland, clipboard or renderer I/O.
+pub(crate) mod graphics;
 mod queries;
 pub(crate) mod sync;
 use crate::{
@@ -136,6 +137,8 @@ impl Terminal {
                 cell_pixels: None,
                 palette: crate::config::palette::Palette::default(),
                 keyboard: crate::kitty::protocol::KeyboardProtocol::default(),
+                graphics: graphics::Graphics::new(tab, Default::default())
+                    .map_err(|_| invalid())?,
             }),
         })
     }
@@ -155,7 +158,11 @@ impl Terminal {
     /// Read only when a visible frame can be drawn. Core damage includes cursor movement;
     /// retain it until successful submission, including across held or unavailable frames.
     pub(crate) fn damage_rows(&mut self) -> Option<(usize, usize)> {
-        let term = &mut self.core.as_mut()?.term;
+        let core = self.core.as_mut()?;
+        if core.graphics.dirty {
+            return Some((0, core.term.screen_lines()));
+        }
+        let term = &mut core.term;
         let rows = term.screen_lines();
         match term.damage() {
             alacritty_terminal::term::TermDamage::Full => Some((0, rows)),
@@ -172,6 +179,7 @@ impl Terminal {
     pub(crate) fn damage_presented(&mut self) {
         if let Some(core) = &mut self.core {
             core.term.reset_damage();
+            core.graphics.dirty = false;
         }
     }
 
@@ -189,6 +197,28 @@ impl Terminal {
         self.core
             .as_ref()
             .is_some_and(|core| core.keyboard.sync().pending())
+    }
+
+    pub(crate) fn bind_graphics_budget(
+        &mut self,
+        budget: Rc<graphics::Budget>,
+    ) -> Result<(), AppError> {
+        if let Some(core) = &mut self.core {
+            core.graphics.bind_budget(budget)?;
+        }
+        Ok(())
+    }
+    pub fn image_store(&self) -> Option<&crate::kitty::graphics::store::ImageStore> {
+        Some(&self.core.as_ref()?.graphics.store)
+    }
+    pub(crate) fn set_image_limits(
+        &mut self,
+        limits: crate::kitty::graphics::decode::ImageLimits,
+    ) -> Result<(), AppError> {
+        if let Some(core) = &mut self.core {
+            core.graphics = graphics::Graphics::new(self.tab, limits)?;
+        }
+        Ok(())
     }
 
     pub fn tab(&self) -> TabId {
@@ -434,6 +464,10 @@ impl Terminal {
             || core.term.grid().columns() != usize::from(columns)
         {
             self.content_epoch = self.content_epoch.and_then(|epoch| epoch.checked_add(1));
+            core.graphics.clear_screen(crate::selection::Screen::Main);
+            core.graphics
+                .clear_screen(crate::selection::Screen::Alternate);
+            core.keyboard.reset_graphics_region();
         }
         core.term.resize(Size {
             rows: rows as usize,
@@ -579,19 +613,51 @@ struct Core {
     events: ClipboardEvents,
     scrollback_lines: usize,
     keyboard: crate::kitty::protocol::KeyboardProtocol,
+    graphics: graphics::Graphics,
     cell_pixels: Option<(u16, u16)>,
     palette: crate::config::palette::Palette,
 }
 
 impl Core {
     fn feed(&mut self, bytes: &[u8], drain_keyboard: bool) -> bool {
+        self.graphics.work = 0;
         for byte in bytes {
+            if self
+                .graphics
+                .push(*byte, &mut self.term, self.cell_pixels, &self.events)
+                .is_err()
+            {
+                return false;
+            }
             let palette_dispatch = self.osc.palette_dispatch(*byte);
             if !self.osc.accept(*byte) {
                 return false;
             }
             if !self.keyboard.advance(std::slice::from_ref(byte)) {
                 return false;
+            }
+            let old_screen = crate::selection::Screen::from_mode(self.term.mode());
+            match self.keyboard.graphics_change() {
+                1 => self.graphics.reset(),
+                2 => self.graphics.clear_screen(old_screen),
+                // shortcut: viewport images retire on scroll/reflow; add history anchors before retaining them.
+                3 if self.term.grid().cursor.point.line.0 as usize + 1
+                    == self.keyboard.graphics_bottom(self.term.screen_lines()) =>
+                {
+                    self.graphics.clear_screen(old_screen)
+                }
+                4 | 5
+                    if (self.term.grid().cursor.input_needs_wrap
+                        || self.keyboard.graphics_change() == 5
+                            && self.term.grid().cursor.point.column.0 + 1
+                                == self.term.columns())
+                        && self.term.mode().contains(TermMode::LINE_WRAP)
+                        && self.term.grid().cursor.point.line.0 as usize + 1
+                            == self.keyboard.graphics_bottom(self.term.screen_lines()) =>
+                {
+                    self.graphics.clear_screen(old_screen)
+                }
+                _ => {}
             }
             // Check after each parser step: REP can append up to u16::MAX marks.
             if self.keyboard.sync().query {
@@ -622,6 +688,10 @@ impl Core {
                 while let Some(reply) = self.keyboard.take_reply() {
                     self.events.replies.borrow_mut().push(&reply);
                 }
+            }
+            let new_screen = crate::selection::Screen::from_mode(self.term.mode());
+            if new_screen != old_screen && new_screen == crate::selection::Screen::Alternate {
+                self.graphics.clear_screen(new_screen);
             }
             self.keyboard
                 .set_screen(self.term.mode().contains(TermMode::ALT_SCREEN));

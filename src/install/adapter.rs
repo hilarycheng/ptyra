@@ -14,6 +14,8 @@ pub struct InstalledFile {
     path: PathBuf,
     device: u64,
     inode: u64,
+    stamp: filesystem::FileStamp,
+    changed: (i64, i64),
 }
 
 impl InstalledFile {
@@ -61,8 +63,11 @@ fn execute(
     if plan.review_only {
         return Err(failure(io::ErrorKind::PermissionDenied));
     }
-    let mut terminfo = &include_bytes!("../../assets/ptyra.terminfo.bin")[..];
-    let mut desktop = &include_bytes!("../../assets/ptyra.desktop")[..];
+    let desktop_entry = plan
+        .desktop_entry()
+        .map_err(|error| failure(error.kind()))?;
+    let mut terminfo = crate::terminfo::COMPILED;
+    let mut desktop = desktop_entry.as_bytes();
     let terminfo_len = terminfo.len() as u64;
     let desktop_len = desktop.len() as u64;
     let inputs: [(&mut dyn Read, u64, u32); 3] = [
@@ -107,6 +112,38 @@ fn failure(kind: io::ErrorKind) -> InstallFailure {
 }
 
 impl InstallPlan {
+    fn desktop_entry(&self) -> io::Result<String> {
+        // shortcut: reject '%' until launchers resolve escaped executable paths reliably.
+        let binary = self.files()[0]
+            .to_str()
+            .filter(|path| !path.contains(['=', '%']))
+            .ok_or(io::ErrorKind::InvalidInput)?;
+        let mut command = String::from("\"");
+        for character in binary.chars() {
+            if matches!(character, '\\' | '"' | '$' | '`') {
+                command.push('\\');
+            }
+            command.push(character);
+        }
+        command.push('"');
+        // Desktop string escaping precedes Exec argument unquoting.
+        Ok(include_str!("../../assets/ptyra.desktop")
+            .replace(
+                "\nExec=ptyra\n",
+                &format!("\nExec={}\n", command.replace('\\', "\\\\")),
+            )
+            .replace(
+                "\nTryExec=ptyra\n",
+                &format!("\nTryExec={}\n", binary.replace('\\', "\\\\")),
+            ))
+    }
+
+    /// Remove unchanged files from this plan's successful, in-memory receipt.
+    /// Missing files are harmless. Preserve directories and report every refused removal.
+    pub fn uninstall(&self, receipt: &InstallReceipt) -> Result<(), Vec<RollbackFailure>> {
+        uninstall(self, receipt, filesystem::remove)
+    }
+
     /// Install three files without replacement. Existing or created directories remain on failure.
     /// The prefix must be operator-controlled; concurrent writers with the same UID are not isolated.
     /// System plans are review-only. Use `staged` to prepare the system layout without system writes.
@@ -130,6 +167,37 @@ impl InstallPlan {
             return Err(failure(io::ErrorKind::InvalidInput));
         }
         execute(self, &mut source, &mut filesystem::Filesystem)
+    }
+}
+
+fn uninstall(
+    plan: &InstallPlan,
+    receipt: &InstallReceipt,
+    mut remove: impl FnMut(&InstalledFile) -> Result<(), RollbackFailure>,
+) -> Result<(), Vec<RollbackFailure>> {
+    if plan.review_only
+        || receipt.files.len() != plan.files().len()
+        || receipt
+            .files
+            .iter()
+            .zip(plan.files())
+            .any(|(file, path)| file.path != *path)
+    {
+        return Err(vec![RollbackFailure {
+            path: plan.files()[0].clone(),
+            kind: io::ErrorKind::PermissionDenied,
+        }]);
+    }
+    let errors: Vec<_> = receipt
+        .files
+        .iter()
+        .rev()
+        .filter_map(|file| remove(file).err())
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
     }
 }
 

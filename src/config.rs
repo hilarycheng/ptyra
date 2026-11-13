@@ -74,6 +74,7 @@ impl Config {
     ) -> Result<crate::tabs::TabRegistry<P>, crate::error::AppError> {
         let mut tabs = crate::tabs::TabRegistry::with_scrollback(self.scrollback_lines)?;
         tabs.palette = self.colors;
+        tabs.image_limits = self.image_limits()?;
         tabs.set_osc52_write_enabled(self.osc52_write);
         Ok(tabs)
     }
@@ -175,6 +176,51 @@ fn integer(value: &toml::Value, field: &'static str) -> Result<usize, ConfigErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn documented_config_examples_parse_with_defaults() {
+        use bindings::BindingAction;
+        let defaults = Config::default();
+        let documented =
+            Config::from_toml(Some(include_str!("../assets/config.default.toml"))).unwrap();
+        assert_eq!(documented, defaults);
+        let mut example =
+            Config::from_toml(Some(include_str!("../assets/config.example.toml"))).unwrap();
+        assert_eq!(example.font_size, 16.0);
+        assert_eq!(example.scrollback_lines, 1000);
+        assert_eq!(example.clipboard_bytes, 1024 * 1024);
+        assert_eq!(example.colors.background, 0x101820);
+        let modifiers = crate::keymap::Modifiers {
+            depressed: kbvm::ModifierMask::CONTROL.0 | kbvm::ModifierMask::ALT.0,
+            ..Default::default()
+        };
+        assert!(
+            example
+                .bindings
+                .get(BindingAction::NewTab)
+                .matches(modifiers, b't' as u32)
+        );
+        for action in [
+            BindingAction::Copy,
+            BindingAction::Paste,
+            BindingAction::ImeToggle,
+            BindingAction::CloseTab,
+            BindingAction::NextTab,
+            BindingAction::PreviousTab,
+            BindingAction::ScrollPageUp,
+            BindingAction::ScrollPageDown,
+            BindingAction::ScrollTop,
+            BindingAction::ScrollBottom,
+        ] {
+            assert_eq!(example.bindings.get(action), defaults.bindings.get(action));
+        }
+        example.font_size = defaults.font_size;
+        example.scrollback_lines = defaults.scrollback_lines;
+        example.clipboard_bytes = defaults.clipboard_bytes;
+        example.colors.background = defaults.colors.background;
+        example.bindings = bindings::Bindings::default();
+        assert_eq!(example, defaults, "unspecified fields keep defaults");
+    }
+
     #[test]
     fn config_palette_validates_and_defaults() {
         use alacritty_terminal::{

@@ -1100,3 +1100,22 @@ fn runtime_kitty_queries_drain_before_reply_queue_fills_bounded() {
     assert!(terminal.take_keyboard_reply().is_none());
     assert_eq!(terminal.take_core_replies(), (b"\x1b[0n".to_vec(), false));
 }
+
+#[test]
+fn runtime_graphics_apc_handles_split_streams() {
+    let id = TabId(1);
+    let bytes = b"A\x1b_Ga=t,f=32,s=1,v=1,i=1;AQIDBA==\x1b\\\x1b[31mB";
+    for split in 0..=bytes.len() {
+        let mut term = Terminal::new(id, 2, 8).unwrap();
+        term.feed(id, &bytes[..split]).unwrap();
+        term.feed(id, &bytes[split..]).unwrap();
+        assert_eq!(term.grid().unwrap()[Line(0)][Column(0)].c, 'A');
+        assert_eq!(term.grid().unwrap()[Line(0)][Column(1)].c, 'B');
+    }
+    for transport in ['f', 't', 's'] {
+        let mut term = Terminal::new(id, 2, 8).unwrap();
+        term.feed(id, format!("\x1b_Gi=4,t={transport};AAAA\x1b\\").as_bytes())
+            .unwrap();
+        assert!(term.take_core_replies().0.starts_with(b"\x1b_Gi=4;EACCES"));
+    }
+}

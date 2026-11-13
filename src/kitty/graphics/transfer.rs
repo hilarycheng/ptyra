@@ -24,6 +24,12 @@ impl Default for Assembler {
     }
 }
 impl Assembler {
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        self.pending.as_ref().map_or(0, |p| p.bytes.capacity())
+    }
+    pub(crate) fn header(&self) -> Option<&Header> {
+        self.pending.as_ref().map(|p| &p.header)
+    }
     pub fn cancel(&mut self) {
         self.pending = None;
     }

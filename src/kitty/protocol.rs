@@ -31,6 +31,8 @@ struct KeyboardState {
     replies: VecDeque<KeyboardFlags>,
     failed: bool,
     sync: crate::terminal::sync::State,
+    graphics_change: u8,
+    graphics_region: Option<(u16, u16)>,
 }
 
 #[derive(Default)]
@@ -41,6 +43,21 @@ struct ModeStack {
 }
 
 impl KeyboardProtocol {
+    pub(crate) fn reset_graphics_region(&mut self) {
+        self.state.graphics_region = None;
+    }
+    pub(crate) fn graphics_bottom(&self, rows: usize) -> usize {
+        self.state.graphics_region.map_or(rows, |(_, bottom)| {
+            if bottom == 0 {
+                rows
+            } else {
+                usize::from(bottom).min(rows)
+            }
+        })
+    }
+    pub(crate) fn graphics_change(&self) -> u8 {
+        self.state.graphics_change
+    }
     pub(crate) fn flags(&self) -> KeyboardFlags {
         self.state.active.current & self.state.supported
     }
@@ -55,6 +72,7 @@ impl KeyboardProtocol {
     /// Terminal's OSC and per-feed limits must run before this secondary VTE observer.
     pub(crate) fn advance(&mut self, bytes: &[u8]) -> bool {
         self.state.sync.query = false;
+        self.state.graphics_change = 0;
         self.parser.advance(&mut self.state, bytes);
         !self.state.failed
     }
@@ -76,8 +94,36 @@ impl KeyboardProtocol {
 }
 
 impl Perform for KeyboardState {
+    fn execute(&mut self, byte: u8) {
+        if matches!(byte, 10..=12) {
+            self.graphics_change = 3;
+        }
+    }
+    fn print(&mut self, ch: char) {
+        if let Some(width) = unicode_width::UnicodeWidthChar::width(ch).filter(|w| *w > 0) {
+            self.graphics_change = if width > 1 { 5 } else { 4 };
+        }
+    }
+
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
         self.sync.csi(params, intermediates, ignore, action);
+        if !ignore && intermediates.is_empty() && action == 'r' {
+            let mut p = params.iter();
+            let top = p.next().map_or(1, |v| v[0].max(1));
+            let bottom = p.next().map_or(0, |v| v[0]);
+            if bottom == 0 || bottom > top {
+                self.graphics_region = Some((top, bottom));
+            }
+        }
+
+        if !ignore
+            && intermediates.is_empty()
+            && (matches!(action, 'S' | 'T' | 'L' | 'M' | 'r' | 'b')
+                || action == 'J' && params.iter().any(|p| p[0] == 2 || p[0] == 3))
+        {
+            self.graphics_change = 2;
+        }
+
         if ignore || self.failed || action != 'u' || params.len() > 2 {
             return;
         }
@@ -136,7 +182,12 @@ impl Perform for KeyboardState {
     }
 
     fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
+        if !ignore && intermediates.is_empty() && matches!(byte, b'D' | b'E' | b'M') {
+            self.graphics_change = 2;
+        }
         if !ignore && intermediates.is_empty() && byte == b'c' {
+            self.graphics_change = 1;
+            self.graphics_region = None;
             self.sync.reset();
             self.active = ModeStack::default();
             self.inactive = ModeStack::default();

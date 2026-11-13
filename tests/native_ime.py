@@ -2,7 +2,7 @@
 """Real Fcitx5/Cangjie test in an owned headless Sway session and private D-Bus.
 
 Usage: python3 tests/native_ime.py target/release/ptyra /tmp/ptyra-ime.png
-Add --tabs after the screenshot path for TASK-175 multi-Tab integration.
+Add --tabs for multi-Tab integration and --kitty for raw legacy/enhanced IME probes.
 Requires Sway, Fcitx5 with cangjie3, dbus-daemon, grim and xkbcomp.
 No user configuration or running input method is changed.
 """
@@ -106,7 +106,13 @@ def main():
             keyboard.sync()
             ipc("output * mode 800x600")
             time.sleep(0.2)
-            print("PASS: cursor rectangle follows typing and resize", flush=True)
+            logical_cell = cursor_rect()[2:]
+            ipc("output * scale 2")
+            wait_until(lambda: ".set_buffer_scale(2)" in app_log() and cursor_rect()[2:] == logical_cell)
+            assert cursor_rect()[0] < 400 and cursor_rect()[1] < 300
+            ipc("output * scale 1")
+            time.sleep(0.2)
+            print("PASS: cursor rectangle follows typing, resize and surface-local scale", flush=True)
             proof = root / "proof"
             def toggle():
                 keyboard.modifiers(4)
@@ -160,7 +166,7 @@ def main():
             keyboard.tap(28)
             keyboard.sync()
             wait_until(lambda: proof.read_text() == "english\n")
-            start(fcitx_args, "fcitx-restarted", env)
+            fcitx = start(fcitx_args, "fcitx-restarted", env)
             wait_until(lambda: all("Loaded addon " + addon in (root / "fcitx-restarted.log").read_text()
                                    for addon in ("dbusfrontend", "classicui", "table")))
             ipc("workspace number 2")
@@ -243,13 +249,30 @@ def main():
                 assert (root / "first-cancelled").read_text() == "\n"
                 print("PASS TASK-175: real Fcitx5 new/switch/close/reopen Tabs; exact isolated Chinese bytes; pending preedit cancelled", flush=True)
 
+            if "--kitty" in sys.argv[3:]:
+                from native_ime_kitty import check_ime_kitty
+
+                def restart_ime():
+                    nonlocal fcitx
+                    fcitx.terminate()
+                    fcitx.wait(timeout=5)
+                    fcitx = start(fcitx_args, "fcitx-ownership", env)
+                    wait_until(lambda: all("Loaded addon " + addon in (root / "fcitx-ownership.log").read_text()
+                                           for addon in ("dbusfrontend", "classicui", "table")))
+                    ipc("workspace number 2")
+                    time.sleep(0.15)
+                    ipc("workspace number 1")
+                    wait_until(lambda: remote() in ("1", "2"))
+
+                check_ime_kitty(root, keyboard, wait_until, remote, toggle, app_log, ipc, restart_ime)
+
             keyboard.text("exit")
             keyboard.tap(28)
             keyboard.sync()
             assert app.wait(timeout=5) == 0
             print("PASS: real Fcitx5 Ctrl+Space, Cangjie preedit/commit, exact UTF-8 PTY bytes, focus reset and IME restart with refocus")
         except Exception:
-            for name in ["sway", "fcitx", "fcitx-restarted", "app"]:
+            for name in ["sway", "fcitx", "fcitx-restarted", "fcitx-ownership", "app"]:
                 path = root / (name + ".log")
                 if path.exists():
                     print(path.read_text()[-12000:], file=sys.stderr)

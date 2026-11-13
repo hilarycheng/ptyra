@@ -95,6 +95,7 @@ finally:
         rect, window = node['rect'], node['window_rect']
         left, top = rect['x']+window['x'], rect['y']+window['y']
         origin = ch//factor + 8
+        move(left + 300, top + 200, extent)  # Keep software cursors outside sampled cells.
         def pixels_match():
             ppm = subprocess.check_output(['grim', '-o', output, '-t', 'ppm', '-'], env=env)
             _, dimensions, _, pixels = ppm.split(b'\n', 3)

@@ -107,6 +107,8 @@ pub struct TabRegistry<P> {
     render_target: Option<TabId>,
     scrollback_lines: usize,
     pub(crate) palette: crate::config::palette::Palette,
+    graphics_budget: std::rc::Rc<crate::terminal::graphics::Budget>,
+    pub(crate) image_limits: crate::kitty::graphics::decode::ImageLimits,
     osc52_write: bool,
     output_cursor: usize,
 }
@@ -120,6 +122,10 @@ impl<P> Default for TabRegistry<P> {
             render_target: None,
             scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
             palette: crate::config::palette::Palette::default(),
+            graphics_budget: std::rc::Rc::new(crate::terminal::graphics::Budget::new(
+                crate::terminal::graphics::GLOBAL_BYTES,
+            )),
+            image_limits: Default::default(),
             osc52_write: false,
             output_cursor: 0,
         }
@@ -210,6 +216,8 @@ impl<P: TabPty> TabRegistry<P> {
         let mut terminal = Terminal::with_scrollback(id, rows, columns, self.scrollback_lines)
             .map_err(|error| error.error)?;
         terminal.set_palette(self.palette);
+        terminal.set_image_limits(self.image_limits)?;
+        terminal.bind_graphics_budget(self.graphics_budget.clone())?;
         terminal
             .set_osc52_write_enabled(self.osc52_write)
             .map_err(|error| error.error)?;

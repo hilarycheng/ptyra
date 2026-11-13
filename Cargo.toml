@@ -3,6 +3,14 @@ name = "ptyra"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+renderer-probe = []
+gles-probe = ["renderer-probe"]
+
+[[example]]
+name = "renderer_probe"
+required-features = ["renderer-probe"]
+
 [dependencies]
 ab_glyph = { version = "=0.2.32", default-features = false, features = ["std"] }
 base64 = { version = "=0.22.1", default-features = false, features = ["alloc"] }

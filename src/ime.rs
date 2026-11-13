@@ -43,7 +43,7 @@ pub struct ImePreedit {
 }
 
 impl ImePreedit {
-    fn validate(&self) -> Result<(), AppError> {
+    pub(crate) fn validate(&self) -> Result<(), AppError> {
         if self.text.len() > MAX_IME_TEXT_BYTES {
             return Err(AppError::new(Component::Ime, ErrorKind::FileTooLarge));
         }

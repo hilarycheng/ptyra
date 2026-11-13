@@ -22,6 +22,9 @@ mod mouse;
 mod paste;
 mod pointer;
 mod raster;
+#[cfg(any(test, feature = "renderer-probe"))]
+#[doc(hidden)]
+pub mod renderer_probe;
 mod scale;
 mod scroll;
 mod selection;
@@ -56,6 +59,14 @@ fn resize_frame_pixels(pixels: &mut Vec<u8>, bytes: usize) -> Result<()> {
         .map_err(|_| "frame allocation failed")?;
     pixels.resize(bytes, 0);
     Ok(())
+}
+
+fn write_frame_rows(file: &File, pixels: &[u8], width: u32, rows: damage::Band) -> Result<()> {
+    let start = rows.start as usize * width as usize * 4;
+    let end = rows.end as usize * width as usize * 4;
+    let bytes = pixels.get(start..end).ok_or("invalid frame rows")?;
+    file.write_all_at(bytes, start as u64)
+        .map_err(|_| "frame write failed")
 }
 
 struct PaintState {
@@ -890,11 +901,7 @@ impl Runtime {
         };
         let slot = self.slots[index].as_mut().ok_or("frame slot unavailable")?;
         if let Some(stale) = self.damage.stale(index) {
-            let start = stale.start as usize * width as usize * 4;
-            let end = stale.end as usize * width as usize * 4;
-            slot.file
-                .write_all_at(&self.pixels[start..end], start as u64)
-                .map_err(|_| "frame write failed")?;
+            write_frame_rows(&slot.file, &self.pixels, width, stale)?;
         }
         let surface = self.surface.as_ref().ok_or("surface unavailable")?;
         surface.set_buffer_scale(self.paint.scale as i32);

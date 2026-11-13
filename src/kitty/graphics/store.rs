@@ -30,6 +30,11 @@ pub struct Placement {
     pub screen: Screen,
     /// Cell coordinates, validated before conversion to renderer geometry.
     pub rect: Rect,
+    pub source: Rect,
+    pub offset: (u32, u32),
+    pub pixels: (u32, u32),
+    pub z: i32,
+    pub cell: (u32, u32),
 }
 pub struct ImageStore {
     tab: TabId,
@@ -101,8 +106,30 @@ impl ImageStore {
             next_anonymous: 1,
         })
     }
+    pub(crate) fn clear_screen(&mut self, screen: Screen) -> bool {
+        let affected: Vec<_> = self
+            .placements
+            .iter()
+            .filter(|p| p.screen == screen)
+            .map(|p| p.image)
+            .collect();
+        self.placements.retain(|p| p.screen != screen);
+        let changed = !affected.is_empty();
+        self.images.retain(|(id, _)| {
+            !affected.contains(id) || self.placements.iter().any(|p| p.image == *id)
+        });
+        changed
+    }
     pub fn tab(&self) -> TabId {
         self.tab
+    }
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        self.images
+            .iter()
+            .map(|(_, i)| i.rgba.capacity())
+            .sum::<usize>()
+            + self.images.capacity() * std::mem::size_of::<(ImageId, Image)>()
+            + self.placements.capacity() * std::mem::size_of::<Placement>()
     }
     pub fn used_bytes(&self) -> usize {
         self.images.iter().map(|(_, image)| image.rgba.len()).sum()
@@ -112,6 +139,9 @@ impl ImageStore {
             .iter()
             .find(|(key, _)| *key == id)
             .map(|(_, image)| image)
+    }
+    pub(crate) fn placements_mut(&mut self) -> &mut Vec<Placement> {
+        &mut self.placements
     }
     pub fn placements(&self) -> &[Placement] {
         &self.placements
@@ -181,7 +211,18 @@ impl ImageStore {
             .placements
             .iter()
             .position(|placement| placement.image == image && placement.id == id);
+        let source = self.get(image).ok_or_else(invalid)?;
         let placement = Placement {
+            source: Rect {
+                x: 0,
+                y: 0,
+                width: source.width,
+                height: source.height,
+            },
+            offset: (0, 0),
+            pixels: (source.width, source.height),
+            z: 0,
+            cell: (1, 1),
             image,
             id,
             screen,

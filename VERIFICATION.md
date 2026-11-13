@@ -1,5 +1,206 @@
 # Runtime task verification
 
+## TASK-199（2026-11-13）
+
+```text
+TASK: TASK-199
+Status: DONE
+Dependencies: satisfied (TASK-106, TASK-149, TASK-160, TASK-175, TASK-179)
+Changed files: src/runtime/ime.rs, src/runtime/ime/malformed_tests.rs,
+  README.md, TASKS.md, VERIFICATION.md
+Unit test: cargo test --workspace --locked --offline runtime_malformed_events_remain_bounded_and_isolated
+Result: PASS — fixed seed 重播兩次；test-first 缺少 corpus，fixture ID 重用修正後通過
+Workspace tests: PASS — all-features；336 unit、17 integration、2 doc；1 optional fish ignored
+Format / Clippy: PASS — all-targets / all-features
+Manual / Integration checks: deterministic fake adapters；真 120 秒五 Tabs soak 另見 TASK-198
+Security / Privacy impact: 只新增 tests；無新增 runtime log/dependency/unsafe
+Known limitations: 固定 corpus 唔係全面 fuzz；Wayland wire decoder／kernel races 未覆蓋
+Ready for [x]: YES
+```
+
+256 組 event sequences、serial 0/MAX 邊界、現有 malformed byte corpus 同 128 組 seeded byte streams，各重播兩次。
+覆蓋 Clipboard device generation、offer object reuse、stale readiness、FD cancellation、EINTR 每次最多四次、UTF-8／byte limits。
+IME 測錯誤 preedit cursor、oversized commit、future/old done、切 Tab 後再返回、exactly-once commit、pending paste epoch。
+PTY 測 duplicate/unknown ready IDs、四個 reads 上限、query flood／64 KiB FIFO、錯誤來源／長度／OSC、source failure cleanup。
+健康 Tab 嘅 grid 同 input 不變；關閉 Tab ID 不可重用，stale readiness 無 dispatch。
+Output/configure caps 保持 bounded；冇聲稱固定 fixtures 可以證明任意輸入都安全。
+證據：`/tmp/ptyra-t199-{red,test,workspace}.log`、`/tmp/ptyra-final-clippy.log`。
+
+最終 SHM 額外 regression：CJK／combining／styles compositor pixel checks PASS。
+合併 fonts/styles/scale 初次 run 出現 timeout；screenshot 證實 headless software cursor 遮住取樣格。
+`tests/native_scale.py` 加一行移開 fixture pointer，重跑完整合併 run PASS。
+同時通過 output move/removal、mouse、CJK Copy、Tab click、keyboard/focus、reconnect 同正常 exit。
+證據：`/tmp/ptyra-t196-native-final.log`；日常 desktop acceptance gates 不變。
+
+三份量測已保存喺 `target/benchmarks/task-196-199/`：`renderer-shm.json`、`renderer-amd.json`、`soak.json`。
+`target/` 係本機產物，唔提交 Git；每份 JSON 都保留當次 binary／harness hashes，同執行環境。
+
+## TASK-198（2026-11-13）
+
+```text
+TASK: TASK-198
+Status: DONE
+Dependencies: satisfied (TASK-135, TASK-152, TASK-175, TASK-179, TASK-195)
+Changed files: tools/soak.py, tools/soak_session.py, tests/soak_runner.py,
+  tests/benchmark.rs, README.md, TASKS.md, VERIFICATION.md
+Unit test: cargo test --workspace --locked --offline soak_runner_records_failures_and_cleanup
+Result: PASS — 3 deterministic fake process/clock checks；test-first missing runner 後通過
+Workspace tests: PASS — 335 unit、17 integration、2 doc；1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: 五 Tabs，seed 198，120.022 秒／571 operations／106 samples，cleanup PASS
+Security / Privacy impact: 私有 Sway/D-Bus/Fcitx5；固定 workload；只記錄 metadata；無新 dependencies/unsafe
+Known limitations: 短測試唔係長期驗收；未跑場景獨立記錄；無自動判斷 leak slope
+Ready for [x]: YES
+```
+
+30 秒 smoke 完成 149 operations；最終 120 秒完成 output 81、resize 82、switch 82、reopen 82、input 81、Clipboard 81、IME 82 次。
+同一 Ptyra process，samples 全部維持五個 children；Ptyra FD count 首／尾／peak 都係 11。
+PSS 首 6,857,728 bytes，尾／peak 22,656,000 bytes；包含初次 history/glyph/cache 分配，唔據此宣稱無 memory leak。
+每次 reopen 即時確認舊 child 消失；最後 close 亦核對所有 owned children 已退出。
+最初 setup timeout 如實保留 ERROR／NOT RUN 報告，延長 startup 等待後重跑通過。
+報告：`/tmp/ptyra-t198-soak.json`；regression：`/tmp/ptyra-t198-final-tests.log`。
+
+## TASK-197（2026-11-13）
+
+```text
+TASK: TASK-197
+Status: DONE
+Dependencies: satisfied (TASK-126, TASK-167, TASK-196)
+Changed files: Cargo.toml, src/runtime/renderer_probe.rs,
+  src/runtime/renderer_probe/gpu.rs, src/runtime/renderer_probe/gpu/native.rs,
+  DEPENDENCIES.md, TASKS.md, VERIFICATION.md, README.md
+Unit test: cargo test --workspace --locked --offline gpu_renderer_probe_preserves_frame_and_resource_bounds
+Result: PASS; test-first 缺少 Context/Gpu，實作後通過
+Workspace tests: PASS — all-features，335 unit、16 integration、2 doc；1 optional fish ignored
+Format / Clippy: PASS — all-targets / all-features
+Manual / Integration checks: AMD RX 6600、OpenGL ES 3.2 Mesa 26.2.4，SHM/GLES 各 800 frames
+Security / Privacy impact: optional system FFI；理由、pointer/lifecycle/resource 邊界見 DEPENDENCIES.md
+Known limitations: offscreen hybrid CPU raster + GPU blit；GPU memory NOT AVAILABLE；未測 Sway GPU presentation
+Ready for [x]: YES
+```
+
+Sandbox 內 EGL 初始化失敗；正常 OS 環境使用真 AMD driver，800 frames 全部 exact readback 一致。
+PSS/RSS、單核 CPU、每 frame timings 同 driver metadata 記錄於 `/tmp/ptyra-t197-amd.json`。
+Rough submit mean：SHM 0.615 ms，GLES 1.354 ms；呢組包含 resize/冷 cache，唔係 renderer 選型結論。
+GPU PoC 唔替換預設 SHM，亦唔聲稱 GPU glyph 加速或長時間 desktop 驗收完成。
+OS package metadata 係 Mesa 25.2.8；實際 GL driver 回報 Mesa 26.2.4，兩者分開記錄，唔混作同一版本。
+
+## TASK-196（2026-11-13）
+
+```text
+TASK: TASK-196
+Status: DONE
+Dependencies: satisfied (TASK-030, TASK-195)
+Changed files: Cargo.toml, examples/renderer_probe.rs, src/runtime.rs,
+  src/runtime/renderer_probe.rs, tools/renderer_benchmark.py,
+  tests/benchmark.rs, tests/renderer_benchmark.py, tests/native_scale.py,
+  TASKS.md, VERIFICATION.md, README.md
+Unit test: cargo test --workspace --locked --offline renderer_benchmark_replays_identical_frames
+Result: PASS; test-first missing implementation, then idle-fixture failure, both resolved
+Workspace tests: PASS (sandbox 外；sandbox owner/socket checks 被限制)
+Format / Clippy: PASS
+Manual / Integration checks: release replay，兩次 SHM 各 16 frames，exact readback PASS；最終 native pixel probes PASS
+Security / Privacy impact: metadata only；無新 dependency/unsafe；預設 renderer 不變
+Known limitations: offscreen CPU raster / SHM transfer；不量度 compositor/vsync
+Ready for [x]: YES
+```
+
+固定 synthetic fonts、grid/input、dirty rows、scale=1/2、resize，同一 binary 重播。
+SHM 重用 runtime `write_frame_rows`，兩個 memfd slots 保留 stale rows。
+每 frame 先比較 partial/full raster，再逐 byte 核對 backend readback；digest 只用作 trace identity。
+Python driver 重用 TASK-195 procfs 計算，記錄 CPU/PSS/RSS/GPU、timings、failure、hash 同平台。
+CPU/resource 包括 validation；raster/submit timings 排除 full reference 同 readback。
+未包含 Tab bar、selection、IME overlay、Wayland presentation；唔可用結果決定正式 backend。
+證據：`/tmp/ptyra-t196-{red,test,workspace-native,clippy}.log`、`/tmp/ptyra-t196-benchmark.json`。
+
+## TASK-194（2026-11-13）
+
+先完成 TASK-193 同 checkbox 更新，再實作本項。
+新增完整 default config 同部分 override example，測試先因檔案未存在而失敗，再驗證 parser 結果。
+README 更新 config path、shortcuts、paste confirmation、caps、native dependencies、install／uninstall API 同能力表。
+修正開頭過時嘅 Kitty／cursor／HiDPI 說明；有日期嘅舊 verification 紀錄保留。
+Task count 依 TASKS.md 核對為 199 項，195 項已勾選；四項 backlog 同整體 desktop gates 保持未勾選。
+
+```text
+TASK: TASK-194
+Status: DONE
+Dependencies: satisfied (TASK-130, TASK-154, TASK-172, TASK-193)
+Changed files: assets/config.default.toml, assets/config.example.toml,
+  src/config.rs, README.md, TASKS.md, VERIFICATION.md
+Unit test: cargo test --workspace --locked --offline documented_config_examples_parse_with_defaults
+Result: PASS — full defaults equal Config::default; partial overrides preserve other defaults
+Workspace tests: PASS — 333 unit, 15 integration, 2 doctests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: documented values checked against config/runtime owners;
+  native dependencies checked against local build; packaging evidence recorded under TASK-193
+Security / Privacy impact: documentation and fixtures only; no runtime policy or dependencies changed
+Known limitations: actual desktop/AMD/Fcitx5/full TUI gates NOT RUN in this task;
+  no persistent receipt or install CLI; no performance superiority claim
+Ready for [x]: YES
+Approval: APPROVE for TASK-192 to 194; existing checkbox authorization in TASKS.md
+```
+
+最終 workspace log：`/tmp/ptyra-task194-tests.log`。冇安裝／移除真正 user 或 system prefix，亦冇改全域設定。
+
+## TASK-192–193（2026-11-13）
+
+兩項逐項實作同驗證。沿用 TASKS.md 已記錄嘅 checkbox 更新批准，同本次 `APPROVE for TASK-192 to 194`。
+
+TASK-192 receipt 只由成功 install 建立，欄位保持 private。
+Uninstall 先核對完整三條 plan paths，再逐項檢查 device、inode、size、mode、owner、mtime 同 ctime。
+沿用 directory FD、O_NOFOLLOW 同 private capture/recheck，保留 replacement、symlink、外部修改同 parent directories。
+檔案已消失視為完成；個別拒絕唔阻止清理其他已核實檔案。重複 uninstall 可安全執行。
+Prefix 須由 operator 控制；同 UID 惡意 concurrent writer 仍唔屬隔離範圍。
+
+```text
+TASK: TASK-192
+Status: DONE
+Dependencies: satisfied (TASK-191)
+Changed files: src/install/adapter.rs, src/install/adapter/filesystem.rs,
+  src/install/adapter/tests.rs, TASKS.md, VERIFICATION.md
+Unit test: cargo test --workspace --locked --offline uninstall_preserves_unowned_or_changed_files
+Result: PASS — fake receipt validation + real temporary prefix
+Workspace tests: PASS — 331 unit, 14 integration, 2 doctests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: replacement, same-length edit, mode, symlink,
+  parent symlink, unrelated files, missing file, foreign receipt and repeat PASS
+Security / Privacy impact: no new dependency, unsafe, payload log or system writes
+Known limitations: Linux GNU; in-memory receipt; directories remain; operator-controlled prefix
+Ready for [x]: YES
+```
+
+TASK-193 嘅 installed desktop entry 使用已 escape 嘅 absolute Exec 同 TryExec。
+依 [Desktop Entry Exec 規則](https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html) 處理引號同 backslash；唔經 Shell。
+Prefix 須為 UTF-8，而且唔可以包含 `=` 或 `%`；GIO 對含 `%` executable path 嘅實測載入失敗，installer 喺寫檔前拒絕。
+Source terminfo 用 `tic` 重建後逐 byte 比對；installer 同 runtime 共用 `terminfo::COMPILED`。
+保留已測試嘅 16 colors／256 pairs／op／bold 能力，冇新增未驗證 capabilities。
+
+```text
+TASK: TASK-193
+Status: DONE
+Dependencies: satisfied (TASK-020, TASK-123, TASK-124, TASK-191)
+Changed files: src/install/adapter.rs, src/install/adapter/tests.rs, src/terminfo.rs,
+  src/pty/terminfo.rs, tests/packaging.rs, tests/native_packaging.py, TASKS.md, VERIFICATION.md
+Unit test: cargo test --workspace --locked --offline packaged_capabilities_match_runtime_support
+Result: PASS — fake launcher/asset contract + compiled asset/install integration
+Workspace tests: PASS — 332 unit, 15 integration, 2 doctests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: PTYRA_TEST_PACKAGING_NATIVE=1 with the same targeted command
+  and -- --nocapture PASS; user-local/staged install, Gio launch, actual binary identity,
+  foreign cwd, private TERMINFO, ncurses capabilities, cleanup and uninstall verified
+Security / Privacy impact: no new runtime dependency, unsafe, network or system writes
+Known limitations: receipt is not persistent; staged launcher is bound to its absolute prefix
+  Actual Sway 1.10.1 desktop/AMD/Fcitx5/full TUI acceptance NOT RUN
+Ready for [x]: YES
+```
+
+環境：Ubuntu 24.04.4、owned headless Sway 1.9／pixman、ncurses 6.4.20240113。
+Native probe 額外用已安裝嘅 Python GI/GIO 同 desktop-file-validate；Ptyra runtime 冇引入 GIO／GTK。
+先寫測試，再確認缺少實作時失敗。TASK-192 初次 disk test 受 sandbox owner mapping 阻擋；sandbox 外 PASS。
+TASK-193 初次 probe 欠 mapping barrier；修正等待後再測，發現 `%` prefix 問題並加入拒絕測試。
+最終兩種 prefix 完整 native probe PASS；測試 cleanup 有 terminate/kill fallback。
+Workspace logs：`/tmp/ptyra-task192-tests.log`、`/tmp/ptyra-task193-tests.log`。
+
 ## TASK-130
 
 - Dependencies: TASK-096 and TASK-128 satisfied.

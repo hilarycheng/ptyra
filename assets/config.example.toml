@@ -1,0 +1,10 @@
+# 部分設定例子；其餘欄位沿用內置 defaults，包括 osc52_write = false。
+font_size = 16.0
+scrollback_lines = 1000
+clipboard_bytes = 1048576
+
+[bindings]
+new_tab = "Ctrl+Alt+t"
+
+[colors]
+background = "#101820"

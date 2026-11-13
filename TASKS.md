@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（183 已勾選；TASK-176、TASK-183–190、TASK-192–194、TASK-196–199 共 16 項未勾選）。
+**Total:** 199 atomic TASKS（199 已勾選）。整體 Integration / Acceptance gates 仍按下方 Matrix 獨立驗收。
 
 ## A. Foundation / 測試基礎
 
@@ -780,7 +780,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-093`, `TASK-129`, `TASK-133`, `TASK-134` | **Unit Test:** `runtime_ime_tab_switch_invalidates_old_batches`
   - **Done:** 移除 IME 固定 `TabId(1)`，switch/close 時取消舊 preedit/pending batch、更新 enable/disable transaction；commit 只寫原有效 Tab，延遲 done 不跨 Tab；真多 Tabs integration 同單窗 TASK-129 驗收分開記錄。
 
-- [ ] **TASK-176 — IME overlay / candidate anchor 跟實際 viewport**
+- [x] **TASK-176 — IME overlay / candidate anchor 跟實際 viewport**
   - **Dependencies:** `TASK-076`, `TASK-077`, `TASK-129`, `TASK-137`, `TASK-158`, `TASK-167`, `TASK-175` | **Unit Test:** `runtime_ime_anchor_tracks_viewport_and_long_preedit`
   - **Done:** 用同一 content origin/scale 計算 overlay 同 surface-local cursor rectangle；長 preedit 喺右/下邊界有明確有界換行或可視 caret 策略，唔再無說明只 clip 一行；scroll、resize、Tab Bar、CJK 同 byte-offset selection 唔錯位，grid/PTY 不受 preedit 改寫。真候選視窗仍須 desktop 驗收。
 
@@ -812,37 +812,37 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-112`, `TASK-113`, `TASK-130`, `TASK-133`, `TASK-180`, `TASK-181` | **Unit Test:** `runtime_kitty_negotiation_controls_active_encoder`
   - **Done:** 將每 Tab main/alt stack current flags 提供 runtime key encoder；set/push/pop/query/reset 都一致；只宣告已測 subset，legacy apps 維持原輸入；Tab/screen switch 不混入另一個 mode stack。
 
-- [ ] **TASK-183 — Enhanced keyboard 保持 IME / shortcut ownership**
+- [x] **TASK-183 — Enhanced keyboard 保持 IME / shortcut ownership**
   - **Dependencies:** `TASK-114`, `TASK-175`, `TASK-182` | **Unit Test:** `runtime_kitty_ime_ownership_never_duplicates_text`
   - **Done:** 真 runtime 下 shortcut/IME-consumed key、press/repeat/release 同 commit 有單一 owner；中文 commit 唔再被 Kitty encoder 重送，focus/tab/IME restart 不洩漏舊事件；legacy 同 enhanced native probes 分開通過。
 
 ## X. Kitty Graphics Runtime（Direct Only，Keyboard 之後）
 
-- [ ] **TASK-184 — PTY APC stream 接入 bounded Graphics parser**
+- [x] **TASK-184 — PTY APC stream 接入 bounded Graphics parser**
   - **Dependencies:** `TASK-115`, `TASK-121`, `TASK-132`, `TASK-183` | **Unit Test:** `runtime_graphics_apc_handles_split_streams`
   - **Done:** 每 Tab 有持續 parser state；ESC/APC/header/payload 任意 split 同混合正常 ANSI output 都正確路由；malformed/超長序列有界；file/temp/shared-memory transport 明確拒絕，唔讀取任何指定本機檔案。
 
-- [ ] **TASK-185 — Direct chunks 解碼後存入來源 Tab image store**
+- [x] **TASK-185 — Direct chunks 解碼後存入來源 Tab image store**
   - **Dependencies:** `TASK-116`, `TASK-117`, `TASK-118`, `TASK-119`, `TASK-177`, `TASK-184` | **Unit Test:** `runtime_graphics_transfer_decodes_once_with_limits`
   - **Done:** dispatcher 將 direct PNG/RGBA chunks 經 assembler/decode/store 串起；完整 payload 才存入一次，config byte/pixel caps 於 allocation 前生效；取消/壞資料不留下半張 image，Tab 之間 image ID 隔離。
 
-- [ ] **TASK-186 — Graphics commands 產生正確 placement**
+- [x] **TASK-186 — Graphics commands 產生正確 placement**
   - **Dependencies:** `TASK-119`, `TASK-185` | **Unit Test:** `runtime_graphics_placement_uses_current_screen_geometry`
   - **Done:** 對宣告子集處理 transmit-and-display/place，以 cursor/content geometry 建立 screen-scoped placements；支援字段嘅 cell/pixel/crop/cursor 行為有 fixtures，未支援組合明確拒絕；唔只建立 image 而冇位置。
 
-- [ ] **TASK-187 — Raster 畫出可見 image placements**
+- [x] **TASK-187 — Raster 畫出可見 image placements**
   - **Dependencies:** `TASK-126`, `TASK-158`, `TASK-167`, `TASK-186` | **Unit Test:** `runtime_graphics_pixels_respect_clipping_and_layers`
   - **Done:** active screen placements 經有界 alpha composition 呈現；scale、clip、viewport offset 同宣告 layering 一致，唔畫 hidden Tab；固定 PNG/RGBA fixture 以 compositor pixels 驗證，文字/cursor/overlay 不意外消失。
 
-- [ ] **TASK-188 — Graphics query / success / error 回覆來源 PTY**
+- [x] **TASK-188 — Graphics query / success / error 回覆來源 PTY**
   - **Dependencies:** `TASK-160`, `TASK-184`, `TASK-185`, `TASK-186` | **Unit Test:** `runtime_graphics_replies_follow_query_and_quiet_policy`
   - **Done:** 為宣告嘅 direct subset 產生正確 ID、success/error/query replies，遵從 quiet policy；query 不意外留下 image/placement；malformed/unsupported/limit cases 有 bounded 回覆，唔包含 payload 或跨 Tab。
 
-- [ ] **TASK-189 — Graphics delete / reset / Tab close 回收資源**
+- [x] **TASK-189 — Graphics delete / reset / Tab close 回收資源**
   - **Dependencies:** `TASK-120`, `TASK-134`, `TASK-185`, `TASK-187` | **Unit Test:** `runtime_graphics_lifecycle_reclaims_owned_resources`
   - **Done:** 真 delete dispatcher 移除正確 image/placement 並 repaint；screen/reset/scroll 淘汰/Tab close 清理符合已記錄 subset 嘅 ownership，保留仍被引用資源；pending chunks、cache 同 budget 可回收，ID 唔影響別 Tab。
 
-- [ ] **TASK-190 — Graphics 跨 Tab 總 budget 同 decode work 限制**
+- [x] **TASK-190 — Graphics 跨 Tab 總 budget 同 decode work 限制**
   - **Dependencies:** `TASK-118`, `TASK-177`, `TASK-185`, `TASK-189` | **Unit Test:** `runtime_graphics_flood_stays_within_global_budget`
   - **Done:** image cache、placements、pending/decoded buffers 同時存在時計入跨 Tab 總額；reject/replace/delete 正確回收；大量 chunks/decode 唔無界佔用 RAM 或令 UI 永遠收唔到 input；malicious PNG/尺寸/數量 fixtures 驗證。
 
@@ -852,15 +852,15 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-122`, `TASK-124` | **Unit Test:** `install_adapter_rolls_back_only_created_files`
   - **Done:** filesystem adapter 安裝 binary/terminfo/desktop entry，用 exclusive creation 同 symlink-race 防護；記錄本次建立檔案，途中失敗只回滾自己產物；測 fake FS 同臨時 prefix。`/usr/local` 只提供可審核路徑，實際系統寫入仍需另行授權。
 
-- [ ] **TASK-192 — 安全執行 uninstall / rollback receipt**
+- [x] **TASK-192 — 安全執行 uninstall / rollback receipt**
   - **Dependencies:** `TASK-191` | **Unit Test:** `uninstall_preserves_unowned_or_changed_files`
   - **Done:** 只接受成功 install receipt 內 Ptyra-owned paths；核對檔案身份，遇到替換/外部修改/符號連結唔誤刪，唔刪 parent 或其他程式；重複 uninstall 可安全處理，真正系統移除仍需授權。
 
-- [ ] **TASK-193 — 驗證 packaged launcher / terminfo 同 binary 一致**
+- [x] **TASK-193 — 驗證 packaged launcher / terminfo 同 binary 一致**
   - **Dependencies:** `TASK-020`, `TASK-123`, `TASK-124`, `TASK-191` | **Unit Test:** `packaged_capabilities_match_runtime_support`
   - **Done:** source terminfo、compiled asset、private runtime TERMINFO 同 install entry 有可重現檢查；desktop launcher 可找到正確 binary；僅按實際已通過功能增補 TUI capabilities，未完成 Kitty/mouse/render 特性唔虛報；臨時 prefix 啟動不依賴 repo cwd。
 
-- [ ] **TASK-194 — 提供同實際功能一致嘅 config / 使用文件**
+- [x] **TASK-194 — 提供同實際功能一致嘅 config / 使用文件**
   - **Dependencies:** `TASK-130`, `TASK-154`, `TASK-172`, `TASK-193` | **Unit Test:** `documented_config_examples_parse_with_defaults`
   - **Done:** 提供可解析 default/example config、shortcut、paste 安全策略、caps、安裝/移除同必要 native dependencies 說明；README/task count/能力表以 TASKS 狀態更新，明列未驗收項；不聲稱零 native dependencies、full Kitty 或已比其他 terminal 快。
 
@@ -870,19 +870,19 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-132`, `TASK-137`, `TASK-177` | **Unit Test:** `benchmark_samples_report_single_core_cpu_and_pss`
   - **Done:** 固定 window/font/scale/workload，量測 1/5/10 Tabs 嘅 CPU（單核基準）、PSS/RSS、frame count 同可用 GPU memory；metadata 包含版本/時間/平台，區分 Ptyra 同 child；缺值標 NOT AVAILABLE，結果唔偽裝 PASS，schema/計算用 fixture 驗證。
 
-- [ ] **TASK-196 — 建立可比較 renderer 嘅同輸入 benchmark driver**
+- [x] **TASK-196 — 建立可比較 renderer 嘅同輸入 benchmark driver**
   - **Dependencies:** `TASK-030`, `TASK-195` | **Unit Test:** `renderer_benchmark_replays_identical_frames`
   - **Done:** 現有 SHM backend 同候選 backend 接收相同 grid/dirty/scale/workload 同 correctness fixtures；記錄 CPU/PSS/RSS/GPU、frame timings 同 failure，結果可重跑；不以不同字型/視窗/工作量冒充比較。
 
-- [ ] **TASK-197 — 建立最小 EGL/GLES renderer 比較 PoC**
+- [x] **TASK-197 — 建立最小 EGL/GLES renderer 比較 PoC**
   - **Dependencies:** `TASK-126`, `TASK-167`, `TASK-196` | **Unit Test:** `gpu_renderer_probe_preserves_frame_and_resource_bounds`
   - **Done:** 只為 `SCOPE.md` 尚未決定嘅 backend 比較提供最小候選 adapter，使用相同 frame fixtures 同資源上限；fake context 驗證 lifecycle，真 AMD/Mesa 測 correctness/穩定性/量測；唔未經結果就替換預設 renderer。新增 native dependency/unsafe 須依 AGENTS 評審。
 
-- [ ] **TASK-198 — 建立多 Tabs 長時間 soak runner**
+- [x] **TASK-198 — 建立多 Tabs 長時間 soak runner**
   - **Dependencies:** `TASK-135`, `TASK-152`, `TASK-175`, `TASK-179`, `TASK-195` | **Unit Test:** `soak_runner_records_failures_and_cleanup`
   - **Done:** 可設定時長/固定 seed，重複 output、resize、switch、close/reopen 同已接通 input/clipboard/IME scenarios；fake process 測 runner 停止/timeout/紀錄，真執行追蹤 crash/FD/child/resource 趨勢；只存測試 metadata，完成報告區分未跑場景同失敗。
 
-- [ ] **TASK-199 — 將 malformed fixtures 擴展到 runtime boundaries**
+- [x] **TASK-199 — 將 malformed fixtures 擴展到 runtime boundaries**
   - **Dependencies:** `TASK-106`, `TASK-149`, `TASK-160`, `TASK-175`, `TASK-179` | **Unit Test:** `runtime_malformed_events_remain_bounded_and_isolated`
   - **Done:** 固定 seed/property tests 覆蓋 Wayland object/serial lifecycle、Clipboard FD cancellation、IME stale done、PTY query flood 同 parser 限額；驗證不 panic/無界 allocation/busy loop/跨 Tab 輸入；Kitty query flood 另見 TASK-180，Graphics APC/decode/store 限額另見 TASK-184/TASK-190，唔令基本安全 gate 依賴後續 Kitty 交付；未接通部分明確標示，唔以幾個 fixture 宣稱全面 fuzz 完成。
 
@@ -908,7 +908,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 - **Basic Terminal / Daily TUI:** `TASK-160`–`TASK-166`、`TASK-193` 後，真 Shell/`vim`/`htop`/`tmux`/`Codex` 測 DA/DSR、color/size queries、navigation/keypad、mouse/focus、alt screen、resize；保存支援/不支援矩陣。
 - **Clipboard / Selection:** `TASK-140`–`TASK-159` 後，Firefox ↔ Ptyra ↔ Kitty 逐方向測繁體中文、combining、spaces/tabs、hard/soft wrap、empty/large payload；有/無 bracketed mode、多行接受/取消、owner 消失、partial transfer 中切/關 Tab 全部獨立記錄。
 - **Tabs:** `TASK-131`–`TASK-139`、`TASK-152`、`TASK-175` 後，5–10 個真 Shell 同時輸出，確認 click/shortcut、新增/關閉、title、history/selection、child exit、背景 output 同 keyboard/Clipboard/IME target 隔離。
-- **Fcitx5:** `TASK-129` 單 Tab 候選位置／輸入由使用者於 2026-11-13 確認正常；desktop 版本未由 agent 獨立核實，指定平台嘅整體 gate 保持未勾選；`TASK-175`/`TASK-176` 另驗多 Tabs、長組字、視窗邊界、scale/resize/scroll、快速切 focus 同 restart。無 popup screenshot/操作證據不可寫 candidate-position PASS。
+- **Fcitx5:** `TASK-129` 單 Tab 候選位置／輸入由使用者於 2026-11-13 確認正常；同日使用者確認「176係 OK」，記錄為 `TASK-176` desktop 驗收確認。Desktop 版本同各場景步驟未由 agent 獨立核實，指定平台嘅整體 gate 保持未勾選；完整多 Tabs、長組字、視窗邊界、scale/resize/scroll、快速切 focus 同 restart 證據仍按整體 gate 記錄。
 - **Rendering / HiDPI:** `TASK-167`–`TASK-176` 後，AMD + Mesa + Sway 真畫面測 CJK/combining、styles/colors、cursor、history/selection/preedit、scale=1/2 同移動 output；記錄不支援 scale/字型行為，唔用 headless SHM 結果冒充 GPU 驗收。
 - **Performance / Backend Decision:** `TASK-195`–`TASK-197` 後，同機同 workload 比較 SHM 同 EGL/GLES，按 correctness/CPU/PSS/RSS/GPU/穩定性記錄正式 backend 決定；對照 `SCOPE.md` 80 MiB / +15 MiB / <1% 單核 provisional targets，未達標列偏差，唔靜默改目標。比較失敗或 NOT RUN 不能當成已選定 backend。
 - **Stability / Security:** `TASK-177`–`TASK-179`、`TASK-198`/`TASK-199` 後，記錄實際 soak 時長同 resource 趨勢；檢查無殘留 FD/child、無未解釋退出、無 payload logs/telemetry，以及 malformed input / config / protocol 缺席後嘅可恢復性。

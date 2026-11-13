@@ -1,3 +1,4 @@
+mod graphics;
 use super::Result;
 use crate::{
     config::{Config, palette::Palette},
@@ -233,7 +234,6 @@ impl Raster {
         pixels: &mut [u8],
         preedit: &crate::ime::ImePreedit,
     ) -> Result<()> {
-        use crate::renderer::overlay::{OverlayCommand, Preedit, overlay_commands};
         use unicode_width::UnicodeWidthChar;
         if preedit.text.is_empty() {
             return Ok(());
@@ -260,19 +260,8 @@ impl Raster {
             &self.palette,
         );
         let selected = color(Color::Indexed(4), colors, &self.palette);
-        let commands = overlay_commands(
-            snapshot,
-            &layout,
-            Some(Preedit {
-                tab: terminal.tab(),
-                text: &preedit.text,
-            }),
-        )
-        .map_err(|_| "invalid IME overlay")?;
-        for command in commands {
-            let OverlayCommand::Preedit { text, clip } = command else {
-                continue;
-            };
+        if let Some(view) = super::ime::layout::compose(snapshot, &layout, preedit)? {
+            let (text, clip) = (view.text, view.clip);
             let (x, y) = (clip.x as u32, clip.y as u32);
             let columns = |value: &str| {
                 value
@@ -282,14 +271,7 @@ impl Raster {
             };
             let width = (columns(text) * self.cell_width).min(clip.width);
             fill(pixels, size, (x, y, width, clip.height), bg);
-            let offset = |byte| {
-                usize::try_from(byte)
-                    .ok()
-                    .and_then(|index| text.get(..index))
-                    .map(columns)
-            };
-            let begin = offset(preedit.cursor_begin);
-            let end = offset(preedit.cursor_end);
+            let (begin, end) = (view.begin, view.end);
             if let (Some(begin), Some(end)) = (begin, end) {
                 let left = (begin.min(end) * self.cell_width).min(clip.width);
                 let right = (begin.max(end) * self.cell_width).min(clip.width);
@@ -311,7 +293,6 @@ impl Raster {
                 if start * self.cell_width >= clip.width {
                     break;
                 }
-                // shortcut: one clipped row, upgrade with the shared overlay layout when wrapping is added.
                 if (start + glyph_span) * self.cell_width > clip.width {
                     break;
                 }
@@ -420,6 +401,15 @@ impl Raster {
                 block_rect = Some((x, y, span * self.cell_width, self.cell_height));
             }
         }
+        graphics::draw(
+            terminal,
+            size,
+            (self.cell_width, self.cell_height),
+            pixels,
+            damage_rows.clone(),
+            true,
+            None,
+        );
         if let Some(rect) = block_rect {
             fill(
                 pixels,
@@ -495,6 +485,15 @@ impl Raster {
                 );
             }
         }
+        graphics::draw(
+            terminal,
+            size,
+            (self.cell_width, self.cell_height),
+            pixels,
+            damage_rows.clone(),
+            false,
+            block_rect,
+        );
         let cursor = terminal
             .snapshot()
             .ok_or("terminal unavailable")?
@@ -1363,7 +1362,7 @@ mod tests {
         assert_ne!(base, pixels);
         for y in 0..size.1 {
             for x in 0..size.0 {
-                if x < raster.cell_width || y >= raster.cell_height {
+                if y >= raster.cell_height {
                     let offset = ((y * size.0 + x) * 4) as usize;
                     assert_eq!(&pixels[offset..offset + 4], &base[offset..offset + 4]);
                 }
@@ -1660,3 +1659,89 @@ mod palette_tests;
 
 #[cfg(test)]
 mod resource_tests;
+
+#[cfg(test)]
+mod graphics_test {
+    use super::*;
+    #[test]
+    fn runtime_graphics_pixels_respect_clipping_and_layers() {
+        let font = FontVec::try_from_vec(include_bytes!("../../tests/fixtures/demo.ttf").to_vec())
+            .unwrap();
+        let mut raster = Raster::new(vec![font], &Config::default()).unwrap();
+        let mut term = Terminal::new(crate::TabId(1), 2, 8).unwrap();
+        term.set_cell_pixels((raster.cell_width, raster.cell_height));
+        term.feed(
+            term.tab(),
+            b"\x1b[?25l\x1b_Ga=T,i=1,f=32,s=1,v=1,c=1,r=1,C=1;/wAA/w==\x1b\\",
+        )
+        .unwrap();
+        let size = (8 * raster.cell_width, 2 * raster.cell_height);
+        let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
+        raster.draw(&term, size, &mut pixels, false, true).unwrap();
+        let x = raster.cell_width / 2;
+        let y = raster.cell_height / 2;
+        let start = ((y * size.0 + x) * 4) as usize;
+        assert_eq!(
+            u32::from_ne_bytes(pixels[start..start + 4].try_into().unwrap()),
+            0xffff0000
+        );
+        term.feed(term.tab(), b"\x1b_Ga=d,d=A\x1b\\\x1b[1;8H\x1b_Ga=T,i=2,p=1,f=32,s=2,v=1,x=1,w=1,c=2,C=1;AP8A//8AAIA=\x1b\\").unwrap();
+        for scale in [1, 2] {
+            raster.set_scale(scale);
+            let cell = (raster.cell_width, raster.cell_height);
+            let size = (8 * cell.0, 2 * cell.1);
+            let blue = 0xff0000ffu32.to_ne_bytes();
+            let mut pixels = blue.repeat((size.0 * size.1) as usize);
+            let y = cell.0 / 2;
+            graphics::draw(&term, size, cell, &mut pixels, y..y + 1, false, None);
+            let sample = |data: &[u8], x, y| {
+                let offset = ((y * size.0 + x) * 4) as usize;
+                u32::from_ne_bytes(data[offset..offset + 4].try_into().unwrap())
+            };
+            assert_eq!(sample(&pixels, size.0 - 1, y), 0xff80007f);
+            assert_eq!(sample(&pixels, 0, y), 0xff0000ff);
+            assert_eq!(sample(&pixels, size.0 - 1, y + 1), 0xff0000ff);
+            let mut protected = blue.repeat((size.0 * size.1) as usize);
+            graphics::draw(
+                &term,
+                size,
+                cell,
+                &mut protected,
+                0..size.1,
+                false,
+                Some((7 * cell.0, 0, cell.0, cell.1)),
+            );
+            assert_eq!(sample(&protected, size.0 - 1, y), 0xff0000ff);
+        }
+        raster.set_scale(1);
+        term.feed(
+            term.tab(),
+            b"A\x1b[1;8H\x1b_Ga=p,i=2,p=1,x=1,w=1,c=2,C=1,z=-1\x1b\\",
+        )
+        .unwrap();
+        let mut behind = vec![0; (size.0 * size.1 * 4) as usize];
+        raster.draw(&term, size, &mut behind, false, true).unwrap();
+        term.feed(term.tab(), b"\x1b_Ga=p,i=2,p=1,x=1,w=1,c=2,C=1,z=1\x1b\\")
+            .unwrap();
+        let mut above = vec![0; behind.len()];
+        raster.draw(&term, size, &mut above, false, true).unwrap();
+        assert_ne!(above, behind, "negative z preserves foreground glyphs");
+        term.feed(
+            term.tab(),
+            b"\x1b[2;1H\n\x1b[H\x1b_Ga=T,i=4,f=32,s=1,v=1,c=1,r=1,C=1;/wAA/w==\x1b\\",
+        )
+        .unwrap();
+        term.scroll_viewport(alacritty_terminal::grid::Scroll::Delta(1))
+            .unwrap();
+        raster.draw(&term, size, &mut above, false, true).unwrap();
+        let shifted = (((y + raster.cell_height) * size.0 + x) * 4) as usize;
+        assert_eq!(
+            u32::from_ne_bytes(above[shifted..shifted + 4].try_into().unwrap()),
+            0xffff0000
+        );
+        assert_ne!(
+            u32::from_ne_bytes(above[start..start + 4].try_into().unwrap()),
+            0xffff0000
+        );
+    }
+}

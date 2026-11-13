@@ -13,12 +13,26 @@ impl ImeState {
         snapshot: TerminalSnapshot<'_>,
         layout: &CellLayout,
     ) -> Option<[ImeRequest; 2]> {
+        self.update_cursor_rect(
+            seat,
+            keyboard,
+            snapshot.tab,
+            cursor_rectangle(snapshot, layout),
+        )
+    }
+
+    pub(crate) fn update_cursor_rect(
+        &mut self,
+        seat: SeatId,
+        keyboard: &KeyboardFocus,
+        tab: crate::TabId,
+        rect: Option<Rect>,
+    ) -> Option<[ImeRequest; 2]> {
         let target = self.target_for(seat, self.surface?, keyboard)?;
         let focus = self.capture_focus(seat, target.window, keyboard);
-        if !self.matches_focus(&focus, keyboard) || snapshot.tab != target.tab {
+        if !self.matches_focus(&focus, keyboard) || tab != target.tab {
             return None;
         }
-        let rect = cursor_rectangle(snapshot, layout);
         if rect == self.cursor_rectangle {
             return None;
         }

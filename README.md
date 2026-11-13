@@ -1,10 +1,10 @@
 # Ptyra
 
-> **開發中 · 狀態核對：2026-11-05**
+> **開發中 · 狀態核對：2026-11-13**
 
-Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前可開單視窗、顯示 Shell output，同接受基本 keyboard 輸入。
+Ptyra 係一個開發中嘅 Rust Native Wayland Terminal，支援單視窗 GUI Tabs、Shell、Clipboard 同 Fcitx5 輸入。
 
-目標：低 RAM、低 Idle CPU、可靠 Copy & Paste、Fcitx5 中文輸入、GUI Tabs。Kitty Keyboard / Graphics 放喺後續獨立 TASK。
+目標係低 RAM、低 Idle CPU 同穩定日常使用。Kitty Keyboard／Graphics 已接入有限 subset，未宣稱完整兼容。
 
 ## Planning Files
 
@@ -15,12 +15,117 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前可開單視窗
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
+- 199 項 TASK 已全部勾選。TASK 範圍同整體 acceptance gates 分開計，完整產品驗收仍未完成。
 - 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize、單次 child exit → Tab event mapping，以及保留跨 chunk parser state 嘅 terminal core adapter 同 renderer 資料接口。
 - `src/main.rs` 會載入 config，再連接 Wayland compositor。Runtime 用有界 SHM buffers、software glyph rasterization、真 PTY 同阻塞 poll event loop；keyboard 經現有 focus/keymap/encoder/repeat 模組送到 Shell。
-- 已驗證 Enter、Backspace、arrows、Ctrl+C、focus/repeat、PTY resize 同 close cleanup。IME 已接入單視窗 runtime；隔離 Fcitx5 測試通過，實際 desktop 候選視窗仍待驗收。Clipboard、Selection、GUI Tabs、Kitty graphics 仍未接入 runtime；唔代表日常 Terminal 已完成。
-- Child 用 `TERM=ptyra` 同私有 `TERMINFO` directory，載入 bundled conservative entry；未驗收完整 TUI。Cursor 跟 focus 同 Block/Beam/Underline shape；暫時冇 blink，使用 regular font face 同基本顏色；HiDPI、shaping 同效能仍待校準。
+- 已驗證 Enter、Backspace、arrows、Ctrl+C、focus/repeat、PTY resize 同 close cleanup。IME、Clipboard、Selection、GUI Tabs 已接入 runtime；個別 native probes 唔代表整體 desktop acceptance 完成。
+- Kitty Graphics direct PNG/RGBA 已接入 runtime；TASK-184–190 驗證同支援範圍見文末。整體 Delivery Gates 仍以 `TASKS.md` 為準。
+- Child 用 `TERM=ptyra` 同私有 `TERMINFO` directory，唔需要預先全域安裝 entry。Cursor 支援 Block／Beam／Underline 同 app-requested blink。已有 CJK fallback、combining、styles、palette 同 integer scale；完整 shaping、指定 desktop HiDPI 同效能仍待驗收。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
+
+## 使用同 Config
+
+Build／run 指令見下方。直接指定完整 config：
+
+```sh
+./target/release/ptyra --config /absolute/path/to/ptyra/assets/config.default.toml
+```
+
+[完整 defaults](assets/config.default.toml) 同 [部分設定例子](assets/config.example.toml) 都有 parser regression。
+未指定 `--config` 時，程式先用 absolute `$XDG_CONFIG_HOME/ptyra/config.toml`；否則用 `$HOME/.config/ptyra/config.toml`。
+檔案不存在或欄位未指定時使用 defaults。設定只喺啟動時載入，冇 live reload。
+檔案須為 UTF-8 TOML，最多 64 KiB；未知欄位、無效型別、超出範圍或重複 shortcuts 都會拒絕啟動。
+Error 只顯示 path／field／reason 等 metadata，唔輸出 config 值，亦唔改寫原檔。
+
+| 設定 | Default | 可用範圍／用途 |
+|---|---|---|
+| `font_family` | `monospace` | 非空 Fontconfig family／pattern，最多 256 bytes，禁止 control characters |
+| `font_size` | `14.0` | 1–256 logical pixels |
+| `scrollback_lines` | `5000` | 每 Tab 0–10000 行；另受總 cell budget 限制 |
+| `clipboard_bytes` | `16777216` | Receive／paste limit，1–16777216 bytes；超出會拒絕，唔截斷 |
+| `osc52_write` | `false` | 明確 opt-in 先容許 PTY output 寫 Clipboard；read 仍拒絕 |
+| `glyph_cache_bytes` | `16777216` | 共用 glyph cache，0–16777216 bytes；0 停用 cache |
+| `image_bytes` | `16777216` | 1–16777216 bytes；每次 transfer、decoded image 同每 Tab store 限額 |
+| `image_pixels` | `4194304` | 1–4194304 pixels／image |
+| `[colors]` | 見 defaults | `foreground`、`background`、`cursor`，值必須係 `#RRGGBB` |
+| `[colors.ansi]` | 見 defaults | 16 個具名 ANSI colors；未指定嘅顏色保持 default |
+
+其他固定上限包括 64 Tabs、每 Tab 32768 visible cells／2000000 logical cells，同全部 Tabs 8000000 logical cells。
+實際 allocation 另有保守 budget，所以未到 Tab 數目上限亦可能拒絕新增或 resize。
+Graphics 共用 128 MiB peak reserve；每 Tab 最多 64 images／256 placements。
+Font discovery 最多保留 16 faces、合共 48 MiB font bytes；glyph cache 最多 4096 entries。
+呢啲係個別資源限制，唔係整個 process 嘅 RSS 保證。
+
+| `[bindings]` action | Default shortcut |
+|---|---|
+| `copy`／`paste` | `Ctrl+Shift+c`／`Ctrl+Shift+v` |
+| `new_tab`／`close_tab` | `Ctrl+Shift+t`／`Ctrl+Shift+w` |
+| `next_tab`／`previous_tab` | `Ctrl+Page_Down`／`Ctrl+Page_Up` |
+| `scroll_page_up`／`scroll_page_down` | `Shift+Page_Up`／`Shift+Page_Down` |
+| `scroll_top`／`scroll_bottom` | `Shift+Home`／`Shift+End` |
+| `ime_toggle` | `Ctrl+space`，保留畀 compositor／Fcitx5 |
+
+Shortcut 用 `Ctrl`／`Shift`／`Alt`／`Super` 加 XKB keysym name，各 action 不可重複。
+`ime_toggle` 只保留 ownership，唔會替你改 Fcitx5 hotkey；外部設定要配合。
+Tab bar 可點擊切換；最後一個 Tab 關閉時視窗退出。Hidden Tabs 繼續處理 PTY output。
+Mouse 支援拖曳、double／triple click selection；app 啟用 mouse reporting 時，Shift 可選擇本機 selection。
+
+## Clipboard 同中文輸入
+
+Copy 保留 Unicode、空格同 hard newline；soft wrap 唔額外加 newline。冇 selection 時唔會清空外部 Clipboard。
+Middle-click 使用獨立 Primary Selection，須 compositor 支援；唔會改用普通 Clipboard。
+Pending paste 綁定原本 Tab；切 Tab、失焦或關 Tab 會按現有 focus policy 取消，唔會轉送另一個 Shell。
+App 開啟 bracketed paste 時使用 framing；未開啟而內容有多行時，先顯示確認。
+確認提示顯示後，Enter 接受、Esc 取消。Bracketed paste 唔保證 Shell 唔執行內容。
+預設拒絕 OSC 52 read／write。`osc52_write = true` 會容許該 process 嘅 PTY output 改 Clipboard，仍有大小同 target 檢查。
+
+IME 用 `zwp_text_input_v3`；Sway 同 Fcitx5 嘅 `input-method-v2` 由外部處理。
+Preedit 只係 overlay；commit 經 transaction 同 focus／Tab 檢查後先輸入 PTY。
+毋須設定 `GTK_IM_MODULE`。Ptyra 唔會修改全域 IME environment。
+
+## 安裝同移除
+
+目前提供 Linux GNU library adapter，**未有 install／uninstall CLI 或持久 receipt**。
+`InstallPlan::user_local(home).install(binary)` 寫入 `home/.local`；`InstallPlan::staged(root).install(binary)` 寫入 `root/usr/local`。
+兩者只建立 `bin/ptyra`、`share/terminfo/p/ptyra` 同 `share/applications/ptyra.desktop`。
+目的檔案已存在會拒絕；唔會覆寫舊版本。Prefix 要由 operator 控制，須為 UTF-8，唔可以包含 `=`、`%` 或 control characters。
+Installed launcher 使用 absolute binary path，已測空格、引號、dollar、backtick 同 backslash；staged 目錄搬位後要重新建立 entry。
+
+成功 install 會回傳 `InstallReceipt`。同一個 caller 保留 receipt，再用 `plan.uninstall(&receipt)` 移除。
+Uninstall 只接受相同 plan 嘅完整 receipt；檔案被改動、替換或變成 symlink 時保留並回報 error。
+已消失嘅檔案可重試；parent directories 同其他程式保留。Install 途中失敗亦只回滾本次建立嘅檔案。
+錯誤包含 path 同 error kind；若檔案留喺 private recovery directory，先檢查回報位置。
+Receipt 遺失後，現有 API 唔會憑三條 path 猜測 ownership，亦唔提供跨 process 自動 uninstall。
+`system_local()` 只供檢視 `/usr/local` 路徑；install／uninstall 會拒絕執行，真正系統寫入或移除仍需另行批准。
+
+可重跑嘅暫存 packaging 驗證：
+
+```sh
+cargo test --workspace --locked --offline packaged_capabilities_match_runtime_support
+PTYRA_TEST_PACKAGING_NATIVE=1 cargo test --workspace --locked --offline packaged_capabilities_match_runtime_support -- --nocapture
+```
+
+第一行需要 ncurses `tic`；第二行另需 Sway、swaymsg、Fontconfig、Python 3、python3-gi／GIO 同 desktop-file-validate。
+Native probe 只開 owned headless session，唔需要安裝到真正 user prefix。詳細結果見 [verification](VERIFICATION.md)。
+
+## 能力同未驗收項目
+
+| 區域 | 目前實作 | 驗收界線 |
+|---|---|---|
+| Terminal／TUI | ANSI core、alt screen、queries、navigation／keypad、mouse／focus reporting | Bundled terminfo 保守宣告 16 colors／256 pairs；完整 vim／htop／tmux／Codex 日常矩陣未完成 |
+| Tabs／Clipboard | GUI Tabs、獨立 PTY／history／selection、copy／paste／Primary、pending target 隔離 | Firefox ↔ Ptyra ↔ Kitty desktop 全矩陣未完成 |
+| Fcitx5 | Preedit／commit、focus／Tab epochs、candidate rectangle | 使用者已確認 TASK-129／176；完整指定平台、長組字、scale、restart gate 仍未完成 |
+| Renderer | SHM software、CJK fallback、combining、styles／colors、cursor blink、integer scale | 複雜 shaping／fractional scale 未宣稱；AMD／Mesa desktop 校準未完成 |
+| Kitty Keyboard | Opt-in flag 1、query／stack／screen ownership、Shift+Enter | Bits 2／4／8／16 未宣告；唔係 full Kitty |
+| Kitty Graphics | Direct RGBA32／PNG100、有限 placement／delete、bounded decode／store | File／temp／SHM、animation、image history 等未支援；詳見 TASK-184–190 紀錄 |
+| Packaging | 暫存 user-local／staged install、launcher／terminfo、receipt uninstall | Receipt 只存記憶體；真正 system install／remove 未執行 |
+| Performance／stability | 固定資源量測、renderer replay、EGL/GLES PoC、多 Tabs soak runner、runtime boundary corpus | 完整 desktop backend 決定同長時間驗收未完成；固定 fixtures 唔係全面 fuzz |
+
+單 Tab 80 MiB PSS、額外 Tab 15 MiB、idle 單核 CPU <1% 都係設計目標。
+已有同機 offscreen backend probe；完整 desktop／其他 Terminal 比較未完成，唔宣稱效能優勢。
+整體 gates 以 [TASKS.md](TASKS.md) 未勾選清單為準；headless／unit PASS 唔代表指定 desktop 驗收通過。
+下面有日期嘅 verification sections 係當時紀錄，舊限制唔代表目前能力。
 
 ## TASK-191 Verification（2026-11-13）
 
@@ -33,7 +138,7 @@ Adapter 逐層用 directory FD 同 `O_NOFOLLOW`，目的檔案用 `O_EXCL` 建�
 失敗會反向回滾本次檔案；回滾前核對 inode，唔刪 replacement。
 回滾失敗會回報 path 同 error kind。既有及新建 directory 都保留。
 Prefix 必須由 operator 控制；同 UID 惡意 concurrent writer 唔屬隔離範圍。
-目前只提供 library adapter，receipt 只存記憶體；uninstall 留畀 TASK-192。
+目前提供 library adapter，receipt 只存記憶體；TASK-192 已加入 receipt uninstall，見上方說明。
 
 ```text
 TASK: TASK-191
@@ -55,6 +160,60 @@ Approval: APPROVE FINISH TASK-191, 195
 
 Sandbox 嘅 `/tmp` owner mapping 同 Unix socket 限制令第一次全套測試失敗。
 同一組測試喺 sandbox 外重跑全部通過，冇放寬 installer 嘅 owner 檢查。
+
+## TASK-196／197 Renderer Replay（2026-11-13）
+
+```sh
+cargo build --release --locked --offline --features gles-probe --example renderer_probe
+python3 -B tools/renderer_benchmark.py target/release/examples/renderer_probe --backends shm gles --rounds 100 --output /tmp/ptyra-renderers.json
+```
+
+`renderer-probe` feature 可以只編譯 SHM；`gles-probe` 另需 system EGL 1.5／GLES 3 libraries。
+預設 Ptyra build 同 renderer 不變。冇新增 Cargo dependencies；FFI 評審見 [DEPENDENCIES.md](DEPENDENCIES.md)。
+每 round 固定八個 frames，涵蓋 CJK／combining／styles、partial/full damage、scale=1/2 同 resize。
+兩條路徑共享 CPU glyph raster；GPU PoC 加 texture upload 同 framebuffer blit，唔係 GPU glyph renderer。
+每 frame 都逐 byte 比較 full reference 同 backend readback。
+
+JSON 記錄 fixture／font／binary hashes、driver、CPU/PSS/RSS/GPU 同 frame timings。
+資源量測包含 verification；raster／submit timing 分開，GPU submit 包含 `glFinish`。
+缺值係 `NOT AVAILABLE`，failure／timeout 回傳非零 exit code，report path 唔會覆寫。
+範圍係 offscreen；不包括 Wayland presentation、vsync、Tab bar／selection／IME overlay。
+AMD RX 6600／Mesa 26.2.4 各 800-frame replay 一致；正式 backend 選型仍然未完成。
+
+## TASK-198 Soak Runner（2026-11-13）
+
+```sh
+cargo build --release --locked --offline
+python3 -B tools/soak.py target/release/ptyra --seconds 3600 --seed 198 --tabs 5 --output /tmp/ptyra-soak.json
+```
+
+需要 Sway／swaymsg、Fontconfig、xkbcomp、wl-copy／wl-paste、D-Bus、Fcitx5 同 Cangjie3。
+只開私有 headless Sway、D-Bus 同 Fcitx5；唔改或操作現有 desktop session。
+同一個 Ptyra process 持續運行；固定 seed 排序 output、resize、switch、close/reopen、keyboard、Clipboard 同 IME。
+每個 Tab 用固定 raw-PTY workload；input、paste、中文 commit 逐 byte 核對，額外或跨 Tab input 當 failure。
+
+可選 2–10 Tabs，時長 1 秒至 7 日；預設 5 Tabs／1 小時。
+報告分開記錄 FAILED／NOT RUN／EXERCISED、停止、timeout、cleanup、每個 process 嘅資源同 FD count。
+只保留最近 4,096 個 samples，另列總 sample count，避免長測試令 harness 無界增長。
+冇 payload logs；SIGINT／SIGTERM 會停止 runner、清理自己嘅 processes，再保存報告。
+短測試只驗證 runner；完整日常操作、長時間 resource trend 同 desktop acceptance 仍要另外驗收。
+
+120 秒、五 Tabs、seed=198 已完成 571 operations，七個場景各有 81–82 次。
+106 個 samples 都有五個 children；Ptyra FD count 首／尾／peak 都係 11，最後 cleanup 通過。
+PSS 由約 6.54 MiB 升至 21.61 MiB；包括首次 history/cache 分配，唔代表已排除長期 leak。
+完整結果同限制見 [VERIFICATION.md](VERIFICATION.md)。
+
+## TASK-199 Runtime Boundary Corpus（2026-11-13）
+
+```sh
+cargo test --workspace --locked --offline runtime_malformed_events_remain_bounded_and_isolated
+```
+
+固定 seed `0x50545952` 重播兩次，核對相同結果。
+覆蓋 seat/device generation、serial 消耗／wrap、stale offers、FD cancellation／EINTR／UTF-8／限額、IME stale done 同 paste epoch。
+真 `TabRegistry::drain_ready` 路徑加入 query flood、錯誤 source／長度、oversized OSC 同 random chunks。
+核對每次 dispatch 上限、input queue／cell caps、closed Tab 不再 dispatch，同健康 Tab grid/input 保持獨立。
+呢組係 deterministic adapter fixtures；唔包含惡意 Wayland wire decoder、kernel FD race 或無限輸入嘅完整 fuzz 證明。
 
 ## TASK-195 Resource Harness（2026-11-13）
 
@@ -120,7 +279,9 @@ Approval: APPROVE FINISH TASK-191, 195
 
 ## Build / Run
 
-需要 Linux Wayland session、Rust toolchain、Fontconfig `fc-match` 同本機字型。
+需要支援 Rust 2024 edition 嘅 toolchain 同 linker。Runtime 需要 Linux PTY、Wayland compositor（xdg-shell／wl_shm）、Fontconfig `fc-match`、可用本機字型同 Shell。
+本機 GNU build 動態連接 glibc 同 libgcc_s；Fontconfig 工具有自己嘅 native libraries。Ptyra 唔係零 native dependencies。
+中文輸入另需 compositor 配合 Fcitx5；明確開啟 hyperlink 時會呼叫 `xdg-open`。UI runtime 冇用 GTK、Qt、Electron、WebView 或 XWayland。
 
 ```sh
 cargo build --release --locked
@@ -1737,3 +1898,199 @@ Approval: user approved TASK-059 checkbox and scoped local commit; no push
 `PendingPaste` keeps the initiating TabId while queuing bounded chunks. Each
 chunk checks the receiving Tab's identity; a queue error retains that chunk for
 retry. Switching focus cannot retarget an existing pending Paste.
+
+## TASK-176 — IME viewport / candidate anchor（2026-11-13）
+
+Runtime 共用 Preedit layout、damage 同 candidate anchor。長 Preedit 使用單行水平移動，保留 caret 可見；需要時向左移動 overlay，唔切半 CJK glyph。Selection 仍用 UTF-8 byte offsets，combining marks 跟隨前一個字。Cursor 離開 scrollback viewport 時隱藏 overlay；返到可見範圍先恢復。Candidate rectangle 包含 Tab Bar origin，再轉成 surface-local units；origin/scale 改變會更新 cache。
+
+```text
+TASK: TASK-176
+Status: DONE
+Dependencies: satisfied (TASK-076, 077, 129, 137, 158, 167, 175)
+Changed files: src/ime.rs, src/ime/cursor.rs, src/runtime/ime.rs,
+  src/runtime/ime/layout.rs, src/runtime/raster.rs, tests/native_ime.py, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline runtime_ime_anchor_tracks_viewport_and_long_preedit
+Result: PASS; first registered run failed before compose existed
+Workspace tests: PASS — 319 unit, 14 integration, 2 doc-tests; 1 optional fish test ignored
+Format / Clippy: PASS
+Manual / Integration checks: release build PASS; Sway 1.9 headless/pixman + Fcitx5 5.1.7
+  resize/scale, preedit/commit, focus, restart, new/switch/close/reopen Tabs PASS
+  desktop acceptance: user confirmed TASK-176 OK on 2026-11-13
+Security / Privacy impact: bounded 4 KiB preedit; no new dependencies, unsafe or payload logs
+Known limitations: one horizontally panned row; desktop versions and scenarios not independently verified
+Ready for [x]: YES
+Approval: user confirmed "176係 OK" after the desktop acceptance request
+```
+
+Sandbox owner/socket restrictions caused three existing tests to fail; the full suite passed outside the sandbox. The first native attempt failed during Sway IPC startup; retry passed. These results do not replace desktop acceptance.
+
+## TASK-183 — Kitty / IME key ownership（2026-11-13）
+
+Compositor 送到 `wl_keyboard` 嘅 key 繼續由 terminal encoder 處理。IME 消耗嘅 key 唔會由 Preedit 重建成 keyboard event；commit 只經 `done` 寫一次 UTF-8。有效 IME batch、enter/leave 同移除 text-input 都會取消舊 local repeat。Keyboard focus/keymap epoch 檢查提前到 shortcut dispatch 前，避免 stale key 開新 Tab。Kitty 仍只宣告已完成嘅 flag 1；冇新增 event-reporting flags。
+
+```sh
+python3 tests/native_ime.py target/release/ptyra /tmp/ptyra-ime.png --tabs --kitty
+PTYRA_TEST_KITTY=1 python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-keyboard.png
+```
+
+```text
+TASK: TASK-183
+Status: DONE
+Dependencies: satisfied (TASK-114, 175, 182)
+Changed files: src/runtime/ime.rs, src/runtime/keyboard.rs,
+  tests/native_ime.py, tests/native_ime_kitty.py, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline runtime_kitty_ime_ownership_never_duplicates_text
+Result: PASS — repeat-after-preedit and stale-shortcut regressions first failed, then passed
+Workspace tests: PASS — 321 unit, 14 integration, 2 doc-tests; 1 optional fish test ignored
+Format / Clippy: PASS; git diff --check PASS
+Manual / Integration checks: release build PASS; Sway 1.9 headless/pixman + Fcitx5 5.1.7
+  raw PTY probes passed separately for flags 0 and 1: exact Chinese commit, shortcut/release
+  suppression, focus/Tab cancellation, IME restart; existing native Kitty negotiation,
+  repeat, screen stacks, hidden Tab isolation and keyboard regression PASS
+Security / Privacy impact: no new dependencies, unsafe, payload logs or system settings
+Known limitations: only flag 1 advertised; headless evidence does not replace desktop acceptance
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-183 (2026-11-13)
+```
+
+使用者於 2026-11-13 確認「176係 OK, APPROVE FINISH TASK-183」，兩項 checkbox 已更新為 `[x]`。今次只更新文件狀態，冇重跑測試；上面保留實作時嘅實際測試結果。整體 desktop acceptance gates 維持未勾選。
+
+## TASK-184–190 — Direct Kitty Graphics runtime（2026-11-13）
+
+使用者於 2026-11-13 批准「APPROVE FINISH TASK-184 to TASK-190」，七項 checkbox 已更新為 `[x]`。所有 dependencies 已 `[x]`。今次只更新文件狀態，冇重跑測試；下方保留實作時嘅驗證結果。
+
+每 Tab 嘅 APC parser、chunk assembler、image store 同 placements 已接入 PTY output。Malformed APC 會回覆有界 error，再恢復正常 text parsing。Query 只驗證 payload，唔留 image。回覆使用來源 Tab 嘅現有 PTY queue。
+
+支援 direct `t/T/p/q/d`、RGBA32、PNG100、`i/p`、`m/q`、crop `x/y/w/h`、pixel offsets `X/Y`、cell extent `c/r`、cursor policy `C=0/1`。Crop 取 image 交集；cell box 保留 aspect ratio。`C=0` 移動 cursor，超出 grid 時 clamp；`C=1` 保持位置。Negative z 畫喺 glyph 後面，nonnegative z 畫喺 glyph 前面；cursor、selection 同 IME overlay 保持可見。低於 -1073741823 嘅 z 明確拒絕。對照來源：[Kitty Graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)。
+
+Delete subset 係 `a/A/i/I`。Main/alternate placements 分開；進入 alternate screen 會清理舊 alternate placements。圖片只屬 viewport：scroll、line insertion/deletion、scroll-region change、REP/index commands、grid resize 同 clear 會保守淘汰受影響 screen placements。離開 alternate screen 唔會刪除 main placements。仍被另一 screen 引用嘅 image 會保留。RIS 同 Tab close 會釋放全部所屬 state。唔提供 image scrollback 或 resize reflow anchors。
+
+`image_bytes` 同 `image_pixels` 於 decode 前檢查；每 Tab store 同 pending transfer 各受 `image_bytes` 限制。跨 Tab Graphics budget 為 128 MiB，包含 retained capacities、metadata reserve、pending buffer growth 同 decode peak reserve。每次最多 16 KiB PTY feed，只容許 32 MiB encoded-plus-RGBA decode work。每 Tab 最多 64 images、256 placements、8 Mi source-scale composition pixels。Budget 採用保守 peak reserve，可能提早拒絕。呢個 budget 唔係整個 process 嘅 RSS 上限，亦唔係 frame latency 保證。
+
+未支援 file/temp/shared-memory、RGB24、compression、animation、virtual/relative placements 或 background 下方嘅 z layer。未支援 fields/transport 會明確拒絕。冇新增 dependencies、unsafe、payload logs、背景網絡或全域設定。
+
+```sh
+cargo test --workspace --locked --offline runtime_graphics_
+cargo test --workspace --locked --offline
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+cargo build --release --locked --offline
+PTYRA_TEST_GRAPHICS=1 python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-graphics.png
+PTYRA_TEST_KITTY=1 python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-keyboard.png
+```
+
+共同驗證：8 個 runtime Graphics tests PASS；完整 workspace 為 329 unit、14 integration、2 doc-tests PASS，1 個 optional fish test ignored。Fmt、Clippy、release build 同 diff whitespace check PASS。隔離 Sway headless/pixman 通過 byte-split RGBA/PNG、alpha/crop compositor pixels、query/quiet/error replies、main/alternate、hidden Tab isolation、delete/reset/close。Kitty keyboard native regression 亦 PASS。
+
+首個 native pixel probe 因 fixture 冇套用固定 cell font 而失敗；套用現有 font fixture 後通過。Resize lifecycle 補測先失敗，修正 placement 回收及 scroll-region reset 後通過。真 desktop、AMD/Mesa 表現、長時間 Graphics flood 同效能 benchmark 未驗證；唔聲稱完整 Kitty compatibility。
+
+```text
+TASK: TASK-184
+Status: DONE
+Dependencies: satisfied (TASK-115, 121, 132, 183); all [x]
+Changed files: src/terminal.rs, src/terminal/tests.rs, src/terminal/graphics.rs, src/kitty/graphics.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline runtime_graphics_apc_handles_split_streams
+Result: PASS
+Workspace tests: PASS — 329 unit, 14 integration, 2 doc-tests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: split APC、ANSI 混合、error recovery；native byte-split probe PASS
+Security / Privacy impact: bounded parser；禁止 file/temp/shared-memory
+Known limitations: 只處理宣告 direct subset；共同未驗證項目見上文
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-184 to TASK-190 (2026-11-13)
+```
+
+```text
+TASK: TASK-185
+Status: DONE
+Dependencies: satisfied (TASK-116, 117, 118, 119, 177, 184); all [x]
+Changed files: src/terminal/graphics.rs, src/terminal/graphics/tests.rs, src/kitty/graphics/transfer.rs, src/config.rs, src/tabs.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline runtime_graphics_transfer_decodes_once_with_limits
+Result: PASS
+Workspace tests: PASS — 329 unit, 14 integration, 2 doc-tests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: PNG/RGBA、取消、壞 PNG、尺寸 caps、Tab isolation PASS
+Security / Privacy impact: decode 前檢查 config caps；冇半張 image 留低
+Known limitations: 每 Tab store budget 使用 image_bytes；共同未驗證項目見上文
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-184 to TASK-190 (2026-11-13)
+```
+
+```text
+TASK: TASK-186
+Status: DONE
+Dependencies: satisfied (TASK-119, 185); all [x]
+Changed files: src/terminal/graphics.rs, src/terminal/graphics/tests.rs, src/kitty/graphics.rs, src/kitty/graphics/store.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline runtime_graphics_placement_uses_current_screen_geometry
+Result: PASS
+Workspace tests: PASS — 329 unit, 14 integration, 2 doc-tests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: crop、offset、aspect、cell extent、cursor、alternate screen PASS
+Security / Privacy impact: geometry 同 unsupported z layer 有明確拒絕
+Known limitations: viewport placements；超出 grid 嘅 cursor movement clamp；共同未驗證項目見上文
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-184 to TASK-190 (2026-11-13)
+```
+
+```text
+TASK: TASK-187
+Status: DONE
+Dependencies: satisfied (TASK-126, 158, 167, 186); all [x]
+Changed files: src/runtime/raster.rs, src/runtime/raster/graphics.rs, src/terminal.rs, tests/native_runtime.py, tests/native_graphics.py, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline runtime_graphics_pixels_respect_clipping_and_layers
+Result: PASS
+Workspace tests: PASS — 329 unit, 14 integration, 2 doc-tests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: alpha、scale、clip、partial rows、viewport offset、z、cursor；native pixels PASS
+Security / Privacy impact: 只 compose active screen；placement work 有上限
+Known limitations: nearest-neighbour sampling；冇 background 下方嘅 z layer；共同未驗證項目見上文
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-184 to TASK-190 (2026-11-13)
+```
+
+```text
+TASK: TASK-188
+Status: DONE
+Dependencies: satisfied (TASK-160, 184, 185, 186); all [x]
+Changed files: src/terminal/graphics.rs, src/terminal/graphics/tests.rs, src/kitty/graphics.rs, tests/native_graphics.py, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline runtime_graphics_replies_follow_query_and_quiet_policy
+Result: PASS
+Workspace tests: PASS — 329 unit, 14 integration, 2 doc-tests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: query 無 store、quiet 0/1/2、unsupported transport；hidden PTY routing PASS
+Security / Privacy impact: 回覆只含 ID 同固定 error metadata，冇 payload
+Known limitations: 沿用 bounded core reply queue；唔支援未宣告 commands；共同未驗證項目見上文
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-184 to TASK-190 (2026-11-13)
+```
+
+```text
+TASK: TASK-189
+Status: DONE
+Dependencies: satisfied (TASK-120, 134, 185, 187); all [x]
+Changed files: src/terminal.rs, src/terminal/graphics.rs, src/terminal/graphics/tests.rs, src/kitty/protocol.rs, src/kitty/graphics/store.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline runtime_graphics_lifecycle_reclaims_owned_resources
+Result: PASS
+Workspace tests: PASS — 329 unit, 14 integration, 2 doc-tests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: delete、reset、scroll、wide wrap、resize、drop budget；native screen/Tab cleanup PASS
+Security / Privacy impact: 仍被引用嘅 image 保留；cancel/reset/close 回收 pending state
+Known limitations: scroll/line operations 保守淘汰；唔保留 image history；共同未驗證項目見上文
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-184 to TASK-190 (2026-11-13)
+```
+
+```text
+TASK: TASK-190
+Status: DONE
+Dependencies: satisfied (TASK-118, 177, 185, 189); all [x]
+Changed files: src/terminal/graphics.rs, src/terminal/graphics/tests.rs, src/tabs.rs, src/kitty/graphics/store.rs, src/kitty/graphics/transfer.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline runtime_graphics_flood_stays_within_global_budget
+Result: PASS
+Workspace tests: PASS — 329 unit, 14 integration, 2 doc-tests; 1 optional fish ignored
+Format / Clippy: PASS
+Manual / Integration checks: shared-budget 拒絕/回收、decode work、64 images/256 placements 上限 PASS
+Security / Privacy impact: 128 MiB Graphics peak reserve；decode work 每 feed 有界
+Known limitations: 保守 reserve 可能提早拒絕；唔提供 hard latency 保證；共同未驗證項目見上文
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-184 to TASK-190 (2026-11-13)
+```

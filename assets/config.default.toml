@@ -1,0 +1,45 @@
+# 全部內置 defaults；可直接用 ptyra --config 載入。
+font_family = "monospace"
+font_size = 14.0
+scrollback_lines = 5000
+clipboard_bytes = 16777216
+osc52_write = false
+glyph_cache_bytes = 16777216
+image_bytes = 16777216
+image_pixels = 4194304
+
+[bindings]
+copy = "Ctrl+Shift+c"
+paste = "Ctrl+Shift+v"
+ime_toggle = "Ctrl+space"
+new_tab = "Ctrl+Shift+t"
+close_tab = "Ctrl+Shift+w"
+next_tab = "Ctrl+Page_Down"
+previous_tab = "Ctrl+Page_Up"
+scroll_page_up = "Shift+Page_Up"
+scroll_page_down = "Shift+Page_Down"
+scroll_top = "Shift+Home"
+scroll_bottom = "Shift+End"
+
+[colors]
+foreground = "#d3d7cf"
+background = "#181818"
+cursor = "#eeeeec"
+
+[colors.ansi]
+black = "#181818"
+red = "#cc0000"
+green = "#4e9a06"
+yellow = "#c4a000"
+blue = "#3465a4"
+magenta = "#75507b"
+cyan = "#06989a"
+white = "#d3d7cf"
+bright_black = "#555753"
+bright_red = "#ef2929"
+bright_green = "#8ae234"
+bright_yellow = "#fce94f"
+bright_blue = "#729fcf"
+bright_magenta = "#ad7fa8"
+bright_cyan = "#34e2e2"
+bright_white = "#eeeeec"

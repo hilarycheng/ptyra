@@ -10,10 +10,7 @@ impl Terminfo {
     pub fn new() -> io::Result<Self> {
         let entry = Self(nix::unistd::mkdtemp("/tmp/ptyra-terminfo-XXXXXX")?);
         fs::create_dir(entry.0.join("p"))?;
-        fs::write(
-            entry.0.join("p/ptyra"),
-            include_bytes!("../../assets/ptyra.terminfo.bin"),
-        )?;
+        fs::write(entry.0.join("p/ptyra"), crate::terminfo::COMPILED)?;
         Ok(entry)
     }
 
@@ -45,7 +42,7 @@ mod tests {
         );
         assert_eq!(
             fs::read(path.join("p/ptyra")).unwrap(),
-            include_bytes!("../../assets/ptyra.terminfo.bin")
+            crate::terminfo::COMPILED
         );
         drop(entry);
         assert!(!path.exists());

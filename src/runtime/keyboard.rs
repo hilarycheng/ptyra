@@ -89,6 +89,14 @@ impl KeyboardInput {
     ) -> Result<Option<Vec<u8>>> {
         use crate::config::bindings::BindingAction;
         use crate::keymap::KeyState;
+        if !self.focus.matches(key.target, &key.focus_epoch)
+            || self
+                .map
+                .as_ref()
+                .is_none_or(|map| !map.matches(&key.keymap_epoch))
+        {
+            return Ok(None);
+        }
         if self.consumed.contains(&key.physical_code) {
             if key.state == KeyState::Released {
                 self.consumed.remove(&key.physical_code);
@@ -651,6 +659,46 @@ mod tests {
         input.key(72, false, false, true, LEGACY, &clock).unwrap();
         input.clear_focus();
         assert!(input.tick(false, true, LEGACY, &clock).unwrap().is_none());
+    }
+    #[test]
+    fn runtime_kitty_ime_ownership_never_duplicates_text_stale_shortcut() {
+        let clock = FakeClock::default();
+        let mut input = KeyboardInput {
+            bindings: crate::config::Config::from_toml(Some("[bindings]\nnew_tab='Ctrl+Shift+a'"))
+                .unwrap()
+                .bindings,
+            map: Some(
+                Keymap::from_bytes(include_bytes!("../../tests/fixtures/keyboard.xkb")).unwrap(),
+            ),
+            ..Default::default()
+        };
+        input.focus.enter(WindowId(1), TabId(1));
+        input.map.as_mut().unwrap().update_modifiers(Modifiers {
+            depressed: 5,
+            ..Default::default()
+        });
+        let old = input
+            .map
+            .as_ref()
+            .unwrap()
+            .translate(input.focus.route_key(30, true).unwrap(), false)
+            .unwrap()
+            .unwrap();
+        input.retarget(TabId(2));
+        assert!(
+            input
+                .encode(
+                    old,
+                    false,
+                    false,
+                    KeyboardFlags::DISAMBIGUATE_ESC_CODES,
+                    &clock
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(input.action.is_none(), "stale key must not create a Tab");
+        assert!(input.consumed.is_empty());
     }
     #[test]
     fn runtime_shifted_shortcut_matches_base_symbol() {

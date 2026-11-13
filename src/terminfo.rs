@@ -1,5 +1,6 @@
 /// Conservative source; assets/ptyra.terminfo.bin is generated with tic for the PTY adapter.
 pub const SOURCE: &str = include_str!("../assets/ptyra.terminfo");
+pub const COMPILED: &[u8] = include_bytes!("../assets/ptyra.terminfo.bin");
 
 #[cfg(test)]
 mod tests {
