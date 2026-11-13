@@ -86,8 +86,9 @@ Preedit 只係 overlay；commit 經 transaction 同 focus／Tab 檢查後先輸�
 
 ## 安裝同移除
 
-執行 `./install.sh`，再開 fuzzel 搜尋 `Ptyra`。Script 用 Cargo offline release build，需先準備好 Rust toolchain 同 dependency cache。
-安裝入口係 `ptyra --install`。未有 `~/.local/bin/ptyra` 時會安裝 binary、terminfo、desktop entry 同 SVG icon。
+執行 `./install.sh`，再開 fuzzel 搜尋 `Ptyra`。Script 係普通 POSIX shell，直接呼叫已安裝嘅 `~/.local/bin/ptyra --install`，唔需要 Cargo。
+呢個 script 只登記 desktop entry 同 SVG icon；需要先有 Ptyra binary。請勿用 `sudo`，因為安裝位置係 user-local。
+如果未有 binary，先用 repo 嘅 `build.sh` build，再將生成嘅 binary 安裝到 `~/.local/bin/ptyra`。
 如果該位置已有普通 executable，只會新增 desktop entry 同 icon，沿用現有版本；唔會更新 binary。
 Desktop entry 同 icon 使用 `XDG_DATA_HOME`；未設定或唔係 absolute path 時用 `~/.local/share`。
 Icon 放喺 data directory 嘅 `ptyra/ptyra.svg`，desktop entry 使用 absolute icon path，唔依賴 icon theme cache。
@@ -2138,3 +2139,7 @@ Ready for [x]: YES（等使用者批准狀態更新）
 最終 icon 使用專用 `share/ptyra` 目錄；absolute `Icon` 符合 [Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry/latest/recognized-keys.html)。
 首輪 fuzzel probe 喺 Sway keyboard readiness timeout；第二輪未見 app entry。修正測試啟動環境同等候 IPC 後，搜尋、顯示同啟動全部通過。
 Fuzzel probe 用臨時 config/cache 同測試 shell，冇執行使用者 shell startup；唔代替指定 desktop 嘅整體 acceptance gates。
+
+### TASK-200 install script follow-up
+
+使用者以 `sudo install.sh` 執行時，root PATH 搵唔到 Cargo。`install.sh` 而家唔呼叫 Cargo；佢用現成 `~/.local/bin/ptyra --install` 建立 launcher 同 icon，缺少 binary 時會提示先安裝 binary，root 執行會即時拒絕。`tests/packaging.rs` 已改用 fake Cargo 確認 script 唔會呼叫 Cargo；今次未重跑 tests。

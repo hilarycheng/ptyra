@@ -12,8 +12,12 @@ fn install_script_registers_launcher_and_icon() {
         let home = root.join("home with spaces");
         let data = root.join("custom data");
         let cargo = root.join("cargo");
-        fs::write(&cargo, "#!/bin/sh\nset -eu\n[ \"$*\" = 'run --release --locked --offline --bin ptyra -- --install' ]\nexec \"$PTYRA_TEST_BINARY\" --install\n").unwrap();
+        fs::write(&cargo, "#!/bin/sh\nexit 99\n").unwrap();
         fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
+        let binary = home.join(".local/bin/ptyra");
+        fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        fs::copy(env!("CARGO_BIN_EXE_ptyra"), &binary).unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
         let invoke = || {
             Command::new("/bin/sh")
                 .arg(repo.join("install.sh"))
@@ -21,7 +25,6 @@ fn install_script_registers_launcher_and_icon() {
                 .env("HOME", &home)
                 .env("XDG_DATA_HOME", &data)
                 .env("PATH", format!("{}:/usr/bin:/bin", root.display()))
-                .env("PTYRA_TEST_BINARY", env!("CARGO_BIN_EXE_ptyra"))
                 .output()
                 .unwrap()
         };
@@ -60,11 +63,10 @@ fn install_script_registers_launcher_and_icon() {
         );
         fs::remove_file(&desktop).unwrap();
         fs::remove_file(&icon).unwrap();
-        let binary = home.join(".local/bin/ptyra");
-        fs::write(&binary, b"existing executable").unwrap();
+        let installed_binary = fs::read(&binary).unwrap();
         let output = invoke();
         assert!(output.status.success(), "{output:?}");
-        assert_eq!(fs::read(&binary).unwrap(), b"existing executable");
+        assert_eq!(fs::read(&binary).unwrap(), installed_binary);
         assert_eq!(fs::read_to_string(&desktop).unwrap(), text);
         assert!(icon.is_file());
     };
