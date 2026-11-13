@@ -275,7 +275,7 @@ Approval: APPROVE FINISH TASK-191, 195
 0.0% 表示量測期間冇觀察到新增 CPU ticks，唔係保證零 CPU。
 完整報告喺 `target/benchmarks/task-195-2026-11-13.json`；最後版本嘅短測試喺 `target/benchmarks/task-195-final-smoke.json`。
 兩份報告各自記錄執行時嘅 harness hash；`target/` 係本機產物，唔會提交入 Git。
-指定 Sway 1.10.1 desktop、真 GPU memory、Firefox/Fcitx5 驗收同 soak：NOT RUN。
+Sway 1.10.1 真 desktop launch：PASS；完整 Firefox/Kitty/Fcitx5 acceptance 未完成。GPU memory unavailable；一小時 headless soak 喺 2,624 秒因 reopen timeout 終止，詳見 `VERIFICATION.md`。
 
 ## Build / Run
 

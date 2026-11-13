@@ -626,3 +626,40 @@ Known limitations: bits 2/4/8/16 不支援 negotiation；未宣稱完整 Kitty K
   TASK-129 保持未提交及未勾選；enhanced IME ownership 屬 TASK-183
 Ready for [x]: YES — 沿用已批准嘅 checkbox 更新同逐項 commit
 ```
+
+## Integration Gate Run 2026-11-13
+
+Revision: `8aa0c804bbc4bade2e9e723821b40d0dfb7f50b4`.
+Environment: Ubuntu 24.04.4 LTS; active native Wayland Sway `1.10.1-fde480b`; Fcitx5 5.1.7; AMD Radeon RX 6600, Mesa 26.2.4. Display mode was 1920x1080 at scale 1. The production renderer remains SHM.
+
+| Gate | Result | Checkbox |
+|---|---|---|
+| Ubuntu 24.04 + Sway 1.10.1 launch, no GTK/Qt UI runtime | PASS on active desktop. Release `ptyra` mapped with app_id `ptyra`; `ldd` showed libc/libgcc_s and no GTK/Qt. | `[x]` |
+| Firefox copy to Ptyra; Ptyra copy to Firefox/Kitty/other apps | NOT RUN. Owned headless fixtures verified Wayland offers and exact MIME bytes, but no browser or external terminal participated. | `[ ]` |
+| Drag, double/triple click, soft-wrap selection copy | Headless Sway 1.10.1 integration PASS for pointer events, CJK, soft wraps, copy bytes. Real mouse acceptance NOT RUN. | `[ ]` |
+| Large/empty offers, owner loss, paste cancellation and Tab routing | Headless Sway 1.10.1 integration PASS, including 131,073-byte rejection, invalid UTF-8, multiline decision, focus/Tab cancellation and Primary separation. | `[ ]` |
+| Primary Selection / middle click | Headless virtual-pointer integration PASS. Real compositor/app workflow NOT RUN. | `[ ]` |
+| Fcitx5 preedit/commit/focus/Tab | Private D-Bus Fcitx5 5.1.7 + Sway 1.10.1 integration PASS, including exact Cangjie commit, Tab lifecycle and restart. Candidate popup positioning on the user desktop NOT RUN. | `[ ]` |
+| 5–10 Tabs, isolated PTYs/Clipboard/IME | 60-second five-Tab smoke PASS across output, resize, switch, reopen, input, Clipboard and IME. Full soak below ended early. | `[ ]` |
+| htop, vim, tmux, Codex | htop, vim and isolated tmux opened in Ptyra on active Sway and accepted their quit/detach keys. Codex interactive TUI NOT RUN. Vim printed a user-plugin warning (`YouCompleteMe` could not import `imp`). | `[ ]` |
+| PSS, idle CPU and frame rate | Headless 60-second samples recorded for 1/5/10 Tabs. FPS and GPU memory are unavailable; frame counts include startup. | `[ ]` |
+| Long soak | 3,600 seconds requested; run ended after 2,624 seconds with `TimeoutError` in `reopen`, operation 15,008. Each scenario ran 2,144 times; cleanup PASS. This is a failed/incomplete gate. | `[ ]` |
+| Kitty Keyboard / Graphics official probes | Project native probes PASS on Sway 1.10.1; official external Kitty protocol probes NOT RUN. | `[ ]` |
+
+### Commands and measurements
+
+`cargo build --release --locked --offline`: PASS. Headless native probes used `PATH=/opt/sway-1.10.1/bin:$PATH` so the owned sessions matched the active compositor version.
+
+- `native_runtime.py` with font/style/scale/graphics/Kitty flags: PASS.
+- `native_ime.py ... --tabs --kitty`: PASS; private Fcitx5/Cangjie flow, exact UTF-8 commit, focus and Tab routing.
+- Clipboard receive/Primary/cancel fixtures: PASS; selection/copy/pointer fixtures: PASS.
+- Terminfo, color/query replies, keypad, mouse reporting, synchronized updates, focus and hyperlink fixtures: PASS. `PTYRA_TEST_TITLES=1` timed out waiting for `first-title`, both grouped and alone; title behavior remains unverified.
+- Documented native packaging test, `PTYRA_TEST_PACKAGING_NATIVE=1 cargo test --workspace --locked --offline packaged_capabilities_match_runtime_support -- --nocapture`: PASS; temporary staged launcher, absolute binary, private TERMINFO and cleanup.
+
+Benchmark ran 60-second samples after 5-second warmup per case. Mean Ptyra PSS was 14.85 MiB / 31.43 MiB / 52.04 MiB for 1 / 5 / 10 Tabs; single-core CPU registered 0.0% in each sample. Lifetime frame counts were 3 / 11 / 21, not FPS. GPU memory was `NOT AVAILABLE`. Results: `/tmp/ptyra-gates-benchmark-8aa0c80-final.json`.
+
+The 100-round SHM/GLES offscreen replay produced identical 800-frame sequences and pixel readback PASS on both backends. Mesa identified AMD Radeon RX 6600 / Mesa 26.2.4. Mean SHM/GLES submit was 0.69/1.50 ms; mean PSS was 15.37/76.15 MiB; GPU memory remained unavailable. This probe has no Wayland presentation or vsync, so it does not decide the production backend. Results: `/tmp/ptyra-gates-renderers-8aa0c80-gles.json`.
+
+The first soak attempt hit an existing Sway IPC readiness race during setup. The successful-start rerun used an in-memory retry around `get_version`; no source file changed. A 60-second smoke passed 346 operations, all seven scenarios, 55 samples and cleanup. The requested 3,600-second run later ended after 2,624 seconds on a `reopen` timeout; the report status is `ERROR`, not PASS. Five children remained in recorded samples and cleanup passed. One isolated five-Tab reopen action passed afterward, but the long-run timeout was not reproduced or explained. Reports: `/tmp/ptyra-gates-soak-smoke.json` and `/tmp/ptyra-gates-soak-8aa0c80-retry.json`.
+
+Full browser-to-terminal Clipboard, real desktop candidate placement, Codex interactive use, official Kitty protocol probes, real-display FPS and the completed one-hour soak remain outstanding. Headless results do not check those gates.

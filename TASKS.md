@@ -888,9 +888,9 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## Integration / Acceptance Matrix（唔當作 Unit TASK）
 
-呢啲係真機 Gate，需人工或系統整合測試。對應 TASK 完成及 unit test 通過只係前提，唔代表 Gate 已通過。原有 gates 保留未勾選；使用者目前未能驗收，唔可因新增 backlog、headless PASS 或 git commit 而勾選。每次記錄實際 OS/compositor/IME/GPU 版本、commit、測試步驟同 PASS / FAIL / NOT RUN；Sway 1.9 headless 結果唔代替指定 Sway 1.10.1 desktop。
+呢啲係真機 Gate，需人工或系統整合測試。對應 TASK 完成及 unit test 通過只係前提，唔代表 Gate 已通過。只按該 Gate 要求嘅平台同場景 evidence 更新；headless PASS 唔代替實際 App、compositor 或硬件驗收。每次記錄實際 OS/compositor/IME/GPU 版本、commit、步驟同 PASS / FAIL / NOT RUN。
 
-- [ ] Ubuntu 24.04 + Sway 1.10.1 原生 Wayland 可啟動；無 GTK / Qt UI runtime。
+- [x] Ubuntu 24.04 + Sway 1.10.1 原生 Wayland 可啟動；無 GTK / Qt UI runtime。
 - [ ] 喺 Firefox 複製繁體中文 → Ptyra Paste，內容及換行完整。
 - [ ] Ptyra Copy → Firefox、Kitty、其他 Wayland App，內容一致。
 - [ ] 拖曳、Double-click、Triple-click、Soft Wrap Copy 正常。
@@ -902,6 +902,8 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 - [ ] 同機量度一個 Tab 及多個 Tabs 嘅 PSS、Idle CPU、frame rate；記錄結果。
 - [ ] 長時間 Soak Test 冇未解釋嘅視窗退出；如有 failure 保留可重現資料。
 - [ ] Kitty Keyboard / Graphics 各自使用官方 protocol probes；未實作功能明確標示。
+
+最新 gate evidence 見 [VERIFICATION.md](VERIFICATION.md)「Integration Gate Run 2026-11-13」。今次只有 Gate 1 完成真 desktop 驗收；其餘 gates 保持未勾選。
 
 ### Gate Evidence / 尚欠驗收範圍（保留原有 gates，唔係額外已完成 TASK）
 
