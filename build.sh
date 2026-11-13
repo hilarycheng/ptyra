@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+cd "$(dirname "$0")"
+cargo build --release --locked --offline
+cp target/release/ptyra exec
