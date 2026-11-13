@@ -197,6 +197,7 @@ impl Runtime {
             self.running = false;
         }
         self.sync_focus_reports();
+        self.sync_ime_focus();
         self.paint.dirty = true;
     }
     pub(super) fn activate_tab(&mut self, id: TabId) {
@@ -206,6 +207,7 @@ impl Runtime {
             self.input.retarget(id);
             self.pointer_input.retarget(id);
             self.sync_focus_reports();
+            self.sync_ime_focus();
             self.paint.dirty = true;
         }
     }
@@ -285,6 +287,7 @@ impl Runtime {
         self.input.clear_focus();
         self.input.map = None;
         self.sync_focus_reports();
+        self.sync_ime_focus();
         self.paint.dirty = true;
     }
     fn keyboard_event(&mut self, event: wl_keyboard::Event, qh: &QueueHandle<Self>) -> Result<()> {
@@ -311,6 +314,7 @@ impl Runtime {
                     self.input.focus.enter(WindowId(1), id);
                 }
                 self.sync_focus_reports();
+                self.sync_ime_focus();
             }
             wl_keyboard::Event::Leave { surface, .. }
                 if self.surface.as_ref() == Some(&surface) =>
@@ -321,6 +325,7 @@ impl Runtime {
                 self.cancel_pointer_drag();
                 self.input.clear_focus();
                 self.sync_focus_reports();
+                self.sync_ime_focus();
                 self.paint.dirty = true;
             }
             wl_keyboard::Event::Modifiers {

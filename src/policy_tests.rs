@@ -17,7 +17,7 @@ fn reviewed_dependencies(manifest: &toml::Table) -> bool {
                     "toml" => ("=1.1.6", &["std", "parse", "serde"]),
                     "nix" => (
                         "=0.31.3",
-                        &["feature", "fs", "poll", "process", "signal", "term"],
+                        &["feature", "fs", "poll", "process", "signal", "term", "user"],
                     ),
                     _ => return false,
                 };

@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 199 atomic TASKS（179 已勾選；TASK-129、TASK-175–176、TASK-183–199 共 20 項未勾選）。
+**Total:** 199 atomic TASKS（183 已勾選；TASK-176、TASK-183–190、TASK-192–194、TASK-196–199 共 16 項未勾選）。
 
 ## A. Foundation / 測試基礎
 
@@ -557,14 +557,14 @@
 
 呢四項只交付單視窗、單 Shell 嘅 runtime；Clipboard、IME、Tabs、Kitty graphics runtime 接線仍須另外驗收。
 
-- [ ] **TASK-129 — 接通單視窗 Fcitx5 中文輸入（2026-11-05 已批准實作）**
+- [x] **TASK-129 — 接通單視窗 Fcitx5 中文輸入（2026-11-13 完成單 Tab 驗收）**
   - **Dependencies:** `TASK-069`–`TASK-082`, `TASK-126`, `TASK-128` | **Unit Test:** `runtime_ime_commits_to_shell`
   - **Done:** 綁定 seat-scoped text-input-v3；focus 控制 enable/disable；done 後只送一次 UTF-8 commit 到原本 PTY；preedit 只畫 overlay；候選字 anchor 跟 cursor/resize；保留 compositor/IME shortcut ownership；失焦清除 pending/preedit；無 IME 時英文輸入正常。Mock sequence、workspace regression 同隔離 Sway/Fcitx5 integration 分開報告；實際 desktop 候選視窗位置仍須人工驗收。
   - **Expected files:** `src/runtime.rs`, `src/runtime/ime.rs`, `src/runtime/keyboard.rs`, `src/runtime/raster.rs`, `Cargo.toml`, `Cargo.lock`, dependency invariant test、native IME test 同 verification docs。重用現有 IME/PTY/overlay 模組；不修改系統設定。
 
 ## Missing Feature / Runtime Backlog（2026-11-06 核對）
 
-以下係按 `SCOPE.md` 同目前 source 補回嘅缺漏，**只批准記錄，唔代表已批准實作或完成驗收**。`TASK-001`–`TASK-128` 嘅 `[x]` 保留原本列明嘅 library / runtime 範圍；唔可以將 pure model、fake test 或獨立 adapter 當成整個產品已接通。`TASK-129` 已有未提交實作同隔離測試紀錄，但實際 desktop 候選視窗未驗收，繼續 `[ ]`；本次唔替使用者驗收。
+以下係按 `SCOPE.md` 同目前 source 補回嘅缺漏，**只批准記錄，唔代表已批准實作或完成驗收**。`TASK-001`–`TASK-128` 嘅 `[x]` 保留原本列明嘅 library / runtime 範圍；唔可以將 pure model、fake test 或獨立 adapter 當成整個產品已接通。當時 `TASK-129` 有未提交實作同隔離測試紀錄，但 desktop 候選視窗未驗收。2026-11-13 使用者確認第一個 Tab 全部正常，完整 regression 通過後改為 `[x]`；新 Tab 中文輸入問題仍由 TASK-175 處理。
 
 **核對依據 / Coverage：**
 
@@ -776,7 +776,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## U. IME Remaining Runtime Integration
 
-- [ ] **TASK-175 — IME focus / commit 接入真多 Tabs**
+- [x] **TASK-175 — IME focus / commit 接入真多 Tabs**
   - **Dependencies:** `TASK-093`, `TASK-129`, `TASK-133`, `TASK-134` | **Unit Test:** `runtime_ime_tab_switch_invalidates_old_batches`
   - **Done:** 移除 IME 固定 `TabId(1)`，switch/close 時取消舊 preedit/pending batch、更新 enable/disable transaction；commit 只寫原有效 Tab，延遲 done 不跨 Tab；真多 Tabs integration 同單窗 TASK-129 驗收分開記錄。
 
@@ -848,7 +848,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## Y. Packaging / Operator Documentation
 
-- [ ] **TASK-191 — 執行可回滾 user-local / staged install plan**
+- [x] **TASK-191 — 執行可回滾 user-local / staged install plan**
   - **Dependencies:** `TASK-122`, `TASK-124` | **Unit Test:** `install_adapter_rolls_back_only_created_files`
   - **Done:** filesystem adapter 安裝 binary/terminfo/desktop entry，用 exclusive creation 同 symlink-race 防護；記錄本次建立檔案，途中失敗只回滾自己產物；測 fake FS 同臨時 prefix。`/usr/local` 只提供可審核路徑，實際系統寫入仍需另行授權。
 
@@ -866,7 +866,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## Z. Repeatable Verification / Performance Tooling
 
-- [ ] **TASK-195 — 建立固定 workload 嘅資源量測 harness**
+- [x] **TASK-195 — 建立固定 workload 嘅資源量測 harness**
   - **Dependencies:** `TASK-132`, `TASK-137`, `TASK-177` | **Unit Test:** `benchmark_samples_report_single_core_cpu_and_pss`
   - **Done:** 固定 window/font/scale/workload，量測 1/5/10 Tabs 嘅 CPU（單核基準）、PSS/RSS、frame count 同可用 GPU memory；metadata 包含版本/時間/平台，區分 Ptyra 同 child；缺值標 NOT AVAILABLE，結果唔偽裝 PASS，schema/計算用 fixture 驗證。
 
@@ -908,7 +908,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 - **Basic Terminal / Daily TUI:** `TASK-160`–`TASK-166`、`TASK-193` 後，真 Shell/`vim`/`htop`/`tmux`/`Codex` 測 DA/DSR、color/size queries、navigation/keypad、mouse/focus、alt screen、resize；保存支援/不支援矩陣。
 - **Clipboard / Selection:** `TASK-140`–`TASK-159` 後，Firefox ↔ Ptyra ↔ Kitty 逐方向測繁體中文、combining、spaces/tabs、hard/soft wrap、empty/large payload；有/無 bracketed mode、多行接受/取消、owner 消失、partial transfer 中切/關 Tab 全部獨立記錄。
 - **Tabs:** `TASK-131`–`TASK-139`、`TASK-152`、`TASK-175` 後，5–10 個真 Shell 同時輸出，確認 click/shortcut、新增/關閉、title、history/selection、child exit、背景 output 同 keyboard/Clipboard/IME target 隔離。
-- **Fcitx5:** `TASK-129` 仍等實際 Sway 1.10.1 desktop 候選 popup；`TASK-175`/`TASK-176` 另驗多 Tabs、長組字、視窗邊界、scale/resize/scroll、快速切 focus 同 restart。無 popup screenshot/操作證據不可寫 candidate-position PASS。
+- **Fcitx5:** `TASK-129` 單 Tab 候選位置／輸入由使用者於 2026-11-13 確認正常；desktop 版本未由 agent 獨立核實，指定平台嘅整體 gate 保持未勾選；`TASK-175`/`TASK-176` 另驗多 Tabs、長組字、視窗邊界、scale/resize/scroll、快速切 focus 同 restart。無 popup screenshot/操作證據不可寫 candidate-position PASS。
 - **Rendering / HiDPI:** `TASK-167`–`TASK-176` 後，AMD + Mesa + Sway 真畫面測 CJK/combining、styles/colors、cursor、history/selection/preedit、scale=1/2 同移動 output；記錄不支援 scale/字型行為，唔用 headless SHM 結果冒充 GPU 驗收。
 - **Performance / Backend Decision:** `TASK-195`–`TASK-197` 後，同機同 workload 比較 SHM 同 EGL/GLES，按 correctness/CPU/PSS/RSS/GPU/穩定性記錄正式 backend 決定；對照 `SCOPE.md` 80 MiB / +15 MiB / <1% 單核 provisional targets，未達標列偏差，唔靜默改目標。比較失敗或 NOT RUN 不能當成已選定 backend。
 - **Stability / Security:** `TASK-177`–`TASK-179`、`TASK-198`/`TASK-199` 後，記錄實際 soak 時長同 resource 趨勢；檢查無殘留 FD/child、無未解釋退出、無 payload logs/telemetry，以及 malformed input / config / protocol 缺席後嘅可恢復性。

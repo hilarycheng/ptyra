@@ -216,6 +216,132 @@ impl Raster {
         Ok(())
     }
 
+    pub(super) fn layout(&self, size: (u32, u32)) -> Result<crate::renderer::CellLayout> {
+        crate::renderer::CellLayout::new(
+            crate::window::WindowSize::new(size.0, size.1).map_err(|_| "invalid overlay size")?,
+            crate::geometry::Scale::new(1).map_err(|_| "invalid overlay scale")?,
+            f64::from(self.cell_width),
+            f64::from(self.cell_height),
+        )
+        .map_err(|_| "invalid overlay layout")
+    }
+
+    pub(super) fn draw_preedit(
+        &mut self,
+        terminal: &Terminal,
+        size: (u32, u32),
+        pixels: &mut [u8],
+        preedit: &crate::ime::ImePreedit,
+    ) -> Result<()> {
+        use crate::renderer::overlay::{OverlayCommand, Preedit, overlay_commands};
+        use unicode_width::UnicodeWidthChar;
+        if preedit.text.is_empty() {
+            return Ok(());
+        }
+        if pixels.len() != size.0 as usize * size.1 as usize * 4 {
+            return Err("invalid raster buffer");
+        }
+        let layout = self.layout(size)?;
+        let snapshot = terminal.snapshot().ok_or("terminal unavailable")?;
+        let colors = snapshot.content.colors;
+        let fg = color(
+            Color::Named(alacritty_terminal::vte::ansi::NamedColor::Foreground),
+            colors,
+            &self.palette,
+        );
+        let bg = color(
+            Color::Named(alacritty_terminal::vte::ansi::NamedColor::Background),
+            colors,
+            &self.palette,
+        );
+        let cursor = color(
+            Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),
+            colors,
+            &self.palette,
+        );
+        let selected = color(Color::Indexed(4), colors, &self.palette);
+        let commands = overlay_commands(
+            snapshot,
+            &layout,
+            Some(Preedit {
+                tab: terminal.tab(),
+                text: &preedit.text,
+            }),
+        )
+        .map_err(|_| "invalid IME overlay")?;
+        for command in commands {
+            let OverlayCommand::Preedit { text, clip } = command else {
+                continue;
+            };
+            let (x, y) = (clip.x as u32, clip.y as u32);
+            let columns = |value: &str| {
+                value
+                    .chars()
+                    .filter_map(UnicodeWidthChar::width)
+                    .sum::<usize>() as u32
+            };
+            let width = (columns(text) * self.cell_width).min(clip.width);
+            fill(pixels, size, (x, y, width, clip.height), bg);
+            let offset = |byte| {
+                usize::try_from(byte)
+                    .ok()
+                    .and_then(|index| text.get(..index))
+                    .map(columns)
+            };
+            let begin = offset(preedit.cursor_begin);
+            let end = offset(preedit.cursor_end);
+            if let (Some(begin), Some(end)) = (begin, end) {
+                let left = (begin.min(end) * self.cell_width).min(clip.width);
+                let right = (begin.max(end) * self.cell_width).min(clip.width);
+                fill(
+                    pixels,
+                    size,
+                    (x + left, y, right - left, clip.height),
+                    selected,
+                );
+            }
+            let mut column = 0;
+            let mut previous = (0, 1);
+            for ch in text.chars() {
+                let Some(span) = ch.width() else {
+                    continue;
+                };
+                let span = span as u32;
+                let (start, glyph_span) = if span == 0 { previous } else { (column, span) };
+                if start * self.cell_width >= clip.width {
+                    break;
+                }
+                // shortcut: one clipped row, upgrade with the shared overlay layout when wrapping is added.
+                if (start + glyph_span) * self.cell_width > clip.width {
+                    break;
+                }
+                self.draw_glyph(
+                    pixels,
+                    size,
+                    (x + start * self.cell_width, y, glyph_span),
+                    ch,
+                    fg,
+                    Flags::empty(),
+                )?;
+                previous = (start, glyph_span);
+                column += span;
+            }
+            fill(pixels, size, (x, y + clip.height - 1, width, 1), cursor);
+            if let (Some(begin), Some(end)) = (begin, end)
+                && begin == end
+                && begin * self.cell_width < clip.width
+            {
+                fill(
+                    pixels,
+                    size,
+                    (x + begin * self.cell_width, y, 1, clip.height),
+                    cursor,
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub fn draw(
         &mut self,
         terminal: &Terminal,
@@ -1211,6 +1337,160 @@ mod tests {
         );
         raster.set_scale(1);
         assert_eq!(draw(&mut raster), original);
+    }
+    #[test]
+    fn runtime_preedit_is_clipped_without_changing_grid() {
+        use alacritty_terminal::index::{Column, Line};
+        let font = FontVec::try_from_vec(include_bytes!("../../tests/fixtures/demo.ttf").to_vec())
+            .unwrap();
+        let mut raster = Raster::new(vec![font], &Config::default()).unwrap();
+        let mut terminal = Terminal::new(crate::TabId(1), 2, 8).unwrap();
+        terminal.feed(crate::TabId(1), b"X").unwrap();
+        let size = (8 * raster.cell_width, 2 * raster.cell_height);
+        let mut pixels = vec![0; (size.0 * size.1 * 4) as usize];
+        raster
+            .draw(&terminal, size, &mut pixels, true, true)
+            .unwrap();
+        let base = pixels.clone();
+        let preedit = crate::ime::ImePreedit {
+            text: "A\u{301}中文字超出畫面\x1b[31m".into(),
+            cursor_begin: 3,
+            cursor_end: 6,
+        };
+        raster
+            .draw_preedit(&terminal, size, &mut pixels, &preedit)
+            .unwrap();
+        assert_ne!(base, pixels);
+        for y in 0..size.1 {
+            for x in 0..size.0 {
+                if x < raster.cell_width || y >= raster.cell_height {
+                    let offset = ((y * size.0 + x) * 4) as usize;
+                    assert_eq!(&pixels[offset..offset + 4], &base[offset..offset + 4]);
+                }
+            }
+        }
+        assert_eq!(terminal.grid().unwrap()[Line(0)][Column(0)].c, 'X');
+        assert_eq!(terminal.grid().unwrap()[Line(0)][Column(1)].c, ' ');
+        assert_eq!(terminal.grid().unwrap().cursor.point.column, Column(1));
+        raster
+            .draw(&terminal, size, &mut pixels, true, true)
+            .unwrap();
+        raster
+            .draw_preedit(
+                &terminal,
+                size,
+                &mut pixels,
+                &crate::ime::ImePreedit::default(),
+            )
+            .unwrap();
+        assert_eq!(base, pixels, "clearing preedit restores the base frame");
+        assert!(
+            raster
+                .draw_preedit(&terminal, size, &mut pixels[..4], &preedit)
+                .is_err()
+        );
+        // Partial painting restores old preedit ink from the core's cursor rows.
+        terminal.damage_rows();
+        terminal.damage_presented();
+        raster
+            .draw_preedit(&terminal, size, &mut pixels, &preedit)
+            .unwrap();
+        terminal.feed(crate::TabId(1), b"\x1b[2;2H").unwrap();
+        let (start, end) = terminal.damage_rows().unwrap();
+        assert_eq!((start, end), (0, 2));
+        raster
+            .draw_rows(
+                &terminal,
+                size,
+                &mut pixels,
+                true,
+                true,
+                start as u32 * raster.cell_height..end as u32 * raster.cell_height,
+            )
+            .unwrap();
+        raster
+            .draw_preedit(&terminal, size, &mut pixels, &preedit)
+            .unwrap();
+        let mut expected = vec![0; pixels.len()];
+        raster
+            .draw(&terminal, size, &mut expected, true, true)
+            .unwrap();
+        raster
+            .draw_preedit(&terminal, size, &mut expected, &preedit)
+            .unwrap();
+        assert_eq!(pixels, expected);
+        terminal.damage_presented();
+        let (start, end) = terminal.damage_rows().unwrap();
+        assert_eq!((start, end), (1, 2));
+        raster
+            .draw_rows(
+                &terminal,
+                size,
+                &mut pixels,
+                true,
+                true,
+                start as u32 * raster.cell_height..end as u32 * raster.cell_height,
+            )
+            .unwrap();
+        raster
+            .draw_preedit(
+                &terminal,
+                size,
+                &mut pixels,
+                &crate::ime::ImePreedit::default(),
+            )
+            .unwrap();
+        raster
+            .draw(&terminal, size, &mut expected, true, true)
+            .unwrap();
+        assert_eq!(
+            pixels, expected,
+            "partial clearing cannot leave old preedit pixels"
+        );
+        // The small demo glyph is antialiased, so compare foreground changes instead of
+        // requiring a fully opaque foreground sample.
+        raster
+            .draw_preedit(&terminal, size, &mut pixels, &preedit)
+            .unwrap();
+        let original_ink = pixels.clone();
+        raster.palette.foreground = 0x112233;
+        raster
+            .draw_preedit(&terminal, size, &mut pixels, &preedit)
+            .unwrap();
+        assert_ne!(pixels, original_ink);
+
+        raster.palette.background = 0x445566;
+        raster.palette.cursor = 0x778899;
+        raster.palette.ansi[4] = 0x123456;
+        terminal.feed(crate::TabId(1), b"\x1b[H").unwrap();
+        let short = crate::ime::ImePreedit {
+            text: "A ".into(),
+            cursor_begin: 1,
+            cursor_end: 2,
+        };
+        for (overrides, expected) in [
+            (b"".as_slice(), [0x112233, 0x445566, 0x778899, 0x123456]),
+            (
+                b"\x1b]10;#102030\x07\x1b]11;#405060\x07\x1b]12;#708090\x07\x1b]4;4;#abcdef\x07"
+                    .as_slice(),
+                [0x102030, 0x405060, 0x708090, 0xabcdef],
+            ),
+        ] {
+            terminal.feed(crate::TabId(1), overrides).unwrap();
+            raster
+                .draw(&terminal, size, &mut pixels, true, true)
+                .unwrap();
+            raster
+                .draw_preedit(&terminal, size, &mut pixels, &short)
+                .unwrap();
+            for color in &expected[1..] {
+                assert!(
+                    pixels
+                        .chunks_exact(4)
+                        .any(|p| u32::from_ne_bytes(p.try_into().unwrap()) == (0xff000000 | *color))
+                );
+            }
+        }
     }
     #[test]
     fn runtime_query_palette_matches_cell_and_cursor_pixels() {

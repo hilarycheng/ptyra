@@ -9,7 +9,7 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前可開單視窗
 ## Planning Files
 
 - [`SCOPE.md`](SCOPE.md) — 定義產品、架構、安全、性能與驗收邊界。
-- [`TASKS.md`](TASKS.md) — **128 個 Atomic TASK**，用 Checkbox 記錄狀態，設有 Dependencies、Unit Test、Done Criteria。
+- [`TASKS.md`](TASKS.md) — **199 個 Atomic TASK**，用 Checkbox 記錄狀態，設有 Dependencies、Unit Test、Done Criteria。
 - [`AGENTS.md`](AGENTS.md) — Coding Agent 必須遵守嘅執行、測試、安全同批准規則。
 
 ## Status
@@ -17,10 +17,106 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal；目前可開單視窗
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
 - 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize、單次 child exit → Tab event mapping，以及保留跨 chunk parser state 嘅 terminal core adapter 同 renderer 資料接口。
 - `src/main.rs` 會載入 config，再連接 Wayland compositor。Runtime 用有界 SHM buffers、software glyph rasterization、真 PTY 同阻塞 poll event loop；keyboard 經現有 focus/keymap/encoder/repeat 模組送到 Shell。
-- 已驗證 Enter、Backspace、arrows、Ctrl+C、focus/repeat、PTY resize 同 close cleanup。Clipboard、Selection、IME、GUI Tabs、Kitty graphics 仍未接入 runtime；唔代表日常 Terminal 已完成。
+- 已驗證 Enter、Backspace、arrows、Ctrl+C、focus/repeat、PTY resize 同 close cleanup。IME 已接入單視窗 runtime；隔離 Fcitx5 測試通過，實際 desktop 候選視窗仍待驗收。Clipboard、Selection、GUI Tabs、Kitty graphics 仍未接入 runtime；唔代表日常 Terminal 已完成。
 - Child 用 `TERM=ptyra` 同私有 `TERMINFO` directory，載入 bundled conservative entry；未驗收完整 TUI。Cursor 跟 focus 同 Block/Beam/Underline shape；暫時冇 blink，使用 regular font face 同基本顏色；HiDPI、shaping 同效能仍待校準。
 - Unit/fake tests 驗證 library 行為，唔代表 Sway、Fcitx5、PTY 或日常 Terminal 驗收通過。完整產品仍須通過 `SCOPE.md` 嘅 Delivery Gates。
 - 不會改動現有 Sway、Fcitx5、Mesa 或 Terminal 設定。
+
+## TASK-191 Verification（2026-11-13）
+
+`InstallPlan::user_local(home).install(binary)` 安裝到 `home/.local`。
+`InstallPlan::staged(root).install(binary)` 安裝到 `root/usr/local`。
+兩者都安裝 binary、bundled terminfo 同 desktop entry，成功後回傳 `InstallReceipt`。
+`system_local()` 只提供可審核路徑，執行會回傳 PermissionDenied。
+
+Adapter 逐層用 directory FD 同 `O_NOFOLLOW`，目的檔案用 `O_EXCL` 建立。
+失敗會反向回滾本次檔案；回滾前核對 inode，唔刪 replacement。
+回滾失敗會回報 path 同 error kind。既有及新建 directory 都保留。
+Prefix 必須由 operator 控制；同 UID 惡意 concurrent writer 唔屬隔離範圍。
+目前只提供 library adapter，receipt 只存記憶體；uninstall 留畀 TASK-192。
+
+```text
+TASK: TASK-191
+Status: DONE
+Dependencies: satisfied (TASK-122, TASK-124)
+Changed files: src/install.rs, src/install/adapter.rs,
+  src/install/adapter/filesystem.rs, src/install/adapter/tests.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline install_adapter_rolls_back_only_created_files
+Result: PASS; existing adapter retained, fake failures and real temporary prefixes verified
+Workspace tests: PASS — 317 unit, 13 integration, 2 doc-tests; 1 optional fish test ignored
+Format / Clippy: PASS
+Manual / Integration checks: temporary user-local/staged prefixes, modes, existing files,
+  source limits, symlinks, parent replacement and rollback PASS
+Security / Privacy impact: exclusive creation; no new dependency, unsafe or payload logging
+Known limitations: Linux GNU; directories remain; in-memory receipt; no system installation
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-191, 195
+```
+
+Sandbox 嘅 `/tmp` owner mapping 同 Unix socket 限制令第一次全套測試失敗。
+同一組測試喺 sandbox 外重跑全部通過，冇放寬 installer 嘅 owner 檢查。
+
+## TASK-195 Resource Harness（2026-11-13）
+
+```sh
+cargo build --release --locked --offline
+python3 tools/benchmark.py target/release/ptyra --output /tmp/ptyra-benchmark.json
+```
+
+需要 Python 3.11+、Sway、`swaymsg` 同 Fontconfig；harness 只開自己嘅 headless session。
+報告用 exclusive creation，唔覆寫既有檔案。`--seconds 1 --warmup 0.2` 可做短 smoke check。
+正式預設係每組預熱 5 秒，再量測 60 秒；固定 1／5／10 Tabs。
+Window 係 1920×1080、scale=1、bundled synthetic fonts、font size=20、scrollback=1,000 行。
+呢個 scrollback 設定令 10 Tabs 保持喺現有總 cell budget 內，唔代表預設 5,000 行配置。
+每 Tab 輸出 200 行固定 ASCII/CJK/combining fixture，收到 terminal reply 後 idle，cursor 隱藏。
+
+JSON schema v1 包含 UTC timestamps、OS/kernel/Sway、CPU affinity、source revision/dirty state、
+binary version/hash、font/harness hashes、完整 benchmark config 同逐次 samples。
+Ptyra 同每個直接 child 分開記錄；Python workload child 唔計入 Ptyra 數值。
+CPU 係 `delta(utime + stime) / CLK_TCK / elapsed × 100`，唔除以 CPU 數目。
+欄位依 [Linux proc stat](https://www.man7.org/linux/man-pages/man5/proc_pid_stat.5.html) 定義；唔加入 child CPU counters。
+PSS/RSS 來自 `smaps_rollup`，保存 sample arithmetic mean 同 peak。
+GPU 使用 [DRM fdinfo](https://www.kernel.org/doc/html/latest/gpu/drm-usage-stats.html) 嘅 resident memory，依 device/client ID 去重。
+跨 client 共享 allocation 仍可能重複計入；compositor memory 唔會歸入 Ptyra。
+
+`PTYRA_BENCHMARK_FRAMES=1` 只喺 runtime 關閉時輸出一次版本同 submitted buffer count。
+Frame count 包含 startup、warmup 同量測期間，**唔係 idle 期間嘅 frame rate**。
+缺值一律係 `NOT AVAILABLE`；process set 改變、退出或 setup 失敗會記錄 ERROR，同回傳非零 exit code。
+報告嘅 assessment 一律係 `NOT EVALUATED`，冇自動判定性能達標。
+Synthetic fonts + headless/pixman 結果唔代替指定 desktop、AMD/Mesa、renderer 比較或 soak 驗收。
+
+```text
+TASK: TASK-195
+Status: DONE
+Dependencies: satisfied (TASK-132, TASK-137, TASK-177)
+Changed files: tools/benchmark.py, tests/benchmark.rs, tests/benchmark_samples.py,
+  src/runtime.rs, src/runtime/benchmark.rs, README.md, TASKS.md
+Unit test: cargo test --workspace --locked --offline benchmark_samples_report_single_core_cpu_and_pss
+Result: PASS — 4 deterministic Python fixture checks; test-first failed before harness existed
+Workspace tests: PASS — 318 unit, 14 integration, 2 doc-tests; 1 optional fish test ignored
+Format / Clippy: PASS
+Manual / Integration checks: release build PASS; 1/5/10 Tabs, 5-second warmup,
+  60-second samples recorded; final harness smoke and owned child cleanup PASS
+Security / Privacy impact: metadata only, opt-in frame count; no new dependencies or unsafe
+Known limitations: synthetic fonts, 1,000-line history, Sway 1.9 headless/pixman;
+  GPU memory NOT AVAILABLE; frame count includes startup; no performance acceptance claim
+Ready for [x]: YES
+Approval: APPROVE FINISH TASK-191, 195
+```
+
+本機量測環境：Ubuntu 24.04.4、kernel 7.0.0-38、Sway 1.9 headless/pixman。
+每組有 61 次 samples；下表只列 Ptyra，child 數值獨立保存在 JSON。
+
+| Tabs | 平均 PSS | 平均 RSS | 單核 CPU | Lifetime frames | GPU memory |
+|---|---:|---:|---:|---:|---|
+| 1 | 14.66 MiB | 16.46 MiB | 0.0% | 3 | NOT AVAILABLE |
+| 5 | 31.27 MiB | 33.07 MiB | 0.0% | 11 | NOT AVAILABLE |
+| 10 | 51.86 MiB | 53.66 MiB | 0.0% | 21 | NOT AVAILABLE |
+
+0.0% 表示量測期間冇觀察到新增 CPU ticks，唔係保證零 CPU。
+完整報告喺 `target/benchmarks/task-195-2026-11-13.json`；最後版本嘅短測試喺 `target/benchmarks/task-195-final-smoke.json`。
+兩份報告各自記錄執行時嘅 harness hash；`target/` 係本機產物，唔會提交入 Git。
+指定 Sway 1.10.1 desktop、真 GPU memory、Firefox/Fcitx5 驗收同 soak：NOT RUN。
 
 ## Build / Run
 
@@ -70,6 +166,110 @@ python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-native.png
 - 診斷可用 `PTYRA_TRACE_INPUT=1 ./target/release/ptyra`；只印 press/release/repeat、queued/written byte 數量同 cursor 位置，預設關閉。唔記錄 keycodes、文字或 PTY payload。
 - 本次檢查：193 unit tests、13 一般 integration tests、2 doctests PASS；fish regression 額外明確執行並 PASS。Format、Clippy、release build、Bash／configured fish 原生互動及連續三次啟動 PASS。
 - 使用者重開新版後，實體 keyboard 輕按一次 `a`，確認「正常，只出一個 a」。Fcitx5／完整 TUI 驗收不在本次結果內。
+
+## TASK-129 — Native Fcitx5 input（2026-11-05）
+
+- 使用者已批准實作。Runtime 綁定 seat-scoped `text-input-v3`，focus 控制 enable/disable；content purpose 為 Terminal。
+- Ctrl+Space 由 compositor/Fcitx5 處理；Ptyra 保留收到嘅普通 keyboard events。Preedit 只畫 overlay；`done` 後先將 UTF-8 commit 送入原本 PTY，一個 batch 只送一次。
+- 失焦清除 pending/preedit；同一 serial 可以帶多個有效 batches。舊 serial 仍套用文字，但暫停 compositor state updates，直到收到 matching `done`。
+- Cursor rectangle 跟 typing/resize 更新。Preedit 重用 glyph cache，支援 CJK width、combining marks、underline 同 byte-offset caret/selection；目前只畫一行，超出右邊會 clip。
+- Native test 使用獨立 headless Sway、private D-Bus 同臨時 Fcitx5 倉頡設定。D-Bus 停用 service auto-start；唔連接現有 desktop，唔改使用者 IME 設定。Protocol trace 只包含測試產生嘅固定文字，測試結束會清理。
+
+```sh
+python3 tests/native_ime.py target/release/ptyra /tmp/ptyra-ime.png
+python3 tests/native_runtime.py target/release/ptyra /tmp/ptyra-keyboard.png
+```
+
+```text
+TASK: TASK-129
+Status: TODO（實作及隔離 integration 完成；等實際 desktop 驗收同 checkbox 批准）
+Dependencies: satisfied — TASK-069–082, TASK-126, TASK-128
+Changed files: src/runtime.rs, src/runtime/ime.rs, src/runtime/keyboard.rs,
+  src/runtime/raster.rs, src/policy_tests.rs, tests/native_ime.py,
+  Cargo.toml, Cargo.lock, TASKS.md, README.md, DEPENDENCIES.md
+Unit test: cargo test --workspace --locked --offline runtime_ime_commits_to_shell
+Result: PASS（先有缺少實作嘅 FAIL；pending batch focus regression 亦先 FAIL 再 PASS）
+Workspace tests: PASS — 195 unit tests, 13 integration tests, 2 doctests
+  fish_multiline_prompt_redraw_keeps_one_character 額外用 --ignored 執行：PASS
+Format / Clippy: PASS；git diff --check：PASS
+Manual / Integration checks: release build PASS；隔離 Sway 1.9 + Fcitx5 5.1.7：PASS
+  Ctrl+Space、Cangjie preedit、恰好一次「日」UTF-8 commit、cursor/resize、focus reset：PASS
+  IME 停止時英文輸入、IME restart 後重新 focus 再輸入中文：PASS
+  release native keyboard、repeat/focus、連續啟動三次、PTY output：PASS
+  screenshot 已核對 preedit；候選 popup 未顯示，不能當作候選視窗驗收 PASS
+Security / Privacy impact: 無新增 package/version、app unsafe、payload logs 或系統設定修改
+Known limitations: 實際 Sway 1.10.1/Fcitx5、候選視窗位置、HiDPI、長組字 wrapping 未驗收
+Ready for [x]: NO — 等實際 desktop 驗收同使用者批准狀態更新
+```
+
+Protocol 依據：[Wayland text-input-v3](https://github.com/wayland-mirror/wayland-protocols/blob/main/unstable/text-input/text-input-unstable-v3.xml)。
+[Fcitx Sway 說明](https://fcitx-im.org/wiki/Using_Fcitx_5_on_Wayland#Sway) 列明 Sway 1.10 起支援 text-input-v3 candidate popup。
+
+### TASK-129 完成核對（2026-11-13）
+
+使用者批准「APPROVE FINISH TASK-129」，並確認第一個 Tab 嘅中文切換、候選位置、resize、單次 commit 同切返後輸入全部正常。新 Tab 中文輸入失效已確認係固定 `TabId(1)` 嘅限制，保留喺 TASK-175。整體多 Tabs / IME acceptance gate 未勾選。
+
+本次將 preedit bounds 接入現有 damage tracking，令冇 PTY output 時組字仍會重畫，失焦後亦會還原舊 overlay。新增 `runtime_ime_preedit_damage_restores_on_focus_loss`，先記錄缺少 damage 方法嘅編譯 FAIL，再實作並 PASS。Native fixture 改為等齊 Fcitx table、classicui 同 dbusfrontend addons，避免初始化未完成就輸入。
+
+```text
+TASK: TASK-129
+Status: DONE（只限單 Tab）
+Dependencies: satisfied — TASK-069–082, TASK-126, TASK-128
+Changed files: src/runtime.rs, src/runtime/ime.rs, src/runtime/keyboard.rs,
+  src/runtime/raster.rs, tests/native_ime.py, src/policy_tests.rs,
+  DEPENDENCIES.md, README.md, TASKS.md
+  既有 src/install.rs / src/install/adapter*.rs / src/install/adapter/*.rs 只整理格式
+Unit test: cargo test --workspace runtime_ime_commits_to_shell
+Result: PASS；runtime_ime_preedit_damage_restores_on_focus_loss 亦 PASS
+Workspace tests: PASS — 314 unit、13 integration、2 doctests
+  fish_multiline_prompt_redraw_keeps_one_character 保持 ignored，本次 NOT RUN
+Format / Clippy: PASS；git diff --check PASS
+Manual / Integration checks:
+  cargo build --locked --offline PASS
+  Ubuntu 24.04.4 / owned headless Sway 1.9 / Fcitx5 5.1.7：native_ime.py PASS
+  cursor/resize、倉頡 preedit、單次 UTF-8 commit、focus reset、IME restart PASS
+  native_runtime.py：keyboard/repeat/focus、PTY output、重開及退出 PASS
+  使用者 desktop 單 Tab 驗收：使用者回覆全部正常；desktop 版本未獨立核實
+Security / Privacy impact: 冇新增 package/version、app unsafe、payload logs 或全域設定修改
+  已核對既有 install adapter 嘅 nix/user 用途，補齊 dependency allowlist
+Known limitations: 新 Tab 中文輸入仍未接通（TASK-175）；長 preedit／viewport 見 TASK-176
+Ready for [x]: YES — 依使用者完成授權及單 Tab 驗收確認
+```
+
+首次完整 regression 因既有 install 改動新增 `nix/user` 而未更新 allowlist 失敗；第一次 format 亦因 install 格式失敗。補齊 invariant 同格式後，完整 workspace checks 全部通過。另以 `d749eb2` 加五個 TASK-129 runtime/native-test 檔案建立隔離 snapshot，313 unit、13 integration、2 doctests、Format 同 Clippy 亦 PASS；冇將隔離結果冒充當時 workspace PASS。
+
+### TASK-175 完成核對（2026-11-13）
+
+新 Tab 無法輸入中文嘅原因係 runtime 只對 `TabId(1)` 啟用 IME，preedit owner 亦固定喺第一個 Tab。現時按有效 keyboard focus 建立 overlay owner，沿用現有 switch/close focus hooks 同 enable/disable transactions。Focus 改變即取消 pending batch 同舊 overlay；`done` serial 必須屬於目前 focus transaction，避免切 Tab 後先到達嘅舊 batch 寫入新 Shell。同一 focus 內較舊嘅 cursor-update serial 仍可提交文字。
+
+```text
+TASK: TASK-175
+Status: DONE
+Dependencies: satisfied — TASK-093, TASK-129, TASK-133, TASK-134
+Changed files: src/runtime/ime.rs, src/runtime.rs, tests/native_ime.py,
+  README.md, TASKS.md
+Unit test: cargo test --workspace runtime_ime_tab_switch_invalidates_old_batches
+Result: PASS — 先因非 TabId(1) 無 Enable request 而 FAIL，再完成實作
+  mock sequence 覆蓋新 Tab、切換、關閉／失焦、延遲 batch、preedit owner、單次 commit
+  同一 focus 舊 cursor serial 仍有效；舊 focus serial 唔清除目前 overlay
+Workspace tests: PASS — 315 unit、13 integration、2 doctests
+  fish_multiline_prompt_redraw_keeps_one_character 保持 ignored，本次 NOT RUN
+Format / Clippy: PASS；git diff --check PASS；debug build PASS
+Manual / Integration checks:
+  python3 -B tests/native_ime.py target/debug/ptyra /tmp/ptyra-task175-ime.png --tabs
+  PASS — owned headless Sway 1.9 / Fcitx5 5.1.7 / Ubuntu 24.04.4
+  保持中文組字新增 Tab、新舊 Tab commit、切返、關閉組字中 Tab、重開皆 PASS
+  各 Shell 固定輸出檔案核對精確 UTF-8；舊組字取消，冇跨 Tab 輸入
+  TASK-129 單 Tab／IME restart regression 亦 PASS，與以上多 Tab 結果分開報告
+  native_runtime.py 普通 keyboard/repeat/focus、PTY output、重開及退出 PASS
+  使用者 desktop 多 Tab 驗收：PASS（2026-11-13 使用者確認「已解決，新舊 Tab 都正常」）
+  涵蓋保持中文模式新增 Tab、輸入、切返第一個 Tab、關閉組字中 Tab；desktop 版本未獨立核實
+Security / Privacy impact: 無新增 dependencies、unsafe、payload logs 或全域設定修改
+Known limitations: 長 preedit／viewport anchor 屬 TASK-176；Kitty/IME ownership 屬 TASK-183
+Ready for [x]: YES — 使用者已批准 FINISH，指定 unit 同真多 Tab integration 已通過
+```
+
+首輪 native test 喺 compositor 啟動階段 timeout；fixture 現時先等 Sway IPC readiness，再連接 virtual keyboard，修正後完整 native test PASS。整體指定 desktop acceptance matrix 保持未勾選。
 
 ## 2026-10-29 Audit
 

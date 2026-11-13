@@ -1,5 +1,6 @@
 //! Native Wayland adapter. Only this module owns compositor objects and presentation I/O.
 mod bar;
+mod benchmark;
 mod clipboard;
 mod cursor;
 mod damage;
@@ -13,6 +14,7 @@ mod clipboard_send;
 mod focus_reports;
 mod fonts;
 mod hyperlink;
+mod ime;
 mod keyboard;
 #[cfg(test)]
 mod kitty_tests;
@@ -198,8 +200,12 @@ struct Runtime {
     presented_paste: Option<std::sync::Arc<()>>,
     trace_pointer: bool,
     input: keyboard::KeyboardInput,
+    text_input_manager: Option<(u32, ime::TextInputManager)>,
+    text_input: Option<ime::TextInput>,
+    ime: Option<ime::ImeInput>,
     clock: crate::clock::MonotonicClock,
     input_trace: Option<InputTrace>,
+    benchmark_frames: benchmark::Frames,
 }
 
 fn new_runtime(config: crate::config::Config, raster: raster::Raster) -> Result<Runtime> {
@@ -247,10 +253,14 @@ fn new_runtime(config: crate::config::Config, raster: raster::Raster) -> Result<
             bindings: config.bindings,
             ..Default::default()
         },
+        text_input_manager: None,
+        text_input: None,
+        ime: None,
         clock: crate::clock::MonotonicClock::default(),
         input_trace: (std::env::var_os("PTYRA_TRACE_INPUT").as_deref()
             == Some(std::ffi::OsStr::new("1")))
         .then(InputTrace::default),
+        benchmark_frames: benchmark::Frames::from_env(),
     })
 }
 
@@ -331,6 +341,7 @@ pub fn run(config: crate::config::Config) -> Result<()> {
             top.set_title(title.to_owned());
             window_title = title.to_owned();
         }
+        app.update_ime_cursor()?;
         app.paint.dirty |= app.cursor.refresh(
             &app.tabs,
             &app.input.focus,
@@ -781,6 +792,17 @@ impl Runtime {
         let tab = self.tabs.get(active).ok_or("terminal unavailable")?;
         let mut overlays =
             selection_overlay::bounds(tab, self.raster.cell_height).map(|b| b.shifted(bar_height));
+        if let Some(ime) = &mut self.ime {
+            damage::Band::add(
+                &mut overlays,
+                ime.damage(
+                    tab.terminal(),
+                    &self.raster.layout(content_size)?,
+                    &self.input.focus,
+                )?
+                .map(|band| band.shifted(bar_height)),
+            );
+        }
         damage::Band::add(
             &mut overlays,
             damage::Band::new(height - overlay_height, height),
@@ -827,6 +849,17 @@ impl Runtime {
                 (self.raster.cell_width, self.raster.cell_height),
                 &mut self.pixels[content_offset..],
                 rows.range(),
+            )?;
+        }
+        if let Some(ime) = &mut self.ime
+            && let Some(preedit) = &mut ime.preedit
+        {
+            let preedit = preedit.preedit(&ime.state, &self.input.focus);
+            self.raster.draw_preedit(
+                terminal,
+                content_size,
+                &mut self.pixels[content_offset..],
+                preedit,
             )?;
         }
         let layout = self.tab_layout();
@@ -898,6 +931,7 @@ impl Runtime {
         );
         self.tabs.sync_presented();
         self.paint.submitted();
+        self.benchmark_frames.submitted();
         self.presented_bar = Some(layout);
         if let Some(token) = &presented
             && self
@@ -982,6 +1016,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
                 {
                     state.primary.manager = Some((name, registry.bind(name, 1, qh, ())));
                 }
+                "zwp_text_input_manager_v3"
+                    if version >= 1 && state.text_input_manager.is_none() =>
+                {
+                    state.text_input_manager = Some((name, registry.bind(name, 1, qh, ())));
+                }
                 _ => {}
             },
             wl_registry::Event::GlobalRemove { name } if state.globals.contains(&name) => {
@@ -1000,6 +1039,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
             wl_registry::Event::GlobalRemove { name } if state.seat_name == Some(name) => {
                 state.remove_clipboard_device();
                 state.remove_primary_device();
+                state.remove_text_input();
                 state.remove_keyboard();
                 state.remove_pointer();
                 if let Some(seat) = state.seat.take() {
@@ -1025,10 +1065,22 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Runtime {
             {
                 state.primary.remove_manager();
             }
+            wl_registry::Event::GlobalRemove { name }
+                if state
+                    .text_input_manager
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == name) =>
+            {
+                state.remove_text_input();
+                if let Some((_, manager)) = state.text_input_manager.take() {
+                    manager.destroy();
+                }
+            }
             _ => {}
         }
         state.bind_clipboard(qh);
         state.bind_primary(qh);
+        state.bind_text_input(qh);
     }
 }
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for Runtime {

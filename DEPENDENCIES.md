@@ -30,6 +30,17 @@
 - `unicode-width =0.2.3` is now a direct dependency for bounded CJK/combining tab-label layout, shared with the uncommitted IME implementation. It is the already-locked terminal-core version; no new package/version is introduced. Default features remain off, license MIT OR Apache-2.0, source https://github.com/unicode-rs/unicode-width.
 - Maintenance/advisory review reuses the 2026-11-05 review below; no new complete cargo-audit run is claimed. The standalone committed tree includes the direct Cargo edge and dependency invariant, without enabling the IME-specific unstable Wayland feature.
 
+## Runtime IME — TASK-129 (2026-11-05)
+
+- 2026-11-13 workspace validation：既有 install adapter 已用 `nix/user` 嘅 `geteuid()` 核對 parent directory owner。同步 dependency allowlist；本機已鎖定嘅 nix 0.31.3 manifest 顯示 `user = ["feature"]`，冇額外 package、network feature 或版本變更。沿用既有 MIT／source review；本次冇重跑 advisory audit。呢項只修復共用檢查，唔代表 TASK-191 驗收完成。
+
+- 既有 `wayland-protocols =0.32.13` 開啟 `unstable` feature，使用 `wp::text_input::zv3` client bindings；只綁 version 1。沿用 TASK-125 嘅 MIT license/source review，冇新增 package/version、FFI 或 app unsafe。
+- 既有 `unicode-width =0.2.3` 改為 direct dependency，default features 關閉；與 terminal core 使用同一個版本。用途係 preedit CJK/combining cell width，避免自行維護 Unicode table。License：MIT OR Apache-2.0；[upstream](https://github.com/unicode-rs/unicode-width)。Cargo.lock 只增加 Ptyra 嘅 direct edge。
+- 維護檢查：上游 repo 未標示 archived，仍有公開 issues/PR。RustSec package-name 網頁檢索未有命中；今次冇重跑完整 cargo-audit，唔將搜尋結果當作無漏洞保證。
+- Payload 沿用每段 4096-byte 上限、UTF-8 byte boundary validation、focus epoch 同 PTY queue ownership。唔提供 surrounding text，唔將 delete_surrounding_text 轉成 Backspace，唔將 preedit 當 terminal escape sequences。
+- Renderer 重用現有 bounded glyph cache；preedit 冇獨立 font cache。Core grid 同 preedit buffer 分開；普通 wl_keyboard events 沿用既有 encoder，唔根據 IME enabled/preedit 猜測 key consumption。
+- Native test 只啟動自己嘅 Sway、private D-Bus 同 Fcitx5。臨時 D-Bus 冇 service directories，Fcitx 只啟用測試必需 addons；唔啟用 cloudpinyin。測試用 Wayland trace 只記錄自己產生嘅固定輸入，唔會開使用者 Shell startup files。
+
 ## Runtime keyboard — TASK-128 (2026-11-05)
 
 - 冇新增 dependency、app unsafe 或 FFI。Wayland seat/keyboard adapter 讀取有界 keymap FD，重用 kbvm、focus epoch、KeyEncoder 同 RepeatScheduler；只接受 compositor-forwarded keyboard events，未開 text-input-v3。

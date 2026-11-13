@@ -1,5 +1,9 @@
-//! Pure install/rollback paths. A filesystem adapter must use exclusive creation and recheck symlink races.
+//! Install plans and an exclusive Linux filesystem adapter.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+mod adapter;
 use crate::error::{AppError, Component};
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub use adapter::{InstallFailure, InstallReceipt, InstalledFile, RollbackFailure};
 use std::{
     io::ErrorKind,
     os::unix::ffi::OsStrExt,
@@ -16,6 +20,7 @@ pub enum EntryKind {
 
 pub struct InstallPlan {
     files: [PathBuf; 3],
+    review_only: bool,
 }
 impl InstallPlan {
     pub fn user_local(home: &Path) -> Result<Self, AppError> {
@@ -33,7 +38,15 @@ impl InstallPlan {
         Ok(Self::at(&home.join(".local")))
     }
     pub fn system_local() -> Self {
-        Self::at(Path::new("/usr/local"))
+        Self {
+            review_only: true,
+            ..Self::at(Path::new("/usr/local"))
+        }
+    }
+    /// Stage the system layout under an absolute, operator-controlled directory.
+    pub fn staged(root: &Path) -> Result<Self, AppError> {
+        Self::user_local(root)?;
+        Ok(Self::at(&root.join("usr/local")))
     }
     fn at(prefix: &Path) -> Self {
         Self {
@@ -42,6 +55,7 @@ impl InstallPlan {
                 prefix.join("share/terminfo/p/ptyra"),
                 prefix.join("share/applications/ptyra.desktop"),
             ],
+            review_only: false,
         }
     }
     pub fn files(&self) -> &[PathBuf; 3] {
