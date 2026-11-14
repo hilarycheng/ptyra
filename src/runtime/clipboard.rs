@@ -78,11 +78,7 @@ pub(super) fn prepare_copy<P>(
     if tab.id() != target.tab || binding.current.is_none_or(|id| id.seat != seat) {
         return Err("clipboard unavailable");
     }
-    let range = tab.selection_range().ok_or("no valid selection")?;
-    let text = tab
-        .terminal_mut()
-        .copy_range_text_with_limit(range, limit)
-        .ok_or("selection exceeds clipboard limit")?;
+    let text = tab.copy_selection_text(limit)?;
     if text.is_empty() {
         return Err("no valid selection");
     }

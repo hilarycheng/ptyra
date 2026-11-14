@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 200 atomic TASKS（199 已勾選）。整體 Integration / Acceptance gates 仍按下方 Matrix 獨立驗收。
+**Total:** 201 atomic TASKS（199 已勾選）。整體 Integration / Acceptance gates 仍按下方 Matrix 獨立驗收。
 
 ## A. Foundation / 測試基礎
 
@@ -891,6 +891,13 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 - [ ] **TASK-200 — 透過 install.sh 安裝 application icon 同 fuzzel launcher**
   - **Dependencies:** `TASK-124`, `TASK-191`, `TASK-192`, `TASK-193` | **Unit Test:** `launcher_icon_is_installed_and_rolled_back`
   - **Done:** POSIX `install.sh` 使用已安裝 binary，或安裝 repo 內預先 build 好嘅 artifact；唔需要 Cargo；建立 desktop entry 同 SVG icon，支援 `XDG_DATA_HOME`；launcher 使用 absolute paths；衝突唔覆寫；拒絕 sudo；暫存 prefix 驗證 script 同 launcher。真 desktop fuzzel 搜尋／啟動另作驗收。
+
+## Selection snapshot（2026-11-13 使用者 APPROVE 實作，hint 使用英文）
+
+- [ ] **TASK-201 — 持續刷新期間保留 selection 同 Copy 內容**
+  - **Dependencies:** `TASK-141`, `TASK-142`, `TASK-143`, `TASK-144`, `TASK-146`, `TASK-153`, `TASK-155`, `TASK-159` | **Unit Test:** `runtime_selection_snapshot_survives_output`
+  - **Done:** 拖曳使用有界可見畫面 snapshot；PTY 繼續處理 output；放手恢復即時畫面並保留原選取文字供 Copy／Primary 使用；英文 hint 顯示 selecting、saved、copied 同錯誤；失敗可重試，唔記錄文字；中文、soft/hard wrap、Tab／focus／resize lifecycle 有 regression coverage。真 byobu／Sway 操作另作驗收。
+  - **Source / tests:** `src/terminal.rs`, `src/tabs/selection.rs`, `src/runtime/selection.rs`, `src/runtime/selection_overlay.rs`, `src/runtime/clipboard.rs`, `src/runtime/notice.rs` 及其 runtime callers；native selection probe、README 同 VERIFICATION。
 
 ## Integration / Acceptance Matrix（唔當作 Unit TASK）
 

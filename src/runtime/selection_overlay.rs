@@ -21,8 +21,8 @@ pub(super) fn draw<P>(
 }
 
 pub(super) fn bounds<P>(tab: &Tab<P>, cell_height: u32) -> Option<super::damage::Band> {
-    let selection = tab.selection_range()?;
-    let snapshot = tab.terminal().snapshot()?;
+    let snapshot = tab.selection_overlay_snapshot()?;
+    let selection = snapshot.content.selection?;
     let offset = snapshot.content.display_offset as i64;
     let start = (offset + i64::from(selection.start.line.0)).clamp(0, snapshot.rows as i64);
     let end = (offset + i64::from(selection.end.line.0) + 1).clamp(0, snapshot.rows as i64);
@@ -48,8 +48,9 @@ pub(super) fn draw_rows<P>(
         f64::from(cell.1),
     )
     .map_err(|_| "invalid selection layout")?;
-    let mut snapshot = tab.terminal().snapshot().ok_or("terminal unavailable")?;
-    snapshot.content.selection = tab.selection_range();
+    let snapshot = tab
+        .selection_overlay_snapshot()
+        .ok_or("terminal unavailable")?;
     for command in
         overlay_commands(snapshot, &layout, None).map_err(|_| "invalid selection overlay")?
     {

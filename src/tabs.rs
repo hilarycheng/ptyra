@@ -60,6 +60,8 @@ pub struct Tab<P> {
     pty: Option<P>,
     selections: TabSelections,
     selection_epoch: Option<u64>,
+    frozen_selection: Option<crate::terminal::SelectionSnapshot>,
+    saved_selection: Option<Result<String, &'static str>>,
     title: String,
     dirty: bool,
     preedit: Option<crate::ime::preedit::PreeditState>,
@@ -94,6 +96,8 @@ impl<P> Tab<P> {
         &self.selections
     }
     pub fn selections_mut(&mut self) -> &mut TabSelections {
+        self.frozen_selection = None;
+        self.saved_selection = None;
         self.sync_selection_epoch();
         self.dirty = true;
         &mut self.selections
@@ -227,6 +231,8 @@ impl<P: TabPty> TabRegistry<P> {
             pty: None,
             selections: TabSelections::new(id),
             selection_epoch: Some(0),
+            frozen_selection: None,
+            saved_selection: None,
             title: "Terminal".into(),
             dirty: true,
             preedit: None,

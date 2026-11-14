@@ -288,7 +288,32 @@ impl Runtime {
         let selection_changed =
             self.selection_input
                 .route(&mut self.tabs, &event, geometry, &self.clock);
-        if self.selection_input.take_publication()
+        if let Some(error) = self.selection_input.error.take() {
+            self.clipboard_error(error);
+        }
+        if self
+            .tabs
+            .get(event.target.tab)
+            .and_then(|tab| tab.frozen_selection())
+            .is_some()
+            && let Err(error) = self.selection_input.capture_frame(
+                self.tabs.get(event.target.tab).unwrap().terminal(),
+                &mut self.raster,
+                size,
+                super::cursor::focused(&self.tabs, &self.input.focus),
+                self.cursor.visible(),
+            )
+        {
+            self.selection_input.cancel(&mut self.tabs);
+            self.clipboard_error(error);
+        }
+        let published = self.selection_input.take_publication();
+        if published && self.clipboard_notice.is_none() {
+            self.show_clipboard_notice(super::notice::Notice::selection_saved(
+                &self.input.bindings,
+            ));
+        }
+        if published
             && self.primary.manager.is_some()
             && let Err(error) = self.publish_primary(qh)
         {

@@ -230,6 +230,8 @@ impl Runtime {
                 if let Err(error) = self.copy_selection(qh) {
                     eprintln!("Ptyra copy: {error}");
                     self.clipboard_error(error);
+                } else {
+                    self.show_clipboard_notice(super::notice::Notice::Copied);
                 }
             }
             BindingAction::Paste => {

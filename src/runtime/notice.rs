@@ -11,6 +11,10 @@ pub(super) enum Notice {
     TransferFailed,
     Unavailable,
     NoSelection,
+    Selecting,
+    SelectionSaved,
+    SelectionSavedCustom,
+    Copied,
     NoSerial,
     TargetChanged,
     Busy,
@@ -21,6 +25,14 @@ pub(super) enum Notice {
     HyperlinkFailed,
 }
 impl Notice {
+    pub fn selection_saved(bindings: &crate::config::bindings::Bindings) -> Self {
+        use crate::config::bindings::{BindingAction, Bindings};
+        if bindings.get(BindingAction::Copy) == Bindings::default().get(BindingAction::Copy) {
+            Self::SelectionSaved
+        } else {
+            Self::SelectionSavedCustom
+        }
+    }
     pub fn from_error(error: &str) -> Self {
         match error {
             "clipboard has no offer" | "primary has no offer" => Self::Empty,
@@ -61,6 +73,10 @@ impl Notice {
             Self::TransferFailed => "Clipboard transfer failed.",
             Self::Unavailable => "Selection unavailable.",
             Self::NoSelection => "Nothing selected.",
+            Self::Selecting => "Selecting. View paused; output continues.",
+            Self::SelectionSaved => "Selection saved. Ctrl+Shift+C to copy.",
+            Self::SelectionSavedCustom => "Selection saved. Use your Copy shortcut.",
+            Self::Copied => "Copied.",
             Self::NoSerial => "Copy needs an input event.",
             Self::TargetChanged => "Paste target changed.",
             Self::Busy => "Clipboard transfer busy.",
@@ -145,6 +161,17 @@ mod tests {
     use super::*;
     #[test]
     fn runtime_clipboard_errors_do_not_leak_or_exit() {
+        use crate::config::{Config, bindings::Bindings};
+        assert_eq!(
+            Notice::selection_saved(&Bindings::default()).message(),
+            "Selection saved. Ctrl+Shift+C to copy."
+        );
+        let custom = Config::from_toml(Some("[bindings]\ncopy='Ctrl+Shift+a'")).unwrap();
+        assert_eq!(
+            Notice::selection_saved(&custom.bindings),
+            Notice::SelectionSavedCustom
+        );
+        assert_eq!(Notice::Copied.message(), "Copied.");
         assert_eq!(Notice::from_error("clipboard has no offer"), Notice::Empty);
         assert_eq!(
             Notice::from_error("primary has no text offer"),
@@ -185,6 +212,10 @@ mod tests {
             Notice::TargetChanged,
             Notice::Busy,
             Notice::InputRejected,
+            Notice::Selecting,
+            Notice::SelectionSaved,
+            Notice::SelectionSavedCustom,
+            Notice::Copied,
         ] {
             assert!(notice.message().is_ascii());
             let (rows, columns, height) = geometry((160, 80), (8, 16), notice).unwrap();

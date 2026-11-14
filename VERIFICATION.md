@@ -1,5 +1,58 @@
 # Runtime task verification
 
+## TASK-201（2026-11-13）
+
+```text
+TASK: TASK-201
+Status: BLOCKED — 實作同目標測試完成；既有 packaging regression 令完成檢查未能全 PASS
+Dependencies: satisfied (TASK-141, TASK-142, TASK-143, TASK-144, TASK-146, TASK-153, TASK-155, TASK-159)
+Changed files: src/terminal.rs, src/tabs.rs, src/tabs/selection.rs,
+  src/runtime.rs, src/runtime/{selection,selection_overlay,clipboard,keyboard,notice,pointer}.rs,
+  tests/native_runtime.py, tests/native_selection_snapshot.py,
+  README.md, TASKS.md, VERIFICATION.md
+Unit test: cargo test --workspace runtime_selection_snapshot_survives_output
+Result: PASS — test-first 喺 output 後 release 失敗；snapshot 實作後通過
+Workspace tests: FAIL — 340 unit PASS；17 integration PASS、1 FAIL、1 ignored；2 doc PASS
+Format / Clippy: PASS — cargo fmt --all -- --check；cargo clippy --workspace --all-targets -- -D warnings
+Manual / Integration checks: PASS — 獨立 headless Sway snapshot、mouse、history、Copy/Primary、paste、sync 同 Fcitx5 probes
+Security / Privacy impact: 無新 dependency、unsafe、背景連線或 payload log；snapshot 同保留文字有界
+Known limitations: 真 desktop byobu 操作 NOT RUN；未更新已安裝 binary；既有 packaging failure 未改
+Ready for [x]: NO — workspace 未全 PASS；Checkbox 維持 [ ]
+```
+
+拖曳只複製可見 grid（最多 32,768 cells）同一份有界 frame（最多 16 MiB），唔複製全部 scrollback。
+PTY 繼續 parse output 同回覆 queries。放手後丟棄 frozen grid/frame，畫最新內容，只保留選中原文。
+保留文字受 `clipboard_bytes` 同跨 Tabs 合計 16 MiB 上限約束；新 selection／Tab close 釋放舊文字。
+Copy／Primary 共用原文 extraction。Copy serial／payload limit 錯誤唔消耗已保留文字；無 silent truncation。
+Live highlight 仍會喺內容改變後消失，避免高亮更新後嘅另一段文字；已保存嘅 Copy 內容唔受影響。
+Snapshot 遇到 focus、Tab、scroll、resize、screen/reset 或 session failure 會取消；完成嘅文字仍屬原 Tab。
+
+英文 UI：`Selecting. View paused; output continues.`、`Selection saved. Ctrl+Shift+C to copy.`、`Copied.`。
+自訂 Copy binding 用 `Selection saved. Use your Copy shortcut.`，避免顯示錯誤 shortcut。
+錯誤沿用 fixed metadata notices，唔顯示或記錄 Clipboard／PTY 文字。
+
+驗證平台：Ubuntu `24.04.4 LTS`、Sway `1.10.1-fde480b`、headless／pixman、Fcitx5 `5.1.7`、Rust/Cargo `1.97.1`。
+Base commit：`5cf4423` 加本次工作目錄改動。
+`./build.sh` PASS，產物係 repo 嘅 `ptyra` 同 `target/release/ptyra`；冇執行 install。
+
+- `PTYRA_TEST_SELECTION_SNAPSHOT=1 PTYRA_TEST_MOUSE=1 PTYRA_TEST_HISTORY=1 PTYRA_TEST_HISTORY_SELECTION=1 python3 tests/native_runtime.py target/debug/ptyra`：PASS。
+  真 pointer 拖曳期間，compositor pixels 保持原色；PTY 反覆覆寫文字仍回覆 queries；放手恢復新色。
+  延後 Copy／Primary 都係原本中文同 combining bytes；英文 saved／copied notice 同底部提示 pixels 通過。
+- `PTYRA_TEST_SELECTION_SNAPSHOT=1 PTYRA_TEST_SYNC=1 python3 tests/native_runtime.py target/release/ptyra`：PASS。
+  Clipboard notice 同 receive probes 分開跑。
+  初次合併 notice／receive flags，兩者需要嘅 16-byte／131072-byte limits 衝突，失敗屬 fixture 設定；分開重跑通過。
+- `PTYRA_TEST_CLIPBOARD_NOTICE=1`：PASS；empty／non-text／cap／UTF-8／owner-loss／EPIPE 提示同恢復。
+- `PTYRA_TEST_CLIPBOARD_RECEIVE=1 PTYRA_TEST_PRIMARY=1 PTYRA_TEST_PASTE_CANCEL=1`：PASS；exact bytes、framing、backpressure、多行確認、focus／Tab cancellation。
+- `tests/native_ime.py target/release/ptyra /tmp/ptyra-task201-ime.png --tabs --kitty`：獨立 Fcitx5／Cangjie session PASS。
+  原 harness 兩次喺 Sway IPC startup 提前退出。臨時 runner 只為 `swaymsg get_version` 加最多五秒 readiness retry，再執行原 probe。
+  冇修改 IME harness、使用者設定或現有 desktop session；驗證 preedit、exactly-once commit、Tab/focus isolation、legacy／enhanced Kitty 同 restart。
+
+唯一 workspace failure 係 `tests/packaging.rs:61` 嘅 `install_script_registers_launcher_and_icon`。
+測試期望安裝後有 `custom data/terminfo/p/ptyra`，但檔案不存在。
+用 `git archive HEAD` 喺 `/tmp/ptyra-task201-baseline-0o72tk4a` 建立原始副本，重跑同一測試亦喺同一行失敗。
+相關安裝 source 同 packaging test 今次冇改；唔將其他 TASK 嘅修正混入 TASK-201。
+最終 workspace log：`/tmp/ptyra-task201-workspace.log`。
+
 ## TASK-199（2026-11-13）
 
 ```text

@@ -21,6 +21,11 @@ pub(super) struct SelectionInput {
     drag: Option<(TabId, Screen, u64)>,
     click: Option<Click>,
     publish: bool,
+    pub(super) limit: usize,
+    pub(super) error: Option<&'static str>,
+    frame: Vec<u8>,
+    frame_size: Option<(u32, u32)>,
+    pub(super) repaint: bool,
 }
 impl Default for SelectionInput {
     fn default() -> Self {
@@ -29,6 +34,11 @@ impl Default for SelectionInput {
             drag: None,
             click: None,
             publish: false,
+            limit: crate::clipboard::write::MAX_CLIPBOARD_BYTES,
+            error: None,
+            frame: Vec::new(),
+            frame_size: None,
+            repaint: false,
         }
     }
 }
@@ -46,6 +56,12 @@ impl Click {
     }
 }
 impl SelectionInput {
+    pub fn with_limit(limit: usize) -> Self {
+        Self {
+            limit,
+            ..Self::default()
+        }
+    }
     pub fn set_scale(&mut self, scale: u32) {
         self.scale = scale;
         self.click = None;
@@ -57,12 +73,57 @@ impl SelectionInput {
         self.click = None;
         self.publish = false;
         if let Some((id, screen, _)) = self.drag.take() {
+            self.frame = Vec::new();
+            self.frame_size = None;
+            self.repaint = true;
             if let Some(tab) = tabs.get_mut(id) {
                 tab.cancel_selection_drag(screen);
             }
             return true;
         }
         false
+    }
+    pub(super) fn validate<P: TabPty>(&mut self, tabs: &mut TabRegistry<P>, size: (u32, u32)) {
+        if self.drag.is_some_and(|(id, _, _)| {
+            tabs.active() != Some(id)
+                || tabs
+                    .get(id)
+                    .and_then(|tab| tab.frozen_selection())
+                    .is_none()
+                || self.frame_size.is_some_and(|old| old != size)
+        }) {
+            self.cancel(tabs);
+        }
+    }
+    pub(super) fn capture_frame(
+        &mut self,
+        terminal: &crate::terminal::Terminal,
+        raster: &mut super::raster::Raster,
+        size: (u32, u32),
+        focused: bool,
+        cursor: bool,
+    ) -> super::Result<()> {
+        if self.drag.is_some() && self.frame.is_empty() {
+            super::resize_frame_pixels(&mut self.frame, size.0 as usize * size.1 as usize * 4)?;
+            raster.draw(terminal, size, &mut self.frame, focused, cursor)?;
+            self.frame_size = Some(size);
+            self.repaint = true;
+        }
+        Ok(())
+    }
+    pub(super) fn draw_frozen_rows(
+        &self,
+        pixels: &mut [u8],
+        width: u32,
+        rows: std::ops::Range<u32>,
+    ) -> bool {
+        if self.frame.is_empty() || self.frame.len() != pixels.len() {
+            return false;
+        }
+        let range =
+            rows.start as usize * width as usize * 4..rows.end as usize * width as usize * 4;
+        pixels[range.clone()].copy_from_slice(&self.frame[range]);
+        true
     }
     pub fn route<P: TabPty>(
         &mut self,
@@ -72,6 +133,7 @@ impl SelectionInput {
         clock: &impl crate::clock::Clock,
     ) -> bool {
         self.publish = false;
+        self.error = None;
         if tabs.active() != Some(event.target.tab) {
             self.cancel(tabs);
             return false;
@@ -105,14 +167,10 @@ impl SelectionInput {
             return false;
         };
         // A held frame still shows the old cells. Never select/copy unseen core updates.
-        if tab.terminal().sync_blocks_selection() {
+        if tab.frozen_selection().is_none() && tab.terminal().sync_blocks_selection() {
             return self.cancel(tabs);
         }
-        let Some(mode) = tab.terminal().mode() else {
-            return false;
-        };
-        let screen = Screen::from_mode(mode);
-        let Some(epoch) = tab.terminal().content_epoch() else {
+        let Some((screen, epoch, offset)) = tab.selection_owner() else {
             return false;
         };
         let owner = (event.target.tab, screen, epoch);
@@ -146,7 +204,7 @@ impl SelectionInput {
         let column = (x.max(0.) / f64::from(geometry.cell.0)) as usize;
         let row = (y.max(0.) / f64::from(geometry.cell.1)) as usize;
         let point = Point::new(
-            Line(row.min(grid.screen_lines() - 1) as i32 - grid.display_offset() as i32),
+            Line(row.min(grid.screen_lines() - 1) as i32 - offset as i32),
             Column(column.min(grid.columns() - 1)),
         );
         if start {
@@ -174,17 +232,35 @@ impl SelectionInput {
                 _ => SelectionAction::Press,
             };
             self.drag = (count == 1).then_some(owner);
+            if count == 1
+                && !tabs
+                    .get_mut(event.target.tab)
+                    .unwrap()
+                    .begin_selection_snapshot()
+            {
+                self.cancel(tabs);
+                self.error = Some("selection unavailable");
+                return false;
+            }
         }
         if matches!(action, SelectionAction::Release) {
             self.drag = None;
+            self.frame = Vec::new();
+            self.frame_size = None;
+            self.repaint = true;
         }
         self.publish = matches!(
             action,
             SelectionAction::Release | SelectionAction::Word | SelectionAction::Line
         );
-        tabs.get_mut(event.target.tab)
+        let changed = tabs
+            .get_mut(event.target.tab)
             .unwrap()
-            .select(screen, action, point)
+            .select(screen, action, point);
+        if self.publish {
+            self.error = tabs.save_selection(event.target.tab, self.limit).err();
+        }
+        changed
     }
 }
 
@@ -287,6 +363,206 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn runtime_selection_snapshot_survives_output() {
+        use super::super::clipboard::{Binding, prepare_copy};
+        use crate::clipboard::{InputSerialEvent, SeatId};
+        let mut tabs = TabRegistry::<Fake>::with_scrollback(0).unwrap();
+        tabs.insert(TabId(1), 3, 8).unwrap();
+        tabs.insert(TabId(2), 3, 8).unwrap();
+        let clock = crate::clock::FakeClock::default();
+        let geometry = Geometry {
+            origin: 20,
+            size: (80, 30),
+            cell: (10, 10),
+        };
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(1), "a中e\u{301} zXYmore\r\nhard".as_bytes())
+            .unwrap();
+        let mut input = SelectionInput::default();
+        assert!(input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock));
+        let frozen = tabs.get(TabId(1)).unwrap().frozen_selection().unwrap();
+        assert_eq!(frozen.grid.history_size(), 0);
+        assert_eq!(frozen.grid.screen_lines() * frozen.grid.columns(), 24);
+        let font = ab_glyph::FontVec::try_from_vec(
+            include_bytes!("../../tests/fixtures/fallback-primary.ttf").to_vec(),
+        )
+        .unwrap();
+        let mut raster =
+            super::super::raster::Raster::new(vec![font], &crate::config::Config::default())
+                .unwrap();
+        let size = (raster.cell_width * 8, raster.cell_height * 3);
+        input
+            .capture_frame(
+                tabs.get(TabId(1)).unwrap().terminal(),
+                &mut raster,
+                size,
+                true,
+                true,
+            )
+            .unwrap();
+        let original_pixels = input.frame.clone();
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(1), b"\x1b[3;1Hclock\x1b[HREPLACED")
+            .unwrap();
+        assert!(input.route(
+            &mut tabs,
+            &event(1, 35., 45., Kind::Motion),
+            geometry,
+            &clock
+        ));
+        let expected = "a中e\u{301} zXYmore    \nhard";
+        assert_eq!(
+            tabs.get_mut(TabId(1))
+                .unwrap()
+                .copy_selection_text(1024)
+                .unwrap(),
+            expected
+        );
+        input
+            .capture_frame(
+                tabs.get(TabId(1)).unwrap().terminal(),
+                &mut raster,
+                size,
+                true,
+                true,
+            )
+            .unwrap();
+        let mut pixels = vec![0; original_pixels.len()];
+        assert!(input.draw_frozen_rows(&mut pixels, size.0, 0..size.1));
+        assert_eq!(
+            pixels, original_pixels,
+            "refresh must not alter the frozen base frame"
+        );
+        let mut overlay = tabs
+            .get(TabId(1))
+            .unwrap()
+            .selection_overlay_snapshot()
+            .unwrap();
+        assert_eq!(overlay.content.display_iter.next().unwrap().c, 'a');
+        assert!(input.route(&mut tabs, &release(1, 35., 45.), geometry, &clock));
+        assert!(input.take_publication());
+        assert!(input.frame.is_empty());
+        assert!(tabs.get(TabId(1)).unwrap().frozen_selection().is_none());
+        assert!(tabs.get(TabId(1)).unwrap().selection_range().is_none());
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(1), b"\r\nmore output\x1b[6n")
+            .unwrap();
+        assert!(
+            !tabs
+                .get_mut(TabId(1))
+                .unwrap()
+                .terminal_mut()
+                .take_core_replies()
+                .0
+                .is_empty()
+        );
+        let target = FocusTarget {
+            window: WindowId(1),
+            tab: TabId(1),
+        };
+        let seat = SeatId(1);
+        let mut binding = Binding::default();
+        binding.sync(Some((1, seat)));
+        let tab = tabs.get_mut(TabId(1)).unwrap();
+        assert_eq!(
+            prepare_copy(tab, &mut binding, seat, target, 1024).err(),
+            Some("no valid input serial")
+        );
+        binding.record(seat, target, 3, InputSerialEvent::KeyPress);
+        assert_eq!(
+            prepare_copy(tab, &mut binding, seat, target, 2).err(),
+            Some("selection exceeds clipboard limit")
+        );
+        assert_eq!(
+            prepare_copy(tab, &mut binding, seat, target, 1024)
+                .unwrap()
+                .text,
+            expected
+        );
+        assert!(tabs.activate(TabId(2)));
+        assert_eq!(
+            tabs.get_mut(TabId(2)).unwrap().copy_selection_text(1024),
+            Err("no valid selection")
+        );
+        assert!(tabs.activate(TabId(1)));
+        assert_eq!(
+            tabs.get_mut(TabId(1))
+                .unwrap()
+                .copy_selection_text(1024)
+                .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn runtime_selection_snapshot_cancels_and_limits_without_stale_copy() {
+        let mut tabs = TabRegistry::<Fake>::with_scrollback(4).unwrap();
+        for id in [1, 2] {
+            tabs.insert(TabId(id), 3, 8).unwrap();
+        }
+        let clock = crate::clock::FakeClock::default();
+        let geometry = Geometry {
+            origin: 20,
+            size: (80, 30),
+            cell: (10, 10),
+        };
+        let mut input = SelectionInput::with_limit(2);
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .feed(TabId(1), "中\r\n1\r\n2\r\n3\r\n4".as_bytes())
+            .unwrap();
+        tabs.get_mut(TabId(1))
+            .unwrap()
+            .terminal_mut()
+            .scroll_viewport(alacritty_terminal::grid::Scroll::Top)
+            .unwrap();
+        input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock);
+        assert_eq!(
+            tabs.get(TabId(1))
+                .unwrap()
+                .frozen_selection()
+                .unwrap()
+                .grid
+                .history_size(),
+            0
+        );
+        input.route(&mut tabs, &release(1, 15., 25.), geometry, &clock);
+        assert_eq!(input.error, Some("selection exceeds clipboard limit"));
+        assert_eq!(
+            tabs.get_mut(TabId(1)).unwrap().copy_selection_text(1024),
+            Err("selection exceeds clipboard limit")
+        );
+        clock.advance(std::time::Duration::from_secs(1)).unwrap();
+        input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock);
+        tabs.activate(TabId(2));
+        input.validate(&mut tabs, geometry.size);
+        assert!(tabs.get(TabId(1)).unwrap().frozen_selection().is_none());
+        assert!(!input.route(&mut tabs, &release(2, 15., 25.), geometry, &clock));
+        assert_eq!(
+            tabs.get_mut(TabId(2)).unwrap().copy_selection_text(1024),
+            Err("no valid selection")
+        );
+        tabs.activate(TabId(1));
+        input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock);
+        input.cancel(&mut tabs); // Focus loss / pointer leave.
+        assert_eq!(
+            tabs.get_mut(TabId(1)).unwrap().copy_selection_text(1024),
+            Err("no valid selection")
+        );
+        input.route(&mut tabs, &press(1, 5., 25.), geometry, &clock);
+        tabs.resize_all(4, 8).unwrap();
+        input.validate(&mut tabs, geometry.size);
+        assert!(tabs.get(TabId(1)).unwrap().frozen_selection().is_none());
+    }
+
     #[test]
     fn runtime_history_selection_copies_original_lines() {
         use alacritty_terminal::grid::Scroll;
@@ -598,8 +874,13 @@ mod tests {
                     .feed(TabId(1), b"\r\n1\r\n2\r\n3\r\n4\r\n5")
                     .unwrap(),
             }
-            assert!(tabs.get(TabId(1)).unwrap().selection_range().is_none());
-            assert!(!input.route(&mut tabs, &release(1, 35., 25.), geometry, &clock));
+            if mutation == 2 {
+                assert!(tabs.get(TabId(1)).unwrap().selection_range().is_some());
+                assert!(input.route(&mut tabs, &release(1, 35., 25.), geometry, &clock));
+            } else {
+                assert!(tabs.get(TabId(1)).unwrap().selection_range().is_none());
+                assert!(!input.route(&mut tabs, &release(1, 35., 25.), geometry, &clock));
+            }
             assert!(tabs.get(TabId(1)).unwrap().selection_range().is_none());
         }
         clock.advance(std::time::Duration::from_secs(1)).unwrap();

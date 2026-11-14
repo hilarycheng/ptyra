@@ -89,6 +89,38 @@ pub struct TerminalSnapshot<'a> {
     pub content: RenderableContent<'a>,
 }
 
+/// Only visible cells are retained during a drag; never clone the scrollback.
+pub(crate) struct SelectionSnapshot {
+    pub grid: Grid<Cell>,
+    pub offset: usize,
+    pub screen: crate::selection::Screen,
+    pub layout_epoch: u64,
+    stops: Vec<bool>,
+}
+
+impl SelectionSnapshot {
+    pub fn range(
+        &self,
+        mut range: alacritty_terminal::selection::SelectionRange,
+    ) -> Option<alacritty_terminal::selection::SelectionRange> {
+        range.start.line.0 += self.offset as i32;
+        range.end.line.0 += self.offset as i32;
+        crate::selection::whole_glyph_range(&self.grid, range)
+    }
+    pub fn copy(
+        &self,
+        range: alacritty_terminal::selection::SelectionRange,
+        limit: usize,
+    ) -> Option<String> {
+        crate::selection::copy_text_with_tabstops(
+            &self.grid,
+            self.range(range)?,
+            &self.stops,
+            limit,
+        )
+    }
+}
+
 impl Terminal {
     /// Uses DEFAULT_SCROLLBACK_LINES, subject to the same bounds as with_scrollback.
     pub fn new(tab: TabId, rows: u16, columns: u16) -> Result<Self, TerminalError> {
@@ -129,6 +161,7 @@ impl Terminal {
             allocated_cells: cell_reservation(rows, columns, scrollback_lines)
                 .ok_or_else(invalid)?,
             core: Some(Core {
+                selection_layout_epoch: Some(0),
                 term: Term::new(terminal_config(scrollback_lines), &size, events.clone()),
                 parser: Processor::new(),
                 osc: OscLimit::Ground,
@@ -143,10 +176,13 @@ impl Terminal {
         })
     }
 
-    /// Conservative anchor policy: any nonempty feed or changed grid size invalidates selections.
+    /// Live highlights expire on output/reflow; captured selection text has its own lifetime.
     /// Exhaustion fails closed rather than allowing an old anchor generation to be reused.
     pub(crate) fn content_epoch(&self) -> Option<u64> {
         self.content_epoch
+    }
+    pub(crate) fn selection_layout_epoch(&self) -> Option<u64> {
+        self.core.as_ref()?.selection_layout_epoch
     }
 
     pub(crate) fn sync_update(
@@ -352,9 +388,15 @@ impl Terminal {
         range: alacritty_terminal::selection::SelectionRange,
         limit: usize,
     ) -> Option<String> {
+        let stops = self.tab_stops()?;
+        let core = self.core.as_ref()?;
+        let range = crate::selection::whole_glyph_range(core.term.grid(), range)?;
+        crate::selection::copy_text_with_tabstops(core.term.grid(), range, &stops, limit)
+    }
+
+    fn tab_stops(&mut self) -> Option<Vec<bool>> {
         use alacritty_terminal::{index::Column, vte::ansi::Handler};
         let core = self.core.as_mut()?;
-        let range = crate::selection::whole_glyph_range(core.term.grid(), range)?;
         let columns = core.term.grid().columns();
         let mut stops = Vec::new();
         stops.try_reserve_exact(columns).ok()?;
@@ -368,7 +410,26 @@ impl Terminal {
             stops[core.term.grid().cursor.point.column.0] = true;
         }
         core.term.grid_mut().cursor.point.column = saved;
-        crate::selection::copy_text_with_tabstops(core.term.grid(), range, &stops, limit)
+        Some(stops)
+    }
+
+    pub(crate) fn selection_snapshot(&mut self) -> Option<SelectionSnapshot> {
+        let stops = self.tab_stops()?;
+        let source = self.grid()?;
+        let mut grid = Grid::new(source.screen_lines(), source.columns(), 0);
+        let offset = source.display_offset();
+        for cell in source.display_iter() {
+            let mut point = cell.point;
+            point.line.0 += offset as i32;
+            grid[point] = cell.cell.clone();
+        }
+        Some(SelectionSnapshot {
+            grid,
+            offset,
+            stops,
+            screen: crate::selection::Screen::from_mode(self.mode()?),
+            layout_epoch: self.selection_layout_epoch()?,
+        })
     }
 
     /// Borrow the core's grid without copying cells or exposing mutable state.
@@ -465,6 +526,9 @@ impl Terminal {
         {
             self.content_epoch = self.content_epoch.and_then(|epoch| epoch.checked_add(1));
             core.graphics.clear_screen(crate::selection::Screen::Main);
+            core.selection_layout_epoch = core
+                .selection_layout_epoch
+                .and_then(|epoch| epoch.checked_add(1));
             core.graphics
                 .clear_screen(crate::selection::Screen::Alternate);
             core.keyboard.reset_graphics_region();
@@ -607,6 +671,7 @@ impl EventListener for ClipboardEvents {
 }
 
 struct Core {
+    selection_layout_epoch: Option<u64>,
     term: Term<ClipboardEvents>,
     parser: Processor<ImmediateParsing>,
     osc: OscLimit,
@@ -690,6 +755,11 @@ impl Core {
                 }
             }
             let new_screen = crate::selection::Screen::from_mode(self.term.mode());
+            if new_screen != old_screen || self.keyboard.graphics_change() == 1 {
+                self.selection_layout_epoch = self
+                    .selection_layout_epoch
+                    .and_then(|epoch| epoch.checked_add(1));
+            }
             if new_screen != old_screen && new_screen == crate::selection::Screen::Alternate {
                 self.graphics.clear_screen(new_screen);
             }

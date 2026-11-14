@@ -249,7 +249,7 @@ fn new_runtime(config: crate::config::Config, raster: raster::Raster) -> Result<
         keyboard: None,
         pointer: None,
         pointer_input: pointer::PointerInput::default(),
-        selection_input: selection::SelectionInput::default(),
+        selection_input: selection::SelectionInput::with_limit(config.clipboard_bytes),
         wheel: scroll::Wheel::default(),
         hyperlinks: hyperlink::Opener::default(),
         presented_hyperlink: None,
@@ -715,7 +715,14 @@ impl Runtime {
         Ok(())
     }
     fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
-        if !self.paint.ready() || sync::held(&self.tabs) {
+        let content_size = self.content_geometry().1;
+        self.selection_input.validate(&mut self.tabs, content_size);
+        let selecting = self
+            .tabs
+            .active()
+            .and_then(|id| self.tabs.get(id))
+            .is_some_and(|tab| tab.frozen_selection().is_some());
+        if !self.paint.ready() || (!selecting && sync::held(&self.tabs)) {
             return Ok(());
         }
         let Some(index) = self
@@ -770,9 +777,12 @@ impl Runtime {
             .ok_or("terminal unavailable")?
             .terminal_mut();
         let rows = terminal.snapshot().ok_or("terminal unavailable")?.rows;
-        let terminal_damage = terminal.damage_rows().and_then(|damage| {
+        let mut terminal_damage = terminal.damage_rows().and_then(|damage| {
             damage::Band::terminal(damage, rows, content_size.1, self.raster.cell_height)
         });
+        if std::mem::take(&mut self.selection_input.repaint) {
+            terminal_damage = damage::Band::new(0, content_size.1);
+        }
         let prompt = self
             .paste
             .as_ref()
@@ -785,7 +795,8 @@ impl Runtime {
                 crate::tabs::SessionFailure::Stream => notice::Notice::StreamStopped,
                 crate::tabs::SessionFailure::Io => notice::Notice::PtyStopped,
             })
-            .or(self.clipboard_notice);
+            .or(self.clipboard_notice)
+            .or(selecting.then_some(notice::Notice::Selecting));
         let overlay_height = if prompt.is_some() {
             paste::prompt_height(
                 self.paint.buffer_size,
@@ -835,25 +846,33 @@ impl Runtime {
             overlays,
         );
         if plan.surface.iter().all(Option::is_none) && !self.paint.configure_pending {
-            self.tabs
-                .get_mut(active)
-                .ok_or("terminal unavailable")?
-                .terminal_mut()
-                .damage_presented();
-            self.tabs.sync_presented();
+            if !selecting {
+                self.tabs
+                    .get_mut(active)
+                    .ok_or("terminal unavailable")?
+                    .terminal_mut()
+                    .damage_presented();
+                self.tabs.sync_presented();
+            }
             self.paint.dirty = false;
             return Ok(());
         }
         let terminal = tab.terminal();
         if let Some(rows) = plan.content {
-            self.raster.draw_rows(
-                terminal,
-                content_size,
+            if !self.selection_input.draw_frozen_rows(
                 &mut self.pixels[content_offset..],
-                cursor::focused(&self.tabs, &self.input.focus),
-                self.cursor.visible(),
+                width,
                 rows.range(),
-            )?;
+            ) {
+                self.raster.draw_rows(
+                    terminal,
+                    content_size,
+                    &mut self.pixels[content_offset..],
+                    cursor::focused(&self.tabs, &self.input.focus),
+                    self.cursor.visible(),
+                    rows.range(),
+                )?;
+            }
             selection_overlay::draw_rows(
                 tab,
                 content_size,
@@ -862,7 +881,8 @@ impl Runtime {
                 rows.range(),
             )?;
         }
-        if let Some(ime) = &mut self.ime
+        if !selecting
+            && let Some(ime) = &mut self.ime
             && let Some(preedit) = &mut ime.preedit
         {
             let preedit = preedit.preedit(&ime.state, &self.input.focus);
@@ -922,11 +942,13 @@ impl Runtime {
         surface.commit();
         slot.busy = true;
         self.damage.submitted(index);
-        self.tabs
-            .get_mut(active)
-            .ok_or("terminal unavailable")?
-            .terminal_mut()
-            .damage_presented();
+        if !selecting {
+            self.tabs
+                .get_mut(active)
+                .ok_or("terminal unavailable")?
+                .terminal_mut()
+                .damage_presented();
+        }
         self.presented_hyperlink = hyperlink::Presented::capture(
             &self.tabs,
             selection::Geometry {
@@ -934,9 +956,11 @@ impl Runtime {
                 size: content_size,
                 cell: (self.raster.cell_width, self.raster.cell_height),
             },
-            self.clipboard_notice.is_some() || presented.is_some(),
+            notice.is_some() || presented.is_some(),
         );
-        self.tabs.sync_presented();
+        if !selecting {
+            self.tabs.sync_presented();
+        }
         self.paint.submitted();
         self.benchmark_frames.submitted();
         self.presented_bar = Some(layout);

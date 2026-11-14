@@ -9,13 +9,13 @@ Ptyra 係一個開發中嘅 Rust Native Wayland Terminal，支援單視窗 GUI T
 ## Planning Files
 
 - [`SCOPE.md`](SCOPE.md) — 定義產品、架構、安全、性能與驗收邊界。
-- [`TASKS.md`](TASKS.md) — **199 個 Atomic TASK**，用 Checkbox 記錄狀態，設有 Dependencies、Unit Test、Done Criteria。
+- [`TASKS.md`](TASKS.md) — **201 個 Atomic TASK**，用 Checkbox 記錄狀態，設有 Dependencies、Unit Test、Done Criteria。
 - [`AGENTS.md`](AGENTS.md) — Coding Agent 必須遵守嘅執行、測試、安全同批准規則。
 
 ## Status
 
 - `TASKS.md` 係唯一 TASK 狀態來源。規格文件嘅原始 Planning Draft 字句唔代表目前實作進度；批准規則仍按 `AGENTS.md` 執行。
-- 199 項 TASK 已全部勾選。TASK 範圍同整體 acceptance gates 分開計，完整產品驗收仍未完成。
+- 201 項 TASK 中有 199 項已勾選。TASK 範圍同整體 acceptance gates 分開計，完整產品驗收仍未完成。
 - 已有基礎型別、事件來源/reducer、測試用 effect recorders、clock/error、Wayland request/state models、座標/damage/frame models、Shell argv/environment 建立器、有界 XKB keymap 轉換、純邏輯 key-repeat scheduler，以及真正 Linux PTY spawn adapter、有界 output byte 讀取、per-session input byte queue、PTY row/column resize、單次 child exit → Tab event mapping，以及保留跨 chunk parser state 嘅 terminal core adapter 同 renderer 資料接口。
 - `src/main.rs` 會載入 config，再連接 Wayland compositor。Runtime 用有界 SHM buffers、software glyph rasterization、真 PTY 同阻塞 poll event loop；keyboard 經現有 focus/keymap/encoder/repeat 模組送到 Shell。
 - 已驗證 Enter、Backspace、arrows、Ctrl+C、focus/repeat、PTY resize 同 close cleanup。IME、Clipboard、Selection、GUI Tabs 已接入 runtime；個別 native probes 唔代表整體 desktop acceptance 完成。
@@ -74,6 +74,11 @@ Mouse 支援拖曳、double／triple click selection；app 啟用 mouse reportin
 ## Clipboard 同中文輸入
 
 Copy 保留 Unicode、空格同 hard newline；soft wrap 唔額外加 newline。冇 selection 時唔會清空外部 Clipboard。
+拖曳時固定當時嘅可見畫面；Shell 同 PTY output 繼續運作。放開 mouse 後恢復即時畫面，`Ctrl+Shift+C` 複製保留咗嘅原文。
+新 selection 會取代該 Tab 保留嘅文字；關 Tab 會釋放文字。拖曳期間失焦、切 Tab、scroll、resize 或切換 terminal screen 會取消未完成選取。
+底部英文提示係 `Selecting. View paused; output continues.`、`Selection saved. Ctrl+Shift+C to copy.` 同 `Copied.`。
+自訂 Copy shortcut 時，saved hint 會顯示 `Selection saved. Use your Copy shortcut.`。Copy 失敗顯示錯誤原因，已保留嘅文字仍可重試。
+每份保留文字受 `clipboard_bytes` 限制；全部 Tabs 合共最多保留 16 MiB。超出會拒絕，唔會截斷內容。
 Middle-click 使用獨立 Primary Selection，須 compositor 支援；唔會改用普通 Clipboard。
 Pending paste 綁定原本 Tab；切 Tab、失焦或關 Tab 會按現有 focus policy 取消，唔會轉送另一個 Shell。
 App 開啟 bracketed paste 時使用 framing；未開啟而內容有多行時，先顯示確認。
