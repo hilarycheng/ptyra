@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 202 atomic TASKS（199 已勾選）。整體 Integration / Acceptance gates 仍按下方 Matrix 獨立驗收。
+**Total:** 202 atomic TASKS（200 已勾選）。整體 Integration / Acceptance gates 仍按下方 Matrix 獨立驗收。
 
 ## A. Foundation / 測試基礎
 
@@ -888,7 +888,7 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
 
 ## Application launcher（2026-11-13 使用者 APPROVE 實作）
 
-- [ ] **TASK-200 — 透過 install.sh 安裝 application icon 同 fuzzel launcher**
+- [x] **TASK-200 — 透過 install.sh 安裝 application icon 同 fuzzel launcher**
   - **Dependencies:** `TASK-124`, `TASK-191`, `TASK-192`, `TASK-193` | **Unit Test:** `launcher_icon_is_installed_and_rolled_back`
   - **Done:** POSIX `install.sh` 使用已安裝 binary，或安裝 repo 內預先 build 好嘅 artifact；唔需要 Cargo；建立 desktop entry 同 SVG icon，支援 `XDG_DATA_HOME`；launcher 使用 absolute paths；衝突唔覆寫；拒絕 sudo；暫存 prefix 驗證 script 同 launcher。真 desktop fuzzel 搜尋／啟動另作驗收。
 

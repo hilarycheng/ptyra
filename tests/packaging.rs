@@ -5,7 +5,7 @@ use std::{fs, path::Path, process::Command};
 
 #[test]
 fn install_script_registers_launcher_and_icon() {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     let root = nix::unistd::mkdtemp("/tmp/ptyra-launcher-XXXXXX").unwrap();
     let check = || {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -69,6 +69,43 @@ fn install_script_registers_launcher_and_icon() {
         assert_eq!(fs::read(&binary).unwrap(), installed_binary);
         assert_eq!(fs::read_to_string(&desktop).unwrap(), text);
         assert!(icon.is_file());
+
+        let bundle = root.join("bundle");
+        fs::create_dir(&bundle).unwrap();
+        fs::copy(repo.join("install.sh"), bundle.join("install.sh")).unwrap();
+        fs::copy(env!("CARGO_BIN_EXE_ptyra"), bundle.join("ptyra")).unwrap();
+        let fresh_home = root.join("fresh home");
+        let fresh_data = root.join("fresh data");
+        let install_bundle = || {
+            Command::new("/bin/sh")
+                .arg(bundle.join("install.sh"))
+                .env("HOME", &fresh_home)
+                .env("XDG_DATA_HOME", &fresh_data)
+                .env("PATH", format!("{}:/usr/bin:/bin", root.display()))
+                .output()
+                .unwrap()
+        };
+        let fresh_desktop = fresh_data.join("applications/ptyra.desktop");
+        let fresh_terminfo = fresh_data.join("terminfo/p/ptyra");
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o755)
+            .create(fresh_terminfo.parent().unwrap())
+            .unwrap();
+        fs::write(&fresh_terminfo, "keep").unwrap();
+        let conflict = install_bundle();
+        assert!(!conflict.status.success(), "{conflict:?}");
+        assert!(String::from_utf8_lossy(&conflict.stderr).contains("AlreadyExists"));
+        assert_eq!(fs::read_to_string(&fresh_terminfo).unwrap(), "keep");
+        assert!(!fresh_home.join(".local/bin/ptyra").exists());
+        assert!(!fresh_desktop.exists());
+        fs::remove_file(&fresh_terminfo).unwrap();
+        let output = install_bundle();
+        assert!(output.status.success(), "{output:?}");
+        assert!(fresh_home.join(".local/bin/ptyra").is_file());
+        assert!(fresh_desktop.is_file());
+        assert!(fresh_data.join("ptyra/ptyra.svg").is_file());
+        assert_eq!(fs::read(fresh_terminfo).unwrap(), ptyra::terminfo::COMPILED);
     };
     let result = std::panic::catch_unwind(check);
     fs::remove_dir_all(root).unwrap();

@@ -58,6 +58,7 @@ trait InstallFs {
 fn execute(
     plan: &InstallPlan,
     binary: Option<&mut dyn Read>,
+    keep_terminfo: bool,
     fs: &mut impl InstallFs,
 ) -> Result<InstallReceipt, InstallFailure> {
     if plan.review_only {
@@ -72,20 +73,25 @@ fn execute(
     let terminfo_len = terminfo.len() as u64;
     let desktop_len = desktop.len() as u64;
     let icon_len = icon.len() as u64;
-    let mut inputs: Vec<(&mut dyn Read, u64, u32)> = Vec::with_capacity(4);
-    if let Some(binary) = binary {
-        inputs.push((binary, MAX_BINARY_BYTES, 0o755));
-        inputs.push((&mut terminfo, terminfo_len, 0o644));
-    }
-    inputs.push((&mut desktop, desktop_len, 0o644));
-    inputs.push((&mut icon, icon_len, 0o644));
-    let paths = &plan.files()[plan.files().len() - inputs.len()..];
+    let inputs: [Option<(&mut dyn Read, u64, u32)>; 4] = [
+        if let Some(input) = binary {
+            Some((input, MAX_BINARY_BYTES, 0o755))
+        } else {
+            None
+        },
+        (!keep_terminfo).then_some((&mut terminfo, terminfo_len, 0o644)),
+        Some((&mut desktop, desktop_len, 0o644)),
+        Some((&mut icon, icon_len, 0o644)),
+    ];
     let mut created = Vec::with_capacity(inputs.len());
     let result = (|| {
         let mut files = Vec::with_capacity(inputs.len());
-        for (index, (input, limit, mode)) in inputs.into_iter().enumerate() {
-            created.push(fs.create(&paths[index])?);
-            let file = &mut created[index];
+        for (path, input) in plan.files().iter().zip(inputs) {
+            let Some((input, limit, mode)) = input else {
+                continue;
+            };
+            created.push(fs.create(path)?);
+            let file = created.last_mut().unwrap();
             copy_bounded(input, file, limit)?;
             files.push(fs.finish(file, mode)?);
         }
@@ -117,15 +123,21 @@ fn failure(kind: io::ErrorKind) -> InstallFailure {
 }
 
 impl InstallPlan {
-    /// Register an existing executable without replacing it or its terminfo.
-    pub fn install_launcher(&self) -> Result<(), InstallFailure> {
+    /// Register an existing executable and install any missing terminfo.
+    pub fn install_launcher(&self) -> Result<InstallReceipt, InstallFailure> {
         use std::os::unix::fs::PermissionsExt;
         let metadata =
             std::fs::symlink_metadata(&self.files()[0]).map_err(|error| failure(error.kind()))?;
         if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
             return Err(failure(io::ErrorKind::InvalidInput));
         }
-        execute(self, None, &mut filesystem::Filesystem).map(|_| ())
+        let keep_terminfo = match std::fs::symlink_metadata(&self.files()[1]) {
+            Ok(metadata) if metadata.is_file() => true,
+            Ok(_) => return Err(failure(io::ErrorKind::AlreadyExists)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(failure(error.kind())),
+        };
+        execute(self, None, keep_terminfo, &mut filesystem::Filesystem)
     }
 
     fn desktop_entry(&self) -> io::Result<String> {
@@ -189,7 +201,7 @@ impl InstallPlan {
         if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_BINARY_BYTES {
             return Err(failure(io::ErrorKind::InvalidInput));
         }
-        execute(self, Some(&mut source), &mut filesystem::Filesystem)
+        execute(self, Some(&mut source), false, &mut filesystem::Filesystem)
     }
 }
 

@@ -53,22 +53,20 @@ fn install() -> ExitCode {
             .unwrap_or_else(|| home.join(".local/share"));
         let plan = ptyra::install::InstallPlan::user_local_xdg(&home, &data)
             .map_err(|error| error.to_string())?;
-        if plan.files()[0]
+        let receipt = if plan.files()[0]
             .try_exists()
             .map_err(|error| error.to_string())?
         {
-            plan.install_launcher()
+            let receipt = plan
+                .install_launcher()
                 .map_err(|error| format!("{error:?}"))?;
             println!("Using existing {}", plan.files()[0].display());
-            for path in &plan.files()[2..] {
-                println!("Installed {}", path.display());
-            }
-            return Ok(());
-        }
-        let binary = std::env::current_exe().map_err(|error| error.to_string())?;
-        let receipt = plan
-            .install(&binary)
-            .map_err(|error| format!("{error:?}"))?;
+            receipt
+        } else {
+            let binary = std::env::current_exe().map_err(|error| error.to_string())?;
+            plan.install(&binary)
+                .map_err(|error| format!("{error:?}"))?
+        };
         for file in receipt.files() {
             println!("Installed {}", file.path().display());
         }

@@ -9,7 +9,7 @@ fn launcher_icon_is_installed_and_rolled_back() {
     let icon = PathBuf::from("/home/test user/.local/share/ptyra/ptyra.svg");
     assert!(plan.files().contains(&icon));
     let mut fs = FakeFs::new();
-    execute(&plan, Some(&mut &b"binary"[..]), &mut fs).unwrap();
+    execute(&plan, Some(&mut &b"binary"[..]), false, &mut fs).unwrap();
     assert_eq!(
         fs.files.borrow()[&icon],
         std::fs::read("assets/ptyra.svg").unwrap()
@@ -22,14 +22,14 @@ fn launcher_icon_is_installed_and_rolled_back() {
     );
     let mut fs = FakeFs::new();
     fs.fail_finish = Some(3);
-    assert!(execute(&plan, Some(&mut &b"binary"[..]), &mut fs).is_err());
+    assert!(execute(&plan, Some(&mut &b"binary"[..]), false, &mut fs).is_err());
     assert!(fs.files.borrow().is_empty());
     let mut fs = FakeFs::new();
     fs.files
         .borrow_mut()
         .insert(plan.files()[0].clone(), b"keep".to_vec());
-    fs.fail_finish = Some(1);
-    assert!(execute(&plan, None, &mut fs).is_err());
+    fs.fail_finish = Some(2);
+    assert!(execute(&plan, None, false, &mut fs).is_err());
     assert_eq!(
         *fs.files.borrow(),
         BTreeMap::from([(plan.files()[0].clone(), b"keep".to_vec())])
@@ -41,7 +41,7 @@ fn packaged_capabilities_match_runtime_support() {
     for home in ["/home/test user", r#"/home/a\b\"$`"#] {
         let plan = InstallPlan::user_local(Path::new(home)).unwrap();
         let mut fs = FakeFs::new();
-        execute(&plan, Some(&mut &b"binary"[..]), &mut fs).unwrap();
+        execute(&plan, Some(&mut &b"binary"[..]), false, &mut fs).unwrap();
         let files = fs.files.borrow();
         let desktop = std::str::from_utf8(&files[&plan.files()[2]]).unwrap();
         assert!(!desktop.lines().any(|line| line == "Exec=ptyra"));
@@ -66,7 +66,7 @@ fn packaged_capabilities_match_runtime_support() {
         let invalid = InstallPlan::user_local(Path::new(home)).unwrap();
         let mut fs = FakeFs::new();
         assert_eq!(
-            execute(&invalid, Some(&mut &b"binary"[..]), &mut fs)
+            execute(&invalid, Some(&mut &b"binary"[..]), false, &mut fs)
                 .unwrap_err()
                 .kind,
             io::ErrorKind::InvalidInput
@@ -202,7 +202,7 @@ fn install_adapter_rolls_back_only_created_files() {
                 _ => unreachable!(),
             }
             let original = fs.files.borrow().clone();
-            let error = execute(&plan, Some(&mut &binary[..]), &mut fs).unwrap_err();
+            let error = execute(&plan, Some(&mut &binary[..]), false, &mut fs).unwrap_err();
             assert_ne!(error.kind, io::ErrorKind::Unsupported);
             assert!(error.rollback_failures.is_empty());
             assert_eq!(*fs.files.borrow(), original, "{failure} at {index}");
@@ -221,7 +221,7 @@ fn install_adapter_rolls_back_only_created_files() {
     let mut fs = FakeFs::new();
     fs.fail_finish = Some(2);
     fs.fail_rollback = Some(1);
-    let error = execute(&plan, Some(&mut &binary[..]), &mut fs).unwrap_err();
+    let error = execute(&plan, Some(&mut &binary[..]), false, &mut fs).unwrap_err();
     assert_eq!(error.rollback_failures.len(), 1);
     assert_eq!(error.rollback_failures[0].path, plan.files()[1]);
     assert_eq!(
@@ -231,7 +231,7 @@ fn install_adapter_rolls_back_only_created_files() {
     assert_eq!(fs.files.borrow().len(), 1);
 
     let mut fs = FakeFs::new();
-    let receipt = execute(&plan, Some(&mut &binary[..]), &mut fs).unwrap();
+    let receipt = execute(&plan, Some(&mut &binary[..]), false, &mut fs).unwrap();
     assert_eq!(
         receipt
             .files()
@@ -376,7 +376,7 @@ struct TestDirectory(PathBuf);
 fn uninstall_preserves_unowned_or_changed_files() {
     let plan = InstallPlan::user_local(Path::new("/home/test user")).unwrap();
     let mut fs = FakeFs::new();
-    let mut receipt = execute(&plan, Some(&mut &b"binary"[..]), &mut fs).unwrap();
+    let mut receipt = execute(&plan, Some(&mut &b"binary"[..]), false, &mut fs).unwrap();
     let mut removed = Vec::new();
     let errors = uninstall(&plan, &receipt, |file| {
         removed.push(file.path.clone());

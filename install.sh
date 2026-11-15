@@ -39,5 +39,4 @@ if [ -e "$desktop" ] || [ -e "$icon" ]; then
     exit 1
 fi
 
-install -m 0755 "$artifact" "$binary"
-exec "$binary" --install
+exec "$artifact" --install
