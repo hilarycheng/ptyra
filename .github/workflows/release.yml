@@ -1,0 +1,46 @@
+name: Release
+
+"on":
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable toolchain, pinned 2026-06-30
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Check release tag version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "ptyra") | .version')"
+          test "$tag_version" = "$package_version"
+
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --release --locked
+
+      - name: Package release artifact
+        run: |
+          archive="ptyra-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
+          mkdir -p dist
+          tar -C target/release -czf "dist/$archive" ptyra
+          (cd dist && sha256sum "$archive" > "$archive.sha256")
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --generate-notes --draft
