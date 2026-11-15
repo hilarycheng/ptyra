@@ -13,7 +13,7 @@
 - 每次只把經使用者明確 **APPROVE** 嘅 TASK 交畀 Coding Agent 實作。
 - 全部 `[ ]` 起始，表示尚未實作、未通過測試。
 
-**Total:** 202 atomic TASKS（200 已勾選）。整體 Integration / Acceptance gates 仍按下方 Matrix 獨立驗收。
+**Total:** 209 atomic TASKS（200 已勾選）。整體 Integration / Acceptance gates 仍按下方 Matrix 獨立驗收。
 
 ## A. Foundation / 測試基礎
 
@@ -905,6 +905,45 @@ TASK-130–140 其後獲使用者明確 APPROVE 實作、更新 checkbox 同逐�
   - **Dependencies:** `TASK-193`, `TASK-194` | **Unit Test:** `release_workflow_config_is_valid`
   - **Done:** Push `v*` tag 後，Ubuntu 24.04 workflow 確認 tag 同 Cargo package version 一致，執行 fmt、Clippy、workspace tests 同 locked release build；全部通過先建立 draft Release，上載 Linux x86_64 tarball 同 SHA-256；Actions 使用 pinned commit，token 權限只限 `contents: write`，不加 Cargo dependency。
   - **Source:** `.github/workflows/release.yml`, `Cargo.toml`, `Cargo.lock`
+
+## Right-click menu / Settings / SSH Session / Help（2026-11-15 規劃）
+
+使用者只批准寫入以下 7 個 TASK，**尚未 APPROVE 實作**。全部保持 `[ ]`，每次實作仍需指定一個 TASK。UI 使用英文，沿用 Native Wayland renderer，唔加入 GTK、Qt 或 WebView。SSH 操作由 user 主動決定；唔自動 query、選擇 TERM、fallback、重連、安裝 software 或儲存 host 設定。
+
+- [ ] **TASK-203 — Right-click context menu 同 input ownership**
+  - **Dependencies:** `TASK-130`, `TASK-133`, `TASK-134`, `TASK-140`, `TASK-158`, `TASK-162`, `TASK-175` | **Unit Test:** `runtime_context_menu_preserves_input_ownership`
+  - **Done:** Native UI 提供 Settings、SSH Session、Help、About 入口；未完成入口標示 unavailable，唔執行 placeholder action。冇 mouse reporting 時普通右鍵開選單；有 mouse reporting 時普通右鍵交畀程式；Shift + right-click 開本機選單。支援 mouse、keyboard navigation、Enter 同 Escape；選單限制喺可見範圍，切 Tab／失焦／關 Tab 時關閉。開選單唔發送 shell command；選單消耗嘅 press/release/repeat／IME input 唔漏入 PTY，唔重複觸發 selection、Paste 或 mouse report。
+  - **Verification:** Fake pointer/key/focus sequences 驗證上述 ownership 同 lifecycle；加跑 Selection、Clipboard、IME、Tabs 同 mouse reporting regression。真 Sway 驗證選單位置、操作同 TUI mouse reporting。
+
+- [ ] **TASK-204 — Settings UI 編輯現有設定**
+  - **Dependencies:** `TASK-095`, `TASK-096`, `TASK-097`, `TASK-098`, `TASK-130`, `TASK-172`, `TASK-173`, `TASK-203` | **Unit Test:** `settings_draft_validates_before_apply`
+  - **Done:** 顯示目前有效設定；初版只編輯現有 schema 嘅 font family/size、shortcuts、scrollback limit 同 basic palette，唔新增設定種類。Draft 同有效設定分開；Apply 前沿用現有 validators，錯誤保留 draft 並標示欄位，Cancel 放棄未套用變更。每個欄位清楚標示即時生效、新 Tab 生效或 Save 後重開生效；只即時套用已有安全 runtime 路徑嘅欄位，唔假裝未支援熱更新已成功。呢個 TASK 唔寫 config file。
+  - **Verification:** Pure draft tests 覆蓋有效／無效輸入、shortcut conflict、Apply／Cancel 同生效範圍；fake runtime 驗證只套用已確認設定。真 UI 驗證 keyboard／IME 編輯同錯誤顯示。
+
+- [ ] **TASK-205 — 明確 Save 後安全儲存 Settings**
+  - **Dependencies:** `TASK-098`, `TASK-194`, `TASK-204` | **Unit Test:** `settings_save_preserves_unedited_config_and_original_on_failure`
+  - **Done:** 只喺 user 按 Save 後寫入既有 config loader 使用嘅 user config 路徑；UI 顯示目的地。只更新已編輯欄位，保留其他設定同 comments；原檔無法安全解析、被外部修改或路徑係不安全 symlink 時報錯，唔靜默覆寫。使用同目錄暫存檔同 atomic replacement；失敗保留原檔，成功後 loader 可重新解析；唔寫 system-wide config。冇 config 時可建立 user config；清楚區分已套用、已儲存同待重開狀態。
+  - **Verification:** Fake filesystem 注入 write／replace failure；臨時目錄測首次儲存、保留未編輯內容、外部修改、symlink 同 load round-trip。唔用真 user config 作測試。
+
+- [ ] **TASK-206 — User 主動查詢目前 SSH session 嘅 TERM entries**
+  - **Dependencies:** `TASK-006`, `TASK-132`, `TASK-133`, `TASK-134`, `TASK-135`, `TASK-160`, `TASK-193`, `TASK-203` | **Unit Test:** `ssh_term_query_is_explicit_bounded_and_tab_bound`
+  - **Done:** SSH Session → Check TERM 顯示將執行嘅固定查詢同限制；user 確認目前係 remote POSIX-compatible shell prompt 後先發送。利用 remote 已有 `infocmp` 檢查固定候選 `ptyra`、`xterm-256color`、`xterm`、`vt100`，唔聲稱列出全部 TERM；唔安裝 software、寫 remote 檔案或修改 `.profile`。用每次查詢獨立 marker 同有界 parser 識別結果；區分 entry 存在、不存在、工具缺席、無法判定同 timeout。結果只代表 database entries，唔係 SSH 身份或 terminal compatibility 證明；唔自動選取或 Apply。
+  - **Verification:** Fake PTY stream／clock 覆蓋 split chunks、echo／混合 output、舊 marker、malformed／超量結果、timeout 同重複操作；pending query 綁定原 Tab 同 lifecycle，切 Tab／失焦／關 Tab／child exit 取消待處理結果，唔向其他 session 發送內容或自動發送取消鍵。唔記錄 PTY 內容；真 SSH 另驗證有／無 infocmp、舊 Unix 同不支援 shell 嘅明確失敗行為。
+
+- [ ] **TASK-207 — User 選擇並 Apply TERM 到目前 remote shell**
+  - **Dependencies:** `TASK-020`, `TASK-133`, `TASK-134`, `TASK-160`, `TASK-164`, `TASK-193`, `TASK-206` | **Unit Test:** `ssh_term_apply_requires_user_choice_and_matching_query`
+  - **Done:** 列出查詢結果但唔預選；只容許 user 選擇已有 entry、且 Ptyra 已有對應 capabilities／key encoding fixtures 驗證嘅 TERM。未知或未驗證選項顯示原因並停用；唔為咗提供選項虛報 xterm／VT100 compatibility，發現需要新增 emulation 行為時另提 TASK，唔順手擴大實作。明確 Apply 同 shell prompt 確認後，先向原 session 發送由固定 allowlist 產生嘅 POSIX `export TERM=...` 指令；唔將 remote output 拼入 command。以有界 acknowledgment 區分完成、失敗同未知，唔只憑成功 enqueue 宣稱已套用。唔改 remote software／檔案／`.profile`，唔改本機預設 TERM 或儲存 host 設定；提示只影響目前 shell 同之後啟動嘅程式。
+  - **Verification:** Fake adapters 覆蓋未選擇、未確認、不支援候選、stale query、重複 Apply、partial write、timeout 同 Tab／focus／child lifecycle；失去原 target 後禁止發送，唔自動重試或重連。Compatibility fixtures 核對宣告 capabilities 同實際行為；真 SSH 驗證 export、後續程式同既有程式嘅差別，另跑 Tabs／keyboard／IME regression。
+
+- [ ] **TASK-208 — Help UI 同簡單 User Guide**
+  - **Dependencies:** `TASK-194`, `TASK-203`, `TASK-204`, `TASK-205`, `TASK-206`, `TASK-207` | **Unit Test:** `help_guide_covers_available_actions_and_limits`
+  - **Done:** Help 開啟 bundled、離線可讀嘅簡單 User Guide，使用英文 UI 名稱同短步驟；涵蓋 Tabs、Copy/Paste、多行 Paste、selection、右鍵／Shift + right-click、Settings Apply／Save／生效範圍，同 SSH Query／Apply。明確寫出 shell prompt 前提、POSIX shell／infocmp 限制、Query 唔改設定、Apply 只改目前 shell、已開啟程式要重開，同 timeout／unsupported 排查；唔聲稱自動 SSH negotiation。支援 scrolling、keyboard navigation 同關閉，輸入唔漏入 PTY；guide 跟實際可用 action 同 default bindings 一致。
+  - **Verification:** Deterministic content/action fixtures 檢查必要章節、限制同 shortcut 一致性；真 Sway 驗證長文閱讀、resize 同返回 terminal focus。
+
+- [ ] **TASK-209 — About UI 顯示實際版本同授權**
+  - **Dependencies:** `TASK-165`, `TASK-194`, `TASK-203` | **Unit Test:** `about_uses_package_metadata_without_network_side_effects`
+  - **Done:** About 顯示 Ptyra 名稱、由 build/package metadata 取得嘅實際版本、repo 現有授權資料同已核實 project link；唔虛構 license、build revision 或兼容聲明。內容隨 release metadata 更新，唔另寫死版本；開啟 About 唔連網。只有 user 明確按 project link 先沿用現有安全 opener；支援 keyboard 同 Escape，關閉後正確恢復 focus。
+  - **Verification:** Metadata fixtures 同 fake opener 驗證版本／授權來源、開啟視窗零網絡副作用，同連結只喺明確操作後開啟；真 UI 驗證文字完整可讀。
 
 ## Integration / Acceptance Matrix（唔當作 Unit TASK）
 
